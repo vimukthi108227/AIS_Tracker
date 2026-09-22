@@ -46,8 +46,10 @@ function startLiveClock() {
     setInterval(updateClock, 1000); 
 }
 
+/* --- EXCEL EXPORT FUNCTIONS --- */
 function exportTableToExcel(dataArray, filename, sheetName) {
     if(!dataArray || dataArray.length === 0) { showToast("No data to export!", "warning"); return; }
+    if (typeof XLSX === 'undefined') { showToast("Excel library not loaded! Please check internet connection.", "error"); return; }
     const ws = XLSX.utils.json_to_sheet(dataArray); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, sheetName); XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
@@ -56,6 +58,9 @@ window.exportStockExcel = window.exportDashboardExcel;
 window.exportPoExcel = function() { const data = poList.map(po => ({ "PO Date": po.date, "PO Number": po.poNumber, "Profile": po.profile, "Length (mm)": po.length, "Required Qty": po.orderQty })); exportTableToExcel(data, "AIS_Production_Orders", "Orders"); };
 window.exportCardboardExcel = function() { const data = cardboardStockList.map(c => ({ "Date": c.date, "Transaction Type": c.type, "Incoming": c.incoming, "Consumed": c.used })); exportTableToExcel(data, "AIS_Cardboard_History", "Cardboard"); };
 window.exportShipmentsExcel = function() { const data = shipmentList.map(s => ({ "Shipment Date": s.date, "PO Number": s.poNumber, "Profile": s.profile, "Length (mm)": s.length, "Container No": s.container, "Shipped Qty": s.shippedQty, "Remaining": s.remainingBalance })); exportTableToExcel(data, "AIS_Shipment_History", "Shipments"); };
+window.exportHistoryExcel = function() { const data = historyLogs.map(h => ({ "Date": h.date, "Time": h.timestamp, "Shift": h.shift, "Profile": h.profile, "Length (mm)": h.length, "Cut Qty": h.cutQty, "Punch Qty": h.punchQty, "Wrap Qty": h.wrapQty, "Box Qty": h.boxQty, "Crate Qty": h.crateQty })); exportTableToExcel(data, "AIS_Production_History", "History"); };
+window.exportRejectExcel = function() { const data = rejectLogs.map(r => ({ "Date": r.reject_date, "Shift": r.shift, "Location": r.location, "Stage": r.stage, "Profile": r.profile, "Item Code": r.item_code, "Length (mm)": r.length, "Reject Qty": r.pcs, "Weight (kg)": r.weight })); exportTableToExcel(data, "AIS_Reject_History", "Rejects"); };
+window.exportRecoverExcel = function() { const data = recoverLogs.map(r => ({ "Date": r.recover_date, "Profile": r.profile, "Item Code": r.item_code, "Orig Length": r.original_length, "New Length": r.new_length, "Recover Qty": r.pcs, "Weight (kg)": r.recovered_weight })); exportTableToExcel(data, "AIS_Recover_History", "Recovery"); };
 
 function injectGenericEditModal() {
     if(document.getElementById('genericEditModal')) return;
@@ -333,7 +338,7 @@ async function loadDataFromSupabase(isSilent = false) {
       if(currentUserRole) { 
           updateRoleUI(); 
           setTimeout(() => {
-              renderDashboard(); renderProfileSummaryTable(); checkDateStatus(); renderHistoryData(); updatePoFilters(); renderPoDetailsTable(); renderShipmentHistoryTable(); renderPackingListTable(); renderPoCharts(); renderBalanceWorkTable(); renderCardboardStock(); renderDailyInstructions(); renderRejectTable(); renderRecoverTable();
+              renderDashboard(); renderProfileSummaryTable(); checkDateStatus(); renderHistoryData(); updatePoFilters(); renderPoDetailsTable(); window.renderShipmentHistoryTable(); renderPackingListTable(); renderPoCharts(); renderBalanceWorkTable(); renderCardboardStock(); renderDailyInstructions(); renderRejectTable(); renderRecoverTable();
               window.updateShipmentCountdown();
           }, 10);
       } 
@@ -368,7 +373,7 @@ function switchTab(tabId, btn) {
       if (tabId === 'historyTab') renderHistoryData(); 
       if (tabId === 'masterListTab') renderMasterCatalog(); 
       if (tabId === 'poManagementTab') { updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); } 
-      if (tabId === 'shipmentTab') { populateShipmentPoDropdown(); renderShipmentHistoryTable(); } 
+      if (tabId === 'shipmentTab') { populateShipmentPoDropdown(); window.renderShipmentHistoryTable(); } 
       if (tabId === 'packingListTab') { populatePlPoDropdown(); renderPackingListTable(); } 
       if (tabId === 'dailyPlanTab') renderDailyInstructions(); 
       if (tabId === 'rejectTrackerTab') { populateRejProfile(); renderRejectTable(); populateRecProfile(); renderRecoverTable(); }
@@ -523,16 +528,12 @@ function renderDashboard() {
 
   let finalTotCrates = 0;
   let finalCompCrates = 0;
-  let manualCompleteCrateQtySum = 0;
 
   for (let crateId in dashCrateMap) {
       let c = dashCrateMap[crateId];
       if (c.req > 0 || globalManualCrates[crateId]) {
           finalTotCrates++;
           if (globalManualCrates[crateId]) {
-              finalCompCrates++;
-              manualCompleteCrateQtySum += (globalManualCrates[crateId].qty || 0);
-          } else if (c.req > 0 && c.comp >= c.req) {
               finalCompCrates++;
           }
       }
@@ -636,6 +637,9 @@ function renderDashboard() {
       parent.appendChild(newList);
   }
 
+  let manualCompleteCrateQtySum = 0;
+  Object.values(globalManualCrates).forEach(v => manualCompleteCrateQtySum += (v.qty || 0));
+
   if(document.getElementById('funnelCutQty')) document.getElementById('funnelCutQty').textContent = `${totalCut.toLocaleString()} Pcs`; 
   if(document.getElementById('funnelPunchQty')) document.getElementById('funnelPunchQty').textContent = `${totalPunch.toLocaleString()} Pcs`; 
   if(document.getElementById('funnelWrapQty')) document.getElementById('funnelWrapQty').textContent = `${totalWrap.toLocaleString()} Pcs`; 
@@ -650,26 +654,65 @@ function renderDashboard() {
   if(document.getElementById('funnelWrapBar')) document.getElementById('funnelWrapBar').style.width = `${totalWipPcs ? Math.round((totalWrap / totalWipPcs) * 100) : 0}%`; 
   if(document.getElementById('funnelBoxBar')) document.getElementById('funnelBoxBar').style.width = `${totalWipPcs ? Math.round((totalBox / totalWipPcs) * 100) : 0}%`;
 
-  let plReqWt = 0, plCompWt = 0, plWipWt = 0, plPendWt = 0; let availableStockPL = masterData.map(m => ({ ...m })); 
+  let plReqWt = 0;
+  let chartCutWt = 0, chartPunchWt = 0, chartWrapWt = 0, chartBoxWt = 0, chartManualWt = 0, chartPendingWt = 0;
+  
+  let crateMapForChart = {};
+  for(let i=1; i<=50; i++) { crateMapForChart["Crate " + i] = { req: 0, comp: 0, items: [] }; }
+  
+  let availableStockPL = masterData.map(m => ({ ...m }));
+  packingLists.forEach(pl => {
+      let reqQty = pl.pcsQty;
+      let matched = availableStockPL.find(m => String(m.profile).trim() === String(pl.profile).trim() && cleanLen(m.length) === cleanLen(pl.length) && m.itemCode === pl.itemCode);
+      let uw = matched ? (matched.unitWeight || 0) : 0;
+      
+      plReqWt += (reqQty * uw);
+      
+      let allocatedBox = 0, allocatedWrap = 0, allocatedPunch = 0, allocatedCut = 0;
+      let remReq = reqQty;
+      
+      if (matched) {
+          let combinedBoxStock = matched.boxQty + matched.crateQty;
+          allocatedBox = Math.min(remReq, combinedBoxStock);
+          
+          if (allocatedBox > matched.crateQty) {
+              matched.boxQty -= (allocatedBox - matched.crateQty);
+              matched.crateQty = 0;
+          } else {
+              matched.crateQty -= allocatedBox;
+          }
+          remReq -= allocatedBox;
 
-  packingLists.forEach(pl => { 
-      const reqQty = pl.pcsQty; 
-      const matched = availableStockPL.find(m => String(m.profile).trim() === String(pl.profile).trim() && cleanLen(m.length) === cleanLen(pl.length)); 
-      const uw = matched ? (matched.unitWeight || 0) : 0; 
+          allocatedWrap = Math.min(remReq, matched.wrapQty); matched.wrapQty -= allocatedWrap; remReq -= allocatedWrap;
+          allocatedPunch = Math.min(remReq, matched.punchQty); matched.punchQty -= allocatedPunch; remReq -= allocatedPunch;
+          allocatedCut = Math.min(remReq, matched.cutQty); matched.cutQty -= allocatedCut; remReq -= allocatedCut;
+      }
       
-      plReqWt += (reqQty * uw); 
-      
-      let allocatedCrate = 0, allocatedBox = 0, allocatedWrap = 0, allocatedPunch = 0, allocatedCut = 0; 
-      let remReq = reqQty; 
-      if (matched) { 
-          allocatedCrate = Math.min(remReq, matched.crateQty); matched.crateQty -= allocatedCrate; remReq -= allocatedCrate; 
-          allocatedBox = Math.min(remReq, matched.boxQty); matched.boxQty -= allocatedBox; remReq -= allocatedBox; 
-          allocatedWrap = Math.min(remReq, matched.wrapQty); matched.wrapQty -= allocatedWrap; remReq -= allocatedWrap; 
-          allocatedPunch = Math.min(remReq, matched.punchQty); matched.punchQty -= allocatedPunch; remReq -= allocatedPunch; 
-          allocatedCut = Math.min(remReq, matched.cutQty); matched.cutQty -= allocatedCut; remReq -= allocatedCut; 
-      } 
-      plCompWt += (allocatedCrate * uw); plWipWt += ((allocatedBox + allocatedWrap + allocatedPunch + allocatedCut) * uw); plPendWt += (remReq * uw); 
+      if (!crateMapForChart[pl.crateNo]) crateMapForChart[pl.crateNo] = { req: 0, comp: 0, items: [] };
+      crateMapForChart[pl.crateNo].req += reqQty;
+      crateMapForChart[pl.crateNo].comp += allocatedBox;
+      crateMapForChart[pl.crateNo].items.push({ req: reqQty, box: allocatedBox, wrap: allocatedWrap, punch: allocatedPunch, cut: allocatedCut, pending: remReq, unitWeight: uw });
   });
+
+  for (let crateId in crateMapForChart) {
+      let crate = crateMapForChart[crateId];
+      if (crate.req === 0) continue;
+      
+      let isManualComplete = globalManualCrates[crateId] ? true : false;
+      
+      crate.items.forEach(i => {
+          let w = i.unitWeight;
+          if (isManualComplete) {
+              chartManualWt += (i.req * w);
+          } else {
+              chartBoxWt += (i.box * w);
+              chartWrapWt += (i.wrap * w);
+              chartPunchWt += (i.punch * w);
+              chartCutWt += (i.cut * w);
+              chartPendingWt += (i.pending * w);
+          }
+      });
+  }
   
   if(document.getElementById('kpiOverallPlTotal')) document.getElementById('kpiOverallPlTotal').textContent = `${plReqWt.toFixed(1)} kg`; 
   
@@ -686,7 +729,31 @@ function renderDashboard() {
               overallPoChartInstance = new Chart(document.getElementById('overallPoChart'), { type: 'doughnut', data: { labels: poDataArr.length === 1 ? ['No Orders'] : ['1st Container', '2nd Container', '3rd Container', 'Ready', 'Pending'], datasets: [{ data: poDataArr, backgroundColor: poDataArr.length === 1 ? ['#e2e8f0'] : ['#3b82f6', '#ec4899', '#a855f7', '#10b981', '#fb7185'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { display: poDataArr.length > 1, labels: { color: textColor } } } } }); 
           }
           
-          if(document.getElementById('overallPlChart')) { if(overallPlChartInstance) overallPlChartInstance.destroy(); let plDataArr = [ Number(plCompWt)||0, Number(plWipWt)||0, Number(plPendWt)||0 ]; if (plDataArr.every(v => v === 0)) plDataArr = [1]; overallPlChartInstance = new Chart(document.getElementById('overallPlChart'), { type: 'doughnut', data: { labels: plDataArr.length === 1 ? ['No PLs'] : ['Completed', 'WIP', 'Pending'], datasets: [{ data: plDataArr, backgroundColor: plDataArr.length === 1 ? ['#e2e8f0'] : ['#f59e0b', '#0ea5e9', '#e11d48'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { display: plDataArr.length > 1, labels: { color: textColor } } } } }); }
+          if(document.getElementById('overallPlChart')) { 
+              if(overallPlChartInstance) overallPlChartInstance.destroy(); 
+              let cData = [ Number(chartCutWt.toFixed(2))||0, Number(chartPunchWt.toFixed(2))||0, Number(chartWrapWt.toFixed(2))||0, Number(chartBoxWt.toFixed(2))||0, Number(chartManualWt.toFixed(2))||0, Number(chartPendingWt.toFixed(2))||0 ]; 
+              if(cData.every(v => v===0)) cData = [1]; 
+              overallPlChartInstance = new Chart(document.getElementById('overallPlChart'), { type: 'doughnut', data: { labels: cData.length===1 ? ['No PLs'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Completed', 'Pending'], datasets: [{ data: cData, backgroundColor: cData.length===1 ? ['#e2e8f0'] : ['#0284c7', '#ea580c', '#d946ef', '#10b981', '#059669', '#e11d48'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { display: false } } } }); 
+              
+              let plWeightBreakdownHtml = `
+              <div style="font-size: 11px; margin-top: 15px; width: 100%; display: flex; flex-direction: column; gap: 4px;">
+                  <div style="display:flex; justify-content:space-between; color: #e11d48;"><span>Pending:</span> <span>${chartPendingWt.toFixed(2)} kg</span></div>
+                  <div style="display:flex; justify-content:space-between; color: #0284c7;"><span>Cut Stage:</span> <span>${chartCutWt.toFixed(2)} kg</span></div>
+                  <div style="display:flex; justify-content:space-between; color: #ea580c;"><span>Punch Stage:</span> <span>${chartPunchWt.toFixed(2)} kg</span></div>
+                  <div style="display:flex; justify-content:space-between; color: #d946ef;"><span>Wrap Stage:</span> <span>${chartWrapWt.toFixed(2)} kg</span></div>
+                  <div style="display:flex; justify-content:space-between; color: #10b981;"><span>Box Stage:</span> <span>${chartBoxWt.toFixed(2)} kg</span></div>
+                  <div style="display:flex; justify-content:space-between; color: #059669; font-weight:800; border-top:1px dashed #cbd5e1; padding-top:4px;"><span>Completed:</span> <span>${chartManualWt.toFixed(2)} kg</span></div>
+              </div>`;
+              
+              const plParent = document.getElementById('overallPlChart').parentElement.parentElement;
+              const exPlList = plParent.querySelector('.pl-dashboard-breakdown-list');
+              if (exPlList) exPlList.remove();
+              const newPlList = document.createElement('div');
+              newPlList.className = 'pl-dashboard-breakdown-list';
+              newPlList.style.marginTop = '12px';
+              newPlList.innerHTML = plWeightBreakdownHtml;
+              plParent.appendChild(newPlList);
+          }
           
           if (document.getElementById('kpiMonthlyReject')) {
               let netRej = Math.max(0, mRejWt - mRecWt);
@@ -944,79 +1011,92 @@ function onShipmentPoSelect() { const poNum = document.getElementById('shipSelec
 function onShipmentProfileSelect() { const poNum = document.getElementById('shipSelectPo').value; const profile = document.getElementById('shipSelectProfile').value; const itemSelect = document.getElementById('shipSelectItemCode'); itemSelect.innerHTML = '<option value="">-- Select Item Code --</option>'; document.getElementById('shipSelectLength').innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('shipTotalOrderQty').value = ''; if (!poNum || !profile) return; const poItems = poList.filter(p => String(p.poNumber).trim() === poNum && String(p.profile).trim() === profile); const uniqueItems = []; poItems.forEach(p => { const matchedCat = masterData.find(m => String(m.profile) === profile && cleanLen(m.length) === cleanLen(p.length)); if(matchedCat && matchedCat.itemCode && !uniqueItems.includes(matchedCat.itemCode)) { uniqueItems.push(matchedCat.itemCode); itemSelect.appendChild(new Option(matchedCat.itemCode, matchedCat.itemCode)); } }); }
 function onShipmentItemCodeSelect() { const poNum = document.getElementById('shipSelectPo').value; const profile = document.getElementById('shipSelectProfile').value; const itemCode = document.getElementById('shipSelectItemCode').value; const lengthSelect = document.getElementById('shipSelectLength'); lengthSelect.innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('shipTotalOrderQty').value = ''; if (!poNum || !profile || !itemCode) return; const poItems = poList.filter(p => String(p.poNumber).trim() === poNum && String(p.profile).trim() === profile); const matches = poItems.filter(p => { const matchedCat = masterData.find(m => String(m.profile) === profile && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); matches.forEach(p => lengthSelect.appendChild(new Option(`${p.length} mm`, p.length))); if(matches.length === 1) { lengthSelect.value = matches[0].length; onShipmentLengthSelect(); } }
 function onShipmentLengthSelect() { const poNum = document.getElementById('shipSelectPo').value; const profile = document.getElementById('shipSelectProfile').value; const itemCode = document.getElementById('shipSelectItemCode').value; const length = document.getElementById('shipSelectLength').value; const po = poList.find(p => { if (String(p.poNumber).trim() !== String(poNum).trim() || cleanLen(p.length) !== cleanLen(length)) return false; const matchedCat = masterData.find(m => String(m.profile) === String(p.profile) && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); document.getElementById('shipTotalOrderQty').value = po ? `${po.orderQty} Pcs` : ''; }
-async function saveShipmentEntry() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const poNum = document.getElementById('shipSelectPo').value; const profile = document.getElementById('shipSelectProfile').value; const itemCode = document.getElementById('shipSelectItemCode').value; const length = document.getElementById('shipSelectLength').value; const shipDate = document.getElementById('shipmentDate').value; const month = document.getElementById('shipmentMonth').value; const container = document.getElementById('shipmentContainer').value; const qtyToShip = parseInt(document.getElementById('shipmentQty').value) || 0; if (!poNum || !profile || !itemCode || !length || qtyToShip <= 0) return; const po = poList.find(p => { if (String(p.poNumber).trim() !== String(poNum).trim() || cleanLen(p.length) !== cleanLen(length)) return false; const matchedCat = masterData.find(m => String(m.profile) === String(p.profile) && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); if(!po) return; let shippedSoFar = 0; shipmentList.filter(s => String(s.poNumber).trim() === String(poNum).trim() && String(s.profile).trim() === String(profile).trim() && cleanLen(s.length) === cleanLen(length)).forEach(s => shippedSoFar += s.shippedQty); const newRemaining = Math.max(0, po.orderQty - shippedSoFar - qtyToShip); const matchedCatItem = masterData.find(m => String(m.profile).trim() === String(profile).trim() && cleanLen(m.length) === cleanLen(length) && m.itemCode === itemCode); if (matchedCatItem) { if (matchedCatItem.crateQty < qtyToShip) { showToast("Warning: Exceeds available Crate Stock! Set to 0.", "warning"); matchedCatItem.crateQty = 0; } else { matchedCatItem.crateQty -= qtyToShip; } if (matchedCatItem.db_id) { try { await supabaseClient.from('master_catalog').update({ crate_qty: matchedCatItem.crateQty }).eq('id', matchedCatItem.db_id); } catch(e){} } } const newShipment = { shipment_date: shipDate, shipment_month: month, po_number: poNum, profile: profile, length: cleanLen(length), container: container, shipped_qty: qtyToShip, remaining_balance: newRemaining }; const { data: inserted } = await supabaseClient.from('shipments').insert([newShipment]).select(); if (inserted) shipmentList.unshift({ id: inserted[0].id, date: shipDate, month, poNumber: poNum, profile, length: cleanLen(length), container, shippedQty: qtyToShip, remainingBalance: newRemaining }); showToast("Shipment saved!", "success"); document.getElementById('shipmentEntryForm').reset(); renderShipmentHistoryTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable(); updatePoFilters(); renderPoDetailsTable(); } finally { isAppBusy=false; } }
+async function saveShipmentEntry() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const poNum = document.getElementById('shipSelectPo').value; const profile = document.getElementById('shipSelectProfile').value; const itemCode = document.getElementById('shipSelectItemCode').value; const length = document.getElementById('shipSelectLength').value; const shipDate = document.getElementById('shipmentDate').value; const month = document.getElementById('shipmentMonth').value; const container = document.getElementById('shipmentContainer').value; const qtyToShip = parseInt(document.getElementById('shipmentQty').value) || 0; if (!poNum || !profile || !itemCode || !length || qtyToShip <= 0) return; const po = poList.find(p => { if (String(p.poNumber).trim() !== String(poNum).trim() || cleanLen(p.length) !== cleanLen(length)) return false; const matchedCat = masterData.find(m => String(m.profile) === String(p.profile) && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); if(!po) return; let shippedSoFar = 0; shipmentList.filter(s => String(s.poNumber).trim() === String(poNum).trim() && String(s.profile).trim() === String(profile).trim() && cleanLen(s.length) === cleanLen(length)).forEach(s => shippedSoFar += s.shippedQty); const newRemaining = Math.max(0, po.orderQty - shippedSoFar - qtyToShip); const matchedCatItem = masterData.find(m => String(m.profile).trim() === String(profile).trim() && cleanLen(m.length) === cleanLen(length) && m.itemCode === itemCode); if (matchedCatItem) { if (matchedCatItem.crateQty < qtyToShip) { showToast("Warning: Exceeds available Crate Stock! Set to 0.", "warning"); matchedCatItem.crateQty = 0; } else { matchedCatItem.crateQty -= qtyToShip; } if (matchedCatItem.db_id) { try { await supabaseClient.from('master_catalog').update({ crate_qty: matchedCatItem.crateQty }).eq('id', matchedCatItem.db_id); } catch(e){} } } const newShipment = { shipment_date: shipDate, shipment_month: month, po_number: poNum, profile: profile, length: cleanLen(length), container: container, shipped_qty: qtyToShip, remaining_balance: newRemaining }; const { data: inserted } = await supabaseClient.from('shipments').insert([newShipment]).select(); if (inserted) shipmentList.unshift({ id: inserted[0].id, date: shipDate, month, poNumber: poNum, profile, length: cleanLen(length), container, shippedQty: qtyToShip, remainingBalance: newRemaining }); showToast("Shipment saved!", "success"); document.getElementById('shipmentEntryForm').reset(); window.renderShipmentHistoryTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable(); updatePoFilters(); renderPoDetailsTable(); } finally { isAppBusy=false; } }
 
-function renderShipmentHistoryTable() { 
+window.renderShipmentHistoryTable = function() { 
     const tab = document.getElementById('shipmentTab');
-    if(tab) {
-        let filterDiv = document.getElementById('shipFilterDivContainer');
-        if(!filterDiv) {
-            filterDiv = document.createElement('div');
-            filterDiv.id = 'shipFilterDivContainer';
-            filterDiv.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; background: rgba(16, 185, 129, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px dashed var(--emerald-border); flex-wrap:wrap; gap:10px;">
-                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <label style="font-weight:800; color:var(--primary-dark);"><i class="fa-solid fa-filter"></i> PO Number:</label>
-                    <select id="shipFilterPoInput" onchange="renderShipmentHistoryTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700; min-width: 150px;">
-                        <option value="">-- All POs --</option>
-                    </select>
-                    <label style="font-weight:800; color:var(--primary-dark); margin-left:10px;"><i class="fa-solid fa-calendar"></i> Month:</label>
-                    <select id="shipFilterMonthInput" onchange="renderShipmentHistoryTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700; min-width: 150px;">
-                        <option value="">-- All Months --</option>
-                        <option value="January">January</option><option value="February">February</option><option value="March">March</option><option value="April">April</option><option value="May">May</option><option value="June">June</option><option value="July">July</option><option value="August">August</option><option value="September">September</option><option value="October">October</option><option value="November">November</option><option value="December">December</option>
-                    </select>
-                </div>
-            </div>`;
-            const tableContainer = tab.querySelector('.table-container:last-of-type') || tab.querySelector('.table-container');
-            tab.insertBefore(filterDiv, tableContainer);
+    const tbody = document.getElementById('shipmentHistoryTableBody');
+    if(!tab || !tbody) return;
+    
+    let filterDiv = document.getElementById('shipFilterDivContainer');
+    if(!filterDiv) {
+        filterDiv = document.createElement('div');
+        filterDiv.id = 'shipFilterDivContainer';
+        filterDiv.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; background: rgba(16, 185, 129, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px dashed var(--emerald-border); flex-wrap:wrap; gap:10px;">
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <label style="font-weight:800; color:var(--primary-dark);"><i class="fa-solid fa-filter"></i> PO Number:</label>
+                <select id="shipFilterPoInput" onchange="window.renderShipmentHistoryTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700; min-width: 150px;">
+                    <option value="">-- All POs --</option>
+                </select>
+                <label style="font-weight:800; color:var(--primary-dark); margin-left:10px;"><i class="fa-solid fa-calendar"></i> Month:</label>
+                <select id="shipFilterMonthInput" onchange="window.renderShipmentHistoryTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700; min-width: 150px;">
+                    <option value="">-- All Months --</option>
+                    <option value="January">January</option><option value="February">February</option><option value="March">March</option><option value="April">April</option><option value="May">May</option><option value="June">June</option><option value="July">July</option><option value="August">August</option><option value="September">September</option><option value="October">October</option><option value="November">November</option><option value="December">December</option>
+                </select>
+                <label style="font-weight:800; color:var(--primary-dark); margin-left:10px;"><i class="fa-solid fa-box"></i> Container:</label>
+                <select id="shipFilterContainerInput" onchange="window.renderShipmentHistoryTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700; min-width: 150px;">
+                    <option value="">-- All Containers --</option>
+                    <option value="1st Container">1st Container</option>
+                    <option value="2nd Container">2nd Container</option>
+                    <option value="3rd Container">3rd Container</option>
+                </select>
+            </div>
+        </div>`;
+        const tableContainer = tbody.closest('.table-container') || tab.querySelector('.table-container:last-of-type');
+        if (tableContainer && tableContainer.parentNode) {
+            tableContainer.parentNode.insertBefore(filterDiv, tableContainer);
         }
-        
-        const poSelect = document.getElementById('shipFilterPoInput');
-        const monthSelect = document.getElementById('shipFilterMonthInput');
-        const currentPo = poSelect ? poSelect.value : '';
-        const currentMonth = monthSelect ? monthSelect.value : '';
-        
-        if (poSelect) {
-            poSelect.innerHTML = '<option value="">-- All PO Numbers --</option>';
-            [...new Set(shipmentList.map(s => String(s.poNumber).trim()))].forEach(po => {
-                const opt = new Option(po, po);
-                if(po === currentPo) opt.selected = true;
-                poSelect.appendChild(opt);
-            });
-        }
-        
-        if (monthSelect && currentMonth) {
-            monthSelect.value = currentMonth;
-        }
-        
-        const tbody = document.getElementById('shipmentHistoryTableBody'); 
-        if(!tbody) return;
-        tbody.innerHTML = ''; 
-        
-        let filteredList = shipmentList;
-        if(currentPo) {
-            filteredList = filteredList.filter(s => String(s.poNumber).trim() === currentPo);
-        }
-        if(currentMonth) {
-            filteredList = filteredList.filter(s => String(s.month).trim() === currentMonth);
-        }
-        
-        if (filteredList.length === 0) { 
-            tbody.innerHTML = `<tr><td colspan="10" style="color:#888; text-align:center;">No shipment records found.</td></tr>`; 
-            return; 
-        } 
-        let html = ''; 
-        filteredList.forEach(s => { 
-            const matched = masterData.find(m => String(m.profile) === String(s.profile) && cleanLen(m.length) === cleanLen(s.length)); 
-            html += `<tr><td>${s.date}</td><td><b>${s.poNumber}</b></td><td>${s.profile}</td><td>${matched ? matched.itemCode : '-'}</td><td>${s.length} mm</td><td>${s.month}</td><td>${s.container}</td><td><span class="stock-badge bg-box">${s.shippedQty} Pcs</span></td><td><span class="stock-badge bg-punch">${s.remainingBalance} Pcs</span></td>
-            <td>${currentUserRole === 'Admin' ? `
-                <button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="openGenericEdit('shipments', ${s.id}, {shipped_qty: '${s.shippedQty}', container: '${s.container}'})"><i class="fa-solid fa-pen"></i></button>
-                <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button>
-            ` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; 
-        }); 
-        tbody.innerHTML = html;
     }
-}
-function deleteShipmentItem(id) { if (currentUserRole !== 'Admin') return; showConfirm("Delete this Shipment?", async () => { await supabaseClient.from('shipments').delete().eq('id', id); shipmentList = shipmentList.filter(s => s.id !== id); renderShipmentHistoryTable(); renderDashboard(); renderBalanceWorkTable(); updatePoFilters(); renderPoDetailsTable(); showToast("Deleted", "success"); }); }
+    
+    const poSelect = document.getElementById('shipFilterPoInput');
+    const monthSelect = document.getElementById('shipFilterMonthInput');
+    const containerSelect = document.getElementById('shipFilterContainerInput');
+    
+    const currentPo = poSelect ? poSelect.value : '';
+    const currentMonth = monthSelect ? monthSelect.value : '';
+    const currentContainer = containerSelect ? containerSelect.value : '';
+    
+    if (poSelect) {
+        poSelect.innerHTML = '<option value="">-- All POs --</option>';
+        [...new Set(shipmentList.map(s => String(s.poNumber).trim()))].forEach(po => {
+            const opt = new Option(po, po);
+            if(po === currentPo) opt.selected = true;
+            poSelect.appendChild(opt);
+        });
+    }
+    if (monthSelect && currentMonth) monthSelect.value = currentMonth;
+    if (containerSelect && currentContainer) containerSelect.value = currentContainer;
+    
+    tbody.innerHTML = ''; 
+    
+    let filteredList = shipmentList;
+    if(currentPo) {
+        filteredList = filteredList.filter(s => String(s.poNumber).trim() === currentPo);
+    }
+    if(currentMonth) {
+        filteredList = filteredList.filter(s => String(s.month).trim().toLowerCase() === currentMonth.toLowerCase());
+    }
+    if(currentContainer) {
+        filteredList = filteredList.filter(s => String(s.container).trim() === currentContainer);
+    }
+    
+    if (filteredList.length === 0) { 
+        tbody.innerHTML = `<tr><td colspan="10" style="color:#888; text-align:center;">No shipment records found.</td></tr>`; 
+        return; 
+    } 
+    let html = ''; 
+    filteredList.forEach(s => { 
+        const matched = masterData.find(m => String(m.profile) === String(s.profile) && cleanLen(m.length) === cleanLen(s.length)); 
+        html += `<tr><td>${s.date}</td><td><b>${s.poNumber}</b></td><td>${s.profile}</td><td>${matched ? matched.itemCode : '-'}</td><td>${s.length} mm</td><td>${s.month}</td><td>${s.container}</td><td><span class="stock-badge bg-box">${s.shippedQty} Pcs</span></td><td><span class="stock-badge bg-punch">${s.remainingBalance} Pcs</span></td>
+        <td>${currentUserRole === 'Admin' ? `
+            <button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="openGenericEdit('shipments', ${s.id}, {shipped_qty: '${s.shippedQty}', container: '${s.container}'})"><i class="fa-solid fa-pen"></i></button>
+            <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button>
+        ` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; 
+    }); 
+    tbody.innerHTML = html;
+};
+
+function deleteShipmentItem(id) { if (currentUserRole !== 'Admin') return; showConfirm("Delete this Shipment?", async () => { await supabaseClient.from('shipments').delete().eq('id', id); shipmentList = shipmentList.filter(s => s.id !== id); window.renderShipmentHistoryTable(); renderDashboard(); renderBalanceWorkTable(); updatePoFilters(); renderPoDetailsTable(); showToast("Deleted", "success"); }); }
 
 window.exportPlReadyCrates = function() {
     let readyCratesExportData = []; 
@@ -1058,8 +1138,9 @@ function renderPlAnalytics(filteredPls) {
         container.style.gap = '15px';
         container.style.alignItems = 'stretch';
         
-        let totalWt = 0; let totCutWt = 0, totPunchWt = 0, totWrapWt = 0, totBoxWt = 0, totPendingWt = 0; let crateMap = {};
+        let totalWt = 0; let totCutWt = 0, totPunchWt = 0, totWrapWt = 0, totBoxWt = 0, totPendingWt = 0, totManualWt = 0; 
         
+        let crateMap = {};
         for(let i=1; i<=50; i++) { crateMap["Crate " + i] = { req: 0, comp: 0, items: [] }; }
 
         filteredPls.sort(sortCrates);
@@ -1069,7 +1150,6 @@ function renderPlAnalytics(filteredPls) {
             const reqQty = pl.pcsQty;
             const matched = availableStock.find(m => String(m.profile).trim() === String(pl.profile).trim() && cleanLen(m.length) === cleanLen(pl.length) && m.itemCode === pl.itemCode);
             const uw = matched ? (matched.unitWeight || 0) : 0;
-            totalWt += (reqQty * uw);
             
             let allocatedBox = 0, allocatedWrap = 0, allocatedPunch = 0, allocatedCut = 0;
             let remReq = reqQty;
@@ -1091,35 +1171,56 @@ function renderPlAnalytics(filteredPls) {
                 allocatedCut = Math.min(remReq, matched.cutQty); matched.cutQty -= allocatedCut; remReq -= allocatedCut;
             }
             
-            const pendingQty = remReq;
-            totBoxWt += (allocatedBox * uw); totWrapWt += (allocatedWrap * uw); totPunchWt += (allocatedPunch * uw); totCutWt += (allocatedCut * uw); totPendingWt += (pendingQty * uw);
-            
             if (!crateMap[pl.crateNo]) crateMap[pl.crateNo] = { req: 0, comp: 0, items: [] };
             crateMap[pl.crateNo].req += reqQty;
             crateMap[pl.crateNo].comp += allocatedBox;
-            crateMap[pl.crateNo].items.push({ profile: pl.profile, itemCode: pl.itemCode || (matched ? matched.itemCode : ''), length: pl.length, req: reqQty, crate: 0, box: allocatedBox, wrap: allocatedWrap, punch: allocatedPunch, cut: allocatedCut, pending: pendingQty, unitWeight: uw });
+            crateMap[pl.crateNo].items.push({ profile: pl.profile, itemCode: pl.itemCode || (matched ? matched.itemCode : ''), length: pl.length, req: reqQty, crate: 0, box: allocatedBox, wrap: allocatedWrap, punch: allocatedPunch, cut: allocatedCut, pending: remReq, unitWeight: uw });
         });
 
-        try { const ctx = document.getElementById('plWeightChart'); if(ctx && typeof Chart !== 'undefined') { if (plChartInstance) { plChartInstance.destroy(); } const textColor = isDarkMode ? '#f8fafc' : '#0f172a'; if (totalWt === 0) { plChartInstance = new Chart(ctx.getContext('2d'), { type: 'doughnut', data: { labels: ['No Data'], datasets: [{ data: [1], backgroundColor: ['#e2e8f0'] }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { display: false } } } }); } else { let cData = [ Number(totCutWt.toFixed(2))||0, Number(totPunchWt.toFixed(2))||0, Number(totWrapWt.toFixed(2))||0, Number(totBoxWt.toFixed(2))||0, Number(totPendingWt.toFixed(2))||0 ]; if(cData.every(v => v===0)) cData = [1]; plChartInstance = new Chart(ctx.getContext('2d'), { type: 'doughnut', data: { labels: cData.length===1?['No Data']:['Cut', 'Punch', 'Wrap', 'Box/Crate', 'Pending'], datasets: [{ data: cData, backgroundColor: cData.length===1?['#e2e8f0']:['#0284c7', '#ea580c', '#d946ef', '#10b981', '#e11d48'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { position: 'bottom', labels: { color: textColor } } } } }); } } } catch(err) {}
-        
-        let plWeightBreakdownHtml = `
-        <div style="font-size: 11px; margin-top: 15px; width: 100%; display: flex; flex-direction: column; gap: 4px;">
-            <div style="display:flex; justify-content:space-between; color: #e11d48;"><span>Pending Extrusion:</span> <span>${totPendingWt.toFixed(2)} kg</span></div>
-            <div style="display:flex; justify-content:space-between; color: #0284c7;"><span>Cut Stage:</span> <span>${totCutWt.toFixed(2)} kg</span></div>
-            <div style="display:flex; justify-content:space-between; color: #ea580c;"><span>Punch Stage:</span> <span>${totPunchWt.toFixed(2)} kg</span></div>
-            <div style="display:flex; justify-content:space-between; color: #d946ef;"><span>Wrap Stage:</span> <span>${totWrapWt.toFixed(2)} kg</span></div>
-            <div style="display:flex; justify-content:space-between; color: #10b981;"><span>Box / Crate Stage:</span> <span>${totBoxWt.toFixed(2)} kg</span></div>
-        </div>`;
-        
-        document.getElementById('plTotalWeightDisplay').innerHTML = totalWt > 0 ? `${totalWt.toFixed(1)} kg<br>${plWeightBreakdownHtml}` : '0.0 kg'; 
-        container.innerHTML = ''; 
-        
         let sortedCrateKeys = Object.keys(crateMap).sort((a,b) => {
              let valA = getCrateSortValue(a); let valB = getCrateSortValue(b);
              if (valA[0] !== valB[0]) return valA[0] - valB[0];
              if (valA[1] !== valB[1]) return valA[1] - valB[1];
              return valA[2].localeCompare(valB[2]);
         });
+        
+        for (let crateId of sortedCrateKeys) {
+            let crate = crateMap[crateId];
+            if (crate.req === 0) continue;
+            
+            let isManualComplete = globalManualCrates[crateId] ? true : false;
+            let isFullyAllocated = (crate.comp === crate.req && crate.req > 0);
+            
+            crate.items.forEach(i => {
+                let w = i.unitWeight;
+                totalWt += (i.req * w);
+                
+                if (isManualComplete) {
+                    totManualWt += (i.req * w);
+                } else {
+                    totBoxWt += (i.box * w);
+                    totWrapWt += (i.wrap * w);
+                    totPunchWt += (i.punch * w);
+                    totCutWt += (i.cut * w);
+                    totPendingWt += (i.pending * w);
+                }
+            });
+        }
+
+        try { const ctx = document.getElementById('plWeightChart'); if(ctx && typeof Chart !== 'undefined') { if (plChartInstance) { plChartInstance.destroy(); } const textColor = isDarkMode ? '#f8fafc' : '#0f172a'; if (totalWt === 0) { plChartInstance = new Chart(ctx.getContext('2d'), { type: 'doughnut', data: { labels: ['No Data'], datasets: [{ data: [1], backgroundColor: ['#e2e8f0'] }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { display: false } } } }); } else { let cData = [ Number(totCutWt.toFixed(2))||0, Number(totPunchWt.toFixed(2))||0, Number(totWrapWt.toFixed(2))||0, Number(totBoxWt.toFixed(2))||0, Number(totManualWt.toFixed(2))||0, Number(totPendingWt.toFixed(2))||0 ]; if(cData.every(v => v===0)) cData = [1]; plChartInstance = new Chart(ctx.getContext('2d'), { type: 'doughnut', data: { labels: cData.length===1?['No Data']:['Cut', 'Punch', 'Wrap', 'Box', 'Completed', 'Pending'], datasets: [{ data: cData, backgroundColor: cData.length===1?['#e2e8f0']:['#0284c7', '#ea580c', '#d946ef', '#10b981', '#059669', '#e11d48'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { position: 'bottom', labels: { color: textColor } } } } }); } } } catch(err) {}
+        
+        let plWeightBreakdownHtml = `
+        <div style="font-size: 11px; margin-top: 15px; width: 100%; display: flex; flex-direction: column; gap: 4px;">
+            <div style="display:flex; justify-content:space-between; color: #e11d48;"><span>Pending:</span> <span>${totPendingWt.toFixed(2)} kg</span></div>
+            <div style="display:flex; justify-content:space-between; color: #0284c7;"><span>Cut Stage:</span> <span>${totCutWt.toFixed(2)} kg</span></div>
+            <div style="display:flex; justify-content:space-between; color: #ea580c;"><span>Punch Stage:</span> <span>${totPunchWt.toFixed(2)} kg</span></div>
+            <div style="display:flex; justify-content:space-between; color: #d946ef;"><span>Wrap Stage:</span> <span>${totWrapWt.toFixed(2)} kg</span></div>
+            <div style="display:flex; justify-content:space-between; color: #10b981;"><span>Box Stage:</span> <span>${totBoxWt.toFixed(2)} kg</span></div>
+            <div style="display:flex; justify-content:space-between; color: #059669; font-weight:800; border-top:1px dashed #cbd5e1; padding-top:4px;"><span>Completed:</span> <span>${totManualWt.toFixed(2)} kg</span></div>
+        </div>`;
+        
+        document.getElementById('plTotalWeightDisplay').innerHTML = totalWt > 0 ? `${totalWt.toFixed(1)} kg<br>${plWeightBreakdownHtml}` : '0.0 kg'; 
+        container.innerHTML = ''; 
         
         let html = '';
         for (let crateId of sortedCrateKeys) {
@@ -1217,6 +1318,7 @@ window.toggleManualCrate = async function(crateId, isChecked) {
     } else {
         delete globalManualCrates[crateId];
     }
+    localStorage.setItem('manual_crates', JSON.stringify(globalManualCrates));
     renderPackingListTable();
     renderDashboard();
     await window.saveManualCratesToDB();
@@ -1226,6 +1328,7 @@ window.saveManualCrateQty = async function(crateId, qty) {
     if (currentUserRole !== 'Admin') return;
     if (globalManualCrates[crateId]) {
         globalManualCrates[crateId].qty = parseInt(qty) || 0;
+        localStorage.setItem('manual_crates', JSON.stringify(globalManualCrates));
         renderDashboard();
         await window.saveManualCratesToDB();
     }
