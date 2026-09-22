@@ -5,6 +5,8 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentUserRole = null; let isAdminUnlocked = false; let isDarkMode = false; let isAppBusy = false;
 let masterChartInstance = null, overallPoChartInstance = null, overallPlChartInstance = null, plChartInstance = null, monthlyShiftChartInstance = null, poChartInstances = [], rejectDashChart = null, rejectProfileChartInstance = null;
 let cardboardStockList = [], dailyInstructionsList = [], masterData = [], historyLogs = [], poList = [], shipmentList = [], packingLists = [], rejectLogs = [], recoverLogs = []; 
+let globalManualCrates = {}; 
+let shipmentDeadline = null;
 
 const cleanLen = (val) => String(val || '').replace(/ mm/gi, '').trim();
 
@@ -16,9 +18,9 @@ function logoutUser() { currentUserRole = null; isAdminUnlocked = false; documen
 
 function updateRoleUI() {
   const roleBadge = document.getElementById('userRoleBadge'); if (roleBadge) { roleBadge.textContent = currentUserRole + " Mode"; roleBadge.style.background = currentUserRole === 'Admin' ? '#e11d48' : (currentUserRole === 'Planner' ? '#0369a1' : '#059669'); }
-  const elements = { adminEntryTab: document.getElementById('tabBtn-adminEntry'), poTab: document.getElementById('tabBtn-po'), shipmentTab: document.getElementById('tabBtn-shipment'), historyTab: document.getElementById('tabBtn-history'), planInputArea: document.getElementById('planInputArea'), cbAdminArea: document.getElementById('cbAdminArea'), plAdminArea1: document.getElementById('plAdminArea1'), plAdminArea2: document.getElementById('plAdminArea2'), resetBtn: document.getElementById('resetAllBtn'), addProfileBtn: document.getElementById('addProfileBtn'), rejectTabBtn: document.getElementById('tabBtn-rejectTracker') };
+  const elements = { adminEntryTab: document.getElementById('tabBtn-adminEntry'), poTab: document.getElementById('tabBtn-po'), shipmentTab: document.getElementById('tabBtn-shipment'), historyTab: document.getElementById('tabBtn-history'), planInputArea: document.getElementById('planInputArea'), cbAdminArea: document.getElementById('cbAdminArea'), plAdminArea1: document.getElementById('plAdminArea1'), plAdminArea2: document.getElementById('plAdminArea2'), resetBtn: document.getElementById('resetAllBtn'), addProfileBtn: document.getElementById('addProfileBtn'), rejectTabBtn: document.getElementById('tabBtn-rejectTracker'), plDeadlineSetter: document.getElementById('plDeadlineSetterContainer') };
   if (currentUserRole === 'Admin') { Object.values(elements).forEach(el => { if(el) el.style.display = ''; }); if (document.getElementById('cbTxType')) document.getElementById('cbTxType').disabled = false; } 
-  else if (currentUserRole === 'Planner') { [elements.adminEntryTab, elements.poTab, elements.shipmentTab, elements.historyTab, elements.planInputArea, elements.cbAdminArea, elements.rejectTabBtn].forEach(el => { if(el) el.style.display = ''; }); [elements.plAdminArea1, elements.plAdminArea2, elements.resetBtn, elements.addProfileBtn].forEach(el => { if(el) el.style.display = 'none'; }); if (document.getElementById('cbTxType')) { document.getElementById('cbTxType').value = 'IN'; document.getElementById('cbTxType').disabled = true; } } 
+  else if (currentUserRole === 'Planner') { [elements.adminEntryTab, elements.poTab, elements.shipmentTab, elements.historyTab, elements.planInputArea, elements.cbAdminArea, elements.rejectTabBtn].forEach(el => { if(el) el.style.display = ''; }); [elements.plAdminArea1, elements.plAdminArea2, elements.resetBtn, elements.addProfileBtn, elements.plDeadlineSetter].forEach(el => { if(el) el.style.display = 'none'; }); if (document.getElementById('cbTxType')) { document.getElementById('cbTxType').value = 'IN'; document.getElementById('cbTxType').disabled = true; } } 
   else if (currentUserRole === 'Local') { Object.values(elements).forEach(el => { if(el) el.style.display = 'none'; }); }
   
   setTimeout(() => {
@@ -33,7 +35,16 @@ function showToast(message, type = 'success') { const container = document.getEl
 
 let confirmCallback = null; function showConfirm(message, callback) { document.getElementById('confirmMessage').innerHTML = message; document.getElementById('confirmModal').style.display = 'flex'; confirmCallback = callback; } function closeConfirmModal() { document.getElementById('confirmModal').style.display = 'none'; confirmCallback = null; } function executeConfirm() { if(confirmCallback) confirmCallback(); closeConfirmModal(); }
 function toggleTheme() { isDarkMode = !isDarkMode; if(isDarkMode) { document.body.classList.add('dark-mode'); showToast("Dark Mode", "success"); } else { document.body.classList.remove('dark-mode'); showToast("Light Mode", "success"); } renderDashboard(); }
-function startLiveClock() { function updateClock() { const now = new Date(); document.getElementById('liveClockDisplay').textContent = now.toLocaleTimeString('en-US', { hour12: true }); document.getElementById('liveDateDisplay').textContent = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); } updateClock(); setInterval(updateClock, 1000); }
+function startLiveClock() { 
+    function updateClock() { 
+        const now = new Date(); 
+        document.getElementById('liveClockDisplay').textContent = now.toLocaleTimeString('en-US', { hour12: true }); 
+        document.getElementById('liveDateDisplay').textContent = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); 
+        if(typeof window.updateShipmentCountdown === 'function') window.updateShipmentCountdown();
+    } 
+    updateClock(); 
+    setInterval(updateClock, 1000); 
+}
 
 function exportTableToExcel(dataArray, filename, sheetName) {
     if(!dataArray || dataArray.length === 0) { showToast("No data to export!", "warning"); return; }
@@ -67,8 +78,140 @@ window.saveGenericEdit = async function() {
 
 const INITIAL_CATALOG = [ {"profile": "1037", "length": "1727.2", "unit_weight": 1.601, "item_code": "RT-BT68", "material": "1234"} ];
 
+window.injectCountdownUI = function() {
+    if (!document.getElementById('shipmentCountdownContainer')) {
+        const dashTab = document.getElementById('dashboardTab');
+        if(dashTab) {
+            const countdownHtml = `
+            <div id="shipmentCountdownContainer" style="display:none; background: linear-gradient(135deg, #1e3a8a, #0284c7); color: white; padding: 18px 25px; border-radius: var(--radius-lg); margin-bottom: 24px; box-shadow: 0 10px 25px -5px rgba(2, 132, 199, 0.4); justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; border: 1px solid #38bdf8; animation: fadeInUp 0.5s ease;">
+                <div style="display:flex; align-items:center; gap:20px;">
+                    <div style="background: rgba(255,255,255,0.1); padding: 14px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: inset 0 2px 5px rgba(0,0,0,0.2);">
+                        <i class="fa-solid fa-ship" style="font-size: 32px; color: #bae6fd; animation: floatCyber 3s ease-in-out infinite alternate;"></i>
+                    </div>
+                    <div>
+                        <h4 style="margin: 0 0 5px 0; font-size: 13.5px; color: #e0f2fe; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 900;">Next Shipment Handover</h4>
+                        <div id="shipmentTargetDisplay" style="font-size: 16px; color: #fff; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">Not Set</div>
+                    </div>
+                </div>
+                <div style="display:flex; flex-direction:column; align-items:flex-end;">
+                    <div style="font-size: 11px; color: #bae6fd; text-transform: uppercase; font-weight: 800; letter-spacing: 1px; margin-bottom: 5px;">Time Remaining</div>
+                    <div id="countdownTimerDisplay" style="font-size: 26px; font-weight: 900; letter-spacing: 2px; background: rgba(0,0,0,0.3); padding: 10px 20px; border-radius: 12px; font-variant-numeric: tabular-nums; border: 1px solid rgba(255,255,255,0.15); text-shadow: 0 2px 5px rgba(0,0,0,0.4); display: flex; align-items: center;">
+                        -- : -- : --
+                    </div>
+                </div>
+            </div>`;
+            dashTab.insertAdjacentHTML('afterbegin', countdownHtml);
+        }
+    }
+
+    if (!document.getElementById('plDeadlineSetterContainer')) {
+        const plTab = document.getElementById('packingListTab');
+        if(plTab) {
+            const plBanner = plTab.querySelector('.cargo-banner-header');
+            if (plBanner) {
+                const setterHtml = `
+                <div class="admin-restricted-area" id="plDeadlineSetterContainer" style="background: linear-gradient(135deg, #f0f9ff, #e0f2fe); border: 1px dashed #0284c7; padding: 18px; border-radius: var(--radius-md); margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);">
+                    <div style="display: flex; align-items: center; gap: 14px;">
+                        <i class="fa-solid fa-clock-rotate-left" style="font-size: 28px; color: #0284c7;"></i>
+                        <div>
+                            <h4 style="margin: 0 0 5px 0; color: #0369a1; font-size: 15.5px; font-weight: 900; text-transform: uppercase;">Set Shipment Handover Deadline</h4>
+                            <p style="margin: 0; font-size: 12.5px; color: #475569; font-weight: 600;">Activate a live countdown on the Executive Dashboard for all users.</p>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                        <input type="datetime-local" id="shipmentDeadlineInput" style="padding: 10px 14px; border: 2px solid #bae6fd; border-radius: 8px; font-weight: 800; color: #0369a1; font-family: inherit; font-size: 14px; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.05); outline: none;">
+                        <button class="btn" style="background: linear-gradient(135deg, #0284c7, #0369a1); padding: 10px 20px; font-size: 13.5px;" onclick="window.saveShipmentDeadline()"><i class="fa-solid fa-bolt"></i> Update Timer</button>
+                        <button class="btn btn-danger" style="padding: 10px 18px; background: linear-gradient(135deg, #e11d48, #9f1239);" onclick="window.clearShipmentDeadline()" title="Clear Timer"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </div>`;
+                plBanner.insertAdjacentHTML('afterend', setterHtml);
+            }
+        }
+    }
+};
+
+window.updateShipmentCountdown = function() {
+    const container = document.getElementById('shipmentCountdownContainer');
+    const targetDisplay = document.getElementById('shipmentTargetDisplay');
+    const timerDisplay = document.getElementById('countdownTimerDisplay');
+    
+    if (!container || !targetDisplay || !timerDisplay) return;
+    
+    if (!shipmentDeadline || isNaN(shipmentDeadline)) {
+        container.style.display = 'none';
+        return;
+    }
+    
+    container.style.display = 'flex';
+    
+    const options = { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+    targetDisplay.textContent = shipmentDeadline.toLocaleDateString('en-US', options);
+    
+    const now = new Date();
+    const diff = shipmentDeadline - now;
+    
+    if (diff <= 0) {
+        timerDisplay.innerHTML = `<span style="color:#fecdd3; font-size:16px; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-triangle-exclamation"></i> OVERDUE / HANDOVER PASSED</span>`;
+        container.style.background = 'linear-gradient(135deg, #9f1239, #be123c)';
+        container.style.borderColor = '#fda4af';
+        return;
+    }
+    
+    container.style.background = 'linear-gradient(135deg, #1e3a8a, #0284c7)';
+    container.style.borderColor = '#38bdf8';
+    
+    const d = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const h = Math.floor((diff / (1000 * 60 * 60)) % 24);
+    const m = Math.floor((diff / 1000 / 60) % 60);
+    const s = Math.floor((diff / 1000) % 60);
+    
+    let timeStr = '';
+    if (d > 0) timeStr += `<span style="color:#bae6fd; margin-right:10px;">${d} <span style="font-size:12px;">Days</span></span> `;
+    timeStr += `${String(h).padStart(2, '0')}<span style="font-size:14px;color:#93c5fd;margin:0 4px;">h</span> : ${String(m).padStart(2, '0')}<span style="font-size:14px;color:#93c5fd;margin:0 4px;">m</span> : ${String(s).padStart(2, '0')}<span style="font-size:14px;color:#93c5fd;margin-left:4px;">s</span>`;
+    
+    timerDisplay.innerHTML = timeStr;
+};
+
+window.saveShipmentDeadline = async function() {
+    if (currentUserRole !== 'Admin') return;
+    const val = document.getElementById('shipmentDeadlineInput').value;
+    if (!val) { showToast("Please select a date and time", "warning"); return; }
+    
+    let isoStr = new Date(val).toISOString();
+    let existing = dailyInstructionsList.find(i => i.target_user === 'SYS_SHIPMENT_DEADLINE');
+    
+    if (existing) {
+        existing.message = isoStr;
+        try { await supabaseClient.from('daily_instructions').update({ message: isoStr }).eq('id', existing.id); } catch(e){}
+    } else {
+        let newRec = { target_date: new Date().toISOString().split('T')[0], target_user: 'SYS_SHIPMENT_DEADLINE', priority: 'Normal', message: isoStr, status: 'Completed', action_taken: 'System Data' };
+        try { 
+            let {data} = await supabaseClient.from('daily_instructions').insert([newRec]).select(); 
+            if(data && data.length > 0) dailyInstructionsList.push(data[0]);
+        } catch(e){}
+    }
+    shipmentDeadline = new Date(isoStr);
+    showToast("Shipment deadline activated!", "success");
+    window.updateShipmentCountdown();
+    window.scrollTo({top: 0, behavior: 'smooth'});
+};
+
+window.clearShipmentDeadline = async function() {
+    if (currentUserRole !== 'Admin') return;
+    let existing = dailyInstructionsList.find(i => i.target_user === 'SYS_SHIPMENT_DEADLINE');
+    if (existing) {
+        try { await supabaseClient.from('daily_instructions').delete().eq('id', existing.id); } catch(e){}
+        dailyInstructionsList = dailyInstructionsList.filter(i => i.id !== existing.id);
+    }
+    document.getElementById('shipmentDeadlineInput').value = '';
+    shipmentDeadline = null;
+    window.updateShipmentCountdown();
+    showToast("Shipment deadline cleared!", "success");
+};
+
 window.onload = function() {
   injectGenericEditModal();
+  injectCountdownUI();
   startLiveClock(); const today = new Date().toISOString().split('T')[0];
   ['entryDate', 'poDate', 'shipmentDate', 'plDate', 'historyDateSelect', 'cbDate', 'planDate', 'recDate'].forEach(id => { if(document.getElementById(id)) document.getElementById(id).value = today; });
   if(document.getElementById('rejDate')) document.getElementById('rejDate').value = today;
@@ -114,13 +257,38 @@ async function loadDataFromSupabase(isSilent = false) {
     const results = await Promise.all([
         safeFetch('master_catalog'), safeFetch('production_orders', { order: {col: 'id', asc: false}, limit: 1000 }), safeFetch('shipments', { order: {col: 'id', asc: false}, limit: 1500 }), 
         safeFetch('packing_list', { order: {col: 'id', asc: false}, limit: 2000 }), safeFetch('history_logs', { order: {col: 'id', asc: false}, limit: 1500 }), safeFetch('reject_logs', { order: {col: 'id', asc: false} }),
-        safeFetch('recover_logs', { order: {col: 'id', asc: false} }), safeFetch('cardboard_stock', { order: {col: 'id', asc: false}, limit: 1500 }), safeFetch('daily_instructions', { order: {col: 'id', asc: false}, limit: 100 })
+        safeFetch('recover_logs', { order: {col: 'id', asc: false} }), safeFetch('cardboard_stock', { order: {col: 'id', asc: false}, limit: 1500 }), safeFetch('daily_instructions', { order: {col: 'id', asc: false} })
     ]);
 
     let catDataRaw = results[0];
     if (catDataRaw.length === 0) { try { const { data: seeded } = await supabaseClient.from('master_catalog').insert(INITIAL_CATALOG.map(i => ({ profile: i.profile, length: i.length, unit_weight: i.unit_weight || 0, item_code: i.item_code || '', material: i.material || '', cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0, box_capacity: 100, ex_length: '' }))).select(); catDataRaw = seeded || []; } catch(e) {} }
 
     const poData = results[1], shipData = results[2], plData = results[3], logData = results[4], rjData = results[5], rcData = results[6], cbData = results[7], instData = results[8];
+    
+    let syncRow = instData.find(i => i.target_user === 'SYS_CRATES_SYNC');
+    if (syncRow && syncRow.message) {
+        try { globalManualCrates = JSON.parse(syncRow.message); } catch(e) { globalManualCrates = {}; }
+    } else {
+        globalManualCrates = {};
+    }
+    
+    let deadlineRow = instData.find(i => i.target_user === 'SYS_SHIPMENT_DEADLINE');
+    if (deadlineRow && deadlineRow.message) {
+        shipmentDeadline = new Date(deadlineRow.message);
+        if (document.getElementById('shipmentDeadlineInput')) {
+            let d = shipmentDeadline;
+            let year = d.getFullYear();
+            let month = String(d.getMonth() + 1).padStart(2, '0');
+            let day = String(d.getDate()).padStart(2, '0');
+            let hour = String(d.getHours()).padStart(2, '0');
+            let min = String(d.getMinutes()).padStart(2, '0');
+            document.getElementById('shipmentDeadlineInput').value = `${year}-${month}-${day}T${hour}:${min}`;
+        }
+    } else {
+        shipmentDeadline = null;
+        if (document.getElementById('shipmentDeadlineInput')) document.getElementById('shipmentDeadlineInput').value = '';
+    }
+    
     let localExtras = []; try { const stored = localStorage.getItem('alumex_master_extras'); if (stored) localExtras = JSON.parse(stored); } catch(e) {}
     
     const uniqueData = []; const seenMap = new Map();
@@ -166,10 +334,26 @@ async function loadDataFromSupabase(isSilent = false) {
           updateRoleUI(); 
           setTimeout(() => {
               renderDashboard(); renderProfileSummaryTable(); checkDateStatus(); renderHistoryData(); updatePoFilters(); renderPoDetailsTable(); renderShipmentHistoryTable(); renderPackingListTable(); renderPoCharts(); renderBalanceWorkTable(); renderCardboardStock(); renderDailyInstructions(); renderRejectTable(); renderRecoverTable();
+              window.updateShipmentCountdown();
           }, 10);
       } 
   }
 }
+
+window.saveManualCratesToDB = async function() {
+    let jsonStr = JSON.stringify(globalManualCrates);
+    let existing = dailyInstructionsList.find(i => i.target_user === 'SYS_CRATES_SYNC');
+    if (existing) {
+        existing.message = jsonStr;
+        try { await supabaseClient.from('daily_instructions').update({ message: jsonStr }).eq('id', existing.id); } catch(e){}
+    } else {
+        let newRec = { target_date: new Date().toISOString().split('T')[0], target_user: 'SYS_CRATES_SYNC', priority: 'Normal', message: jsonStr, status: 'Completed', action_taken: 'System Data' };
+        try { 
+            let {data} = await supabaseClient.from('daily_instructions').insert([newRec]).select(); 
+            if(data && data.length>0) dailyInstructionsList.push(data[0]); 
+        } catch(e){}
+    }
+};
 
 function switchTab(tabId, btn) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active')); 
@@ -239,7 +423,9 @@ window.saveCbAdjust = async function() { const profile = document.getElementById
 async function saveDailyInstruction() { if(isAppBusy) return; isAppBusy=true; try{ if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return; const date = document.getElementById('planDate').value, user = document.getElementById('planUser').value, priority = document.getElementById('planPriority').value, msg = document.getElementById('planMessage').value.trim(); if(!date || !msg) return; const newInst = { target_date: date, target_user: user, priority: priority, message: msg, status: 'Pending', action_taken: '' }; try { const { data } = await supabaseClient.from('daily_instructions').insert([newInst]).select(); if(data && data.length > 0) dailyInstructionsList.unshift(data[0]); } catch (e) { newInst.id = Date.now(); dailyInstructionsList.unshift(newInst); } document.getElementById('planMessage').value = ''; showToast("Instruction pinned!", "success"); renderDailyInstructions(); } finally { isAppBusy=false; } }
 async function markInstructionDone(id) { if (currentUserRole !== 'Local' && currentUserRole !== 'Admin') return; const actionTxt = document.getElementById('action_txt_' + id) ? document.getElementById('action_txt_' + id).value.trim() : ''; try { await supabaseClient.from('daily_instructions').update({ status: 'Completed', action_taken: actionTxt }).eq('id', id); const inst = dailyInstructionsList.find(i => i.id === id); if(inst) { inst.status = 'Completed'; inst.action_taken = actionTxt; } showToast("Task marked completed!", "success"); renderDailyInstructions(); } catch(e) {} }
 async function deleteInstruction(id) { if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return; showConfirm("Delete this instruction?", async () => { await supabaseClient.from('daily_instructions').delete().eq('id', id); dailyInstructionsList = dailyInstructionsList.filter(i => i.id !== id); renderDailyInstructions(); showToast("Removed.", "success"); }); }
-function renderDailyInstructions() { const container = document.getElementById('instructionBoardContainer'); if(!container) return; let html = ''; const badge = document.getElementById('planNotificationBadge'), headerBtn = document.getElementById('headerDailyPlanBtn'); let pendingCount = dailyInstructionsList.filter(i => i.status === 'Pending').length; if(pendingCount > 0) { badge.style.display = 'inline-block'; badge.textContent = pendingCount; headerBtn.style.animation = 'pulseNotepadBtn 2s infinite'; } else { badge.style.display = 'none'; headerBtn.style.animation = 'none'; } if (dailyInstructionsList.length === 0) { container.innerHTML = `<div style="text-align: center; color: #b45309; padding: 20px; font-weight:800; font-size:16px;">Board is clear!</div>`; return; } dailyInstructionsList.forEach(inst => { const isDone = inst.status === 'Completed'; const statusClass = isDone ? 'status-badge-completed' : 'status-badge-pending'; let actionHtml = isDone ? `<div style="width: 100%; margin-top: 10px; padding: 8px; background: rgba(16, 185, 129, 0.1); border-radius: 6px; font-size: 13px;"><b>Action:</b> ${inst.action_taken || 'Completed.'}</div>` : (currentUserRole === 'Local' || currentUserRole === 'Admin' ? `<div style="width: 100%; margin-top: 10px; display: flex; gap: 8px;"><input type="text" id="action_txt_${inst.id}" placeholder="Type action..." style="flex: 1; padding: 8px; border-radius: 6px; font-size: 13px;"><button class="btn btn-accent" onclick="markInstructionDone(${inst.id})"><i class="fa-solid fa-check"></i> Done</button></div>` : ''); let adminActions = (currentUserRole === 'Admin' || currentUserRole === 'Planner') ? `<button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteInstruction(${inst.id})"><i class="fa-solid fa-trash"></i></button>` : ''; html += `<div class="instruction-card ${inst.priority === 'High' ? 'inst-high' : 'inst-normal'}"><div class="inst-header"><span>Date: <b>${inst.target_date}</b></span><span>To: <b>${inst.target_user}</b></span>${inst.priority === 'High' ? `<span style="color: #ef4444;"><i class="fa-solid fa-thumbtack"></i> High</span>` : ''}</div><div class="inst-body">${inst.message}</div><div class="inst-footer"><span class="${statusClass}">${inst.status}</span>${adminActions}</div>${actionHtml}</div>`; }); container.innerHTML = html; }
+function renderDailyInstructions() { const container = document.getElementById('instructionBoardContainer'); if(!container) return; let html = ''; const badge = document.getElementById('planNotificationBadge'), headerBtn = document.getElementById('headerDailyPlanBtn'); 
+let displayList = dailyInstructionsList.filter(i => i.target_user !== 'SYS_CRATES_SYNC' && i.target_user !== 'SYS_SHIPMENT_DEADLINE');
+let pendingCount = displayList.filter(i => i.status === 'Pending').length; if(pendingCount > 0) { badge.style.display = 'inline-block'; badge.textContent = pendingCount; headerBtn.style.animation = 'pulseNotepadBtn 2s infinite'; } else { badge.style.display = 'none'; headerBtn.style.animation = 'none'; } if (displayList.length === 0) { container.innerHTML = `<div style="text-align: center; color: #b45309; padding: 20px; font-weight:800; font-size:16px;">Board is clear!</div>`; return; } displayList.forEach(inst => { const isDone = inst.status === 'Completed'; const statusClass = isDone ? 'status-badge-completed' : 'status-badge-pending'; let actionHtml = isDone ? `<div style="width: 100%; margin-top: 10px; padding: 8px; background: rgba(16, 185, 129, 0.1); border-radius: 6px; font-size: 13px;"><b>Action:</b> ${inst.action_taken || 'Completed.'}</div>` : (currentUserRole === 'Local' || currentUserRole === 'Admin' ? `<div style="width: 100%; margin-top: 10px; display: flex; gap: 8px;"><input type="text" id="action_txt_${inst.id}" placeholder="Type action..." style="flex: 1; padding: 8px; border-radius: 6px; font-size: 13px;"><button class="btn btn-accent" onclick="markInstructionDone(${inst.id})"><i class="fa-solid fa-check"></i> Done</button></div>` : ''); let adminActions = (currentUserRole === 'Admin' || currentUserRole === 'Planner') ? `<button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteInstruction(${inst.id})"><i class="fa-solid fa-trash"></i></button>` : ''; html += `<div class="instruction-card ${inst.priority === 'High' ? 'inst-high' : 'inst-normal'}"><div class="inst-header"><span>Date: <b>${inst.target_date}</b></span><span>To: <b>${inst.target_user}</b></span>${inst.priority === 'High' ? `<span style="color: #ef4444;"><i class="fa-solid fa-thumbtack"></i> High</span>` : ''}</div><div class="inst-body">${inst.message}</div><div class="inst-footer"><span class="${statusClass}">${inst.status}</span>${adminActions}</div>${actionHtml}</div>`; }); container.innerHTML = html; }
 
 function renderDashboard() {
   let totalStockPcs = 0, totalStockWt = 0;
@@ -300,44 +486,52 @@ function renderDashboard() {
   let dashCrateMap = {};
   let availStockForCrates = masterData.map(m => ({ ...m }));
   let sortedPlsForCrates = [...packingLists].sort(sortCrates);
-  let compPlBoxes = 0, totPlBoxes = 0;
+  
+  let domTotalPlReqBoxes = 0; 
+  let domTotalPlCompletedBoxes = 0;
+  
+  let boxStagePlQty = 0;
+  let crateStagePlQty = 0;
 
   sortedPlsForCrates.forEach(pl => {
       let reqQty = pl.pcsQty;
       let matched = availStockForCrates.find(m => String(m.profile).trim() == String(pl.profile).trim() && String(m.itemCode).trim() == String(pl.itemCode).trim() && cleanLen(m.length) == cleanLen(pl.length));
       let cap = matched ? (matched.boxCapacity || 100) : 100;
       
-      totPlBoxes += Math.ceil(reqQty / cap);
+      domTotalPlReqBoxes += (reqQty / cap);
 
       let allocatedBox = 0;
+      let allocatedCrate = 0;
       if (matched) {
-          let combinedBoxStock = matched.boxQty + matched.crateQty;
-          allocatedBox = Math.min(reqQty, combinedBoxStock);
-          if (allocatedBox > matched.crateQty) {
-              matched.boxQty -= (allocatedBox - matched.crateQty);
-              matched.crateQty = 0;
-          } else {
-              matched.crateQty -= allocatedBox;
-          }
-          compPlBoxes += Math.floor(allocatedBox / cap);
+          allocatedCrate = Math.min(reqQty, matched.crateQty);
+          matched.crateQty -= allocatedCrate;
+          
+          let remReq = reqQty - allocatedCrate;
+          allocatedBox = Math.min(remReq, matched.boxQty);
+          matched.boxQty -= allocatedBox;
+          
+          domTotalPlCompletedBoxes += ((allocatedCrate + allocatedBox) / cap);
+          
+          boxStagePlQty += Math.floor(allocatedBox / cap);
+          crateStagePlQty += Math.floor(allocatedCrate / cap);
       }
+      
       if(!dashCrateMap[pl.crateNo]) dashCrateMap[pl.crateNo] = { req: 0, comp: 0 };
       dashCrateMap[pl.crateNo].req += reqQty;
-      dashCrateMap[pl.crateNo].comp += allocatedBox;
+      dashCrateMap[pl.crateNo].comp += (allocatedBox + allocatedCrate);
   });
 
   let finalTotCrates = 0;
   let finalCompCrates = 0;
-  let manualCrates = JSON.parse(localStorage.getItem('manual_crates') || '{}');
   let manualCompleteCrateQtySum = 0;
 
   for (let crateId in dashCrateMap) {
       let c = dashCrateMap[crateId];
-      if (c.req > 0 || manualCrates[crateId]) {
+      if (c.req > 0 || globalManualCrates[crateId]) {
           finalTotCrates++;
-          if (manualCrates[crateId]) {
+          if (globalManualCrates[crateId]) {
               finalCompCrates++;
-              manualCompleteCrateQtySum += (manualCrates[crateId].qty || 0);
+              manualCompleteCrateQtySum += (globalManualCrates[crateId].qty || 0);
           } else if (c.req > 0 && c.comp >= c.req) {
               finalCompCrates++;
           }
@@ -345,7 +539,16 @@ function renderDashboard() {
   }
 
   if(document.getElementById('kpiShipCrates')) document.getElementById('kpiShipCrates').textContent = `${finalCompCrates} / ${finalTotCrates} Crates`;
-  if(document.getElementById('kpiShipBoxes')) document.getElementById('kpiShipBoxes').textContent = `${compPlBoxes} / ${totPlBoxes} Boxes Completed`;
+  
+  if(document.getElementById('kpiTotalPlBoxes')) document.getElementById('kpiTotalPlBoxes').textContent = Math.ceil(domTotalPlReqBoxes).toLocaleString(); 
+  
+  if(document.getElementById('kpiTotalPlCompletedBoxes')) {
+      document.getElementById('kpiTotalPlCompletedBoxes').innerHTML = `${Math.floor(domTotalPlCompletedBoxes).toLocaleString()} <span style="font-size: 10.5px; font-weight: 700; color: #64748b;">(Box Stage: ${boxStagePlQty} | Crate Stage: ${crateStagePlQty})</span>`;
+  }
+  
+  if(document.getElementById('kpiTotalPlPendingBoxes')) document.getElementById('kpiTotalPlPendingBoxes').textContent = Math.max(0, Math.ceil(domTotalPlReqBoxes) - Math.floor(domTotalPlCompletedBoxes)).toLocaleString();
+  
+  if(document.getElementById('kpiShipBoxes')) document.getElementById('kpiShipBoxes').textContent = `${Math.floor(domTotalPlCompletedBoxes)} / ${Math.ceil(domTotalPlReqBoxes)} Boxes Completed`;
 
   const overdueContainer = document.getElementById('overdueActionContainer'); if(overdueContainer) overdueContainer.innerHTML = ''; 
   let grandPoOrderWt = 0, grandPoShippedWt = 0, grandPoReadyWt = 0; let hasOverdue = false; const poGroups = {}; poList.forEach(po => { if(!poGroups[po.poNumber]) poGroups[po.poNumber] = { date: po.date, items: [] }; poGroups[po.poNumber].items.push(po); });
@@ -448,16 +651,13 @@ function renderDashboard() {
   if(document.getElementById('funnelBoxBar')) document.getElementById('funnelBoxBar').style.width = `${totalWipPcs ? Math.round((totalBox / totalWipPcs) * 100) : 0}%`;
 
   let plReqWt = 0, plCompWt = 0, plWipWt = 0, plPendWt = 0; let availableStockPL = masterData.map(m => ({ ...m })); 
-  let domTotalPlReqBoxes = 0; let domTotalPlCompletedBoxes = 0;
 
   packingLists.forEach(pl => { 
       const reqQty = pl.pcsQty; 
       const matched = availableStockPL.find(m => String(m.profile).trim() === String(pl.profile).trim() && cleanLen(m.length) === cleanLen(pl.length)); 
       const uw = matched ? (matched.unitWeight || 0) : 0; 
-      const cap = matched ? (matched.boxCapacity || 100) : 100;
       
       plReqWt += (reqQty * uw); 
-      domTotalPlReqBoxes += Math.ceil(reqQty / cap);
       
       let allocatedCrate = 0, allocatedBox = 0, allocatedWrap = 0, allocatedPunch = 0, allocatedCut = 0; 
       let remReq = reqQty; 
@@ -467,17 +667,12 @@ function renderDashboard() {
           allocatedWrap = Math.min(remReq, matched.wrapQty); matched.wrapQty -= allocatedWrap; remReq -= allocatedWrap; 
           allocatedPunch = Math.min(remReq, matched.punchQty); matched.punchQty -= allocatedPunch; remReq -= allocatedPunch; 
           allocatedCut = Math.min(remReq, matched.cutQty); matched.cutQty -= allocatedCut; remReq -= allocatedCut; 
-          if(remReq === 0){ domTotalPlCompletedBoxes += Math.ceil(reqQty / cap); } 
-          else { domTotalPlCompletedBoxes += Math.floor((allocatedCrate + allocatedBox) / cap); }
       } 
       plCompWt += (allocatedCrate * uw); plWipWt += ((allocatedBox + allocatedWrap + allocatedPunch + allocatedCut) * uw); plPendWt += (remReq * uw); 
   });
   
   if(document.getElementById('kpiOverallPlTotal')) document.getElementById('kpiOverallPlTotal').textContent = `${plReqWt.toFixed(1)} kg`; 
-  if(document.getElementById('kpiTotalPlBoxes')) document.getElementById('kpiTotalPlBoxes').textContent = domTotalPlReqBoxes.toLocaleString(); 
-  if(document.getElementById('kpiTotalPlCompletedBoxes')) document.getElementById('kpiTotalPlCompletedBoxes').textContent = domTotalPlCompletedBoxes.toLocaleString(); 
-  if(document.getElementById('kpiTotalPlPendingBoxes')) document.getElementById('kpiTotalPlPendingBoxes').textContent = Math.max(0, domTotalPlReqBoxes - domTotalPlCompletedBoxes).toLocaleString();
-
+  
   try {
       if(typeof Chart !== 'undefined') {
           const textColor = isDarkMode ? '#f8fafc' : '#0f172a'; 
@@ -752,74 +947,74 @@ function onShipmentLengthSelect() { const poNum = document.getElementById('shipS
 async function saveShipmentEntry() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const poNum = document.getElementById('shipSelectPo').value; const profile = document.getElementById('shipSelectProfile').value; const itemCode = document.getElementById('shipSelectItemCode').value; const length = document.getElementById('shipSelectLength').value; const shipDate = document.getElementById('shipmentDate').value; const month = document.getElementById('shipmentMonth').value; const container = document.getElementById('shipmentContainer').value; const qtyToShip = parseInt(document.getElementById('shipmentQty').value) || 0; if (!poNum || !profile || !itemCode || !length || qtyToShip <= 0) return; const po = poList.find(p => { if (String(p.poNumber).trim() !== String(poNum).trim() || cleanLen(p.length) !== cleanLen(length)) return false; const matchedCat = masterData.find(m => String(m.profile) === String(p.profile) && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); if(!po) return; let shippedSoFar = 0; shipmentList.filter(s => String(s.poNumber).trim() === String(poNum).trim() && String(s.profile).trim() === String(profile).trim() && cleanLen(s.length) === cleanLen(length)).forEach(s => shippedSoFar += s.shippedQty); const newRemaining = Math.max(0, po.orderQty - shippedSoFar - qtyToShip); const matchedCatItem = masterData.find(m => String(m.profile).trim() === String(profile).trim() && cleanLen(m.length) === cleanLen(length) && m.itemCode === itemCode); if (matchedCatItem) { if (matchedCatItem.crateQty < qtyToShip) { showToast("Warning: Exceeds available Crate Stock! Set to 0.", "warning"); matchedCatItem.crateQty = 0; } else { matchedCatItem.crateQty -= qtyToShip; } if (matchedCatItem.db_id) { try { await supabaseClient.from('master_catalog').update({ crate_qty: matchedCatItem.crateQty }).eq('id', matchedCatItem.db_id); } catch(e){} } } const newShipment = { shipment_date: shipDate, shipment_month: month, po_number: poNum, profile: profile, length: cleanLen(length), container: container, shipped_qty: qtyToShip, remaining_balance: newRemaining }; const { data: inserted } = await supabaseClient.from('shipments').insert([newShipment]).select(); if (inserted) shipmentList.unshift({ id: inserted[0].id, date: shipDate, month, poNumber: poNum, profile, length: cleanLen(length), container, shippedQty: qtyToShip, remainingBalance: newRemaining }); showToast("Shipment saved!", "success"); document.getElementById('shipmentEntryForm').reset(); renderShipmentHistoryTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable(); updatePoFilters(); renderPoDetailsTable(); } finally { isAppBusy=false; } }
 
 function renderShipmentHistoryTable() { 
-    const tbody = document.getElementById('shipmentHistoryTableBody'); 
-    if(!tbody) return;
-
-    const tableContainer = tbody.closest('.table-container');
-    let filterDiv = document.getElementById('shipFilterDivContainer');
-    
-    if(!filterDiv && tableContainer) {
-        filterDiv = document.createElement('div');
-        filterDiv.id = 'shipFilterDivContainer';
-        filterDiv.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; background: rgba(16, 185, 129, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px dashed var(--emerald-border); flex-wrap:wrap; gap:10px;">
-            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                <label style="font-weight:800; color:var(--primary-dark);"><i class="fa-solid fa-filter"></i> PO Number:</label>
-                <select id="shipFilterPoInput" onchange="renderShipmentHistoryTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700; min-width: 150px;">
-                    <option value="">-- All POs --</option>
-                </select>
-                <label style="font-weight:800; color:var(--primary-dark); margin-left:10px;"><i class="fa-solid fa-calendar"></i> Month:</label>
-                <select id="shipFilterMonthInput" onchange="renderShipmentHistoryTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700; min-width: 150px;">
-                    <option value="">-- All Months --</option>
-                    <option value="January">January</option><option value="February">February</option><option value="March">March</option><option value="April">April</option><option value="May">May</option><option value="June">June</option><option value="July">July</option><option value="August">August</option><option value="September">September</option><option value="October">October</option><option value="November">November</option><option value="December">December</option>
-                </select>
-            </div>
-        </div>`;
-        tableContainer.parentNode.insertBefore(filterDiv, tableContainer);
+    const tab = document.getElementById('shipmentTab');
+    if(tab) {
+        let filterDiv = document.getElementById('shipFilterDivContainer');
+        if(!filterDiv) {
+            filterDiv = document.createElement('div');
+            filterDiv.id = 'shipFilterDivContainer';
+            filterDiv.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; background: rgba(16, 185, 129, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px dashed var(--emerald-border); flex-wrap:wrap; gap:10px;">
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <label style="font-weight:800; color:var(--primary-dark);"><i class="fa-solid fa-filter"></i> PO Number:</label>
+                    <select id="shipFilterPoInput" onchange="renderShipmentHistoryTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700; min-width: 150px;">
+                        <option value="">-- All POs --</option>
+                    </select>
+                    <label style="font-weight:800; color:var(--primary-dark); margin-left:10px;"><i class="fa-solid fa-calendar"></i> Month:</label>
+                    <select id="shipFilterMonthInput" onchange="renderShipmentHistoryTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700; min-width: 150px;">
+                        <option value="">-- All Months --</option>
+                        <option value="January">January</option><option value="February">February</option><option value="March">March</option><option value="April">April</option><option value="May">May</option><option value="June">June</option><option value="July">July</option><option value="August">August</option><option value="September">September</option><option value="October">October</option><option value="November">November</option><option value="December">December</option>
+                    </select>
+                </div>
+            </div>`;
+            const tableContainer = tab.querySelector('.table-container:last-of-type') || tab.querySelector('.table-container');
+            tab.insertBefore(filterDiv, tableContainer);
+        }
+        
+        const poSelect = document.getElementById('shipFilterPoInput');
+        const monthSelect = document.getElementById('shipFilterMonthInput');
+        const currentPo = poSelect ? poSelect.value : '';
+        const currentMonth = monthSelect ? monthSelect.value : '';
+        
+        if (poSelect) {
+            poSelect.innerHTML = '<option value="">-- All PO Numbers --</option>';
+            [...new Set(shipmentList.map(s => String(s.poNumber).trim()))].forEach(po => {
+                const opt = new Option(po, po);
+                if(po === currentPo) opt.selected = true;
+                poSelect.appendChild(opt);
+            });
+        }
+        
+        if (monthSelect && currentMonth) {
+            monthSelect.value = currentMonth;
+        }
+        
+        const tbody = document.getElementById('shipmentHistoryTableBody'); 
+        if(!tbody) return;
+        tbody.innerHTML = ''; 
+        
+        let filteredList = shipmentList;
+        if(currentPo) {
+            filteredList = filteredList.filter(s => String(s.poNumber).trim() === currentPo);
+        }
+        if(currentMonth) {
+            filteredList = filteredList.filter(s => String(s.month).trim() === currentMonth);
+        }
+        
+        if (filteredList.length === 0) { 
+            tbody.innerHTML = `<tr><td colspan="10" style="color:#888; text-align:center;">No shipment records found.</td></tr>`; 
+            return; 
+        } 
+        let html = ''; 
+        filteredList.forEach(s => { 
+            const matched = masterData.find(m => String(m.profile) === String(s.profile) && cleanLen(m.length) === cleanLen(s.length)); 
+            html += `<tr><td>${s.date}</td><td><b>${s.poNumber}</b></td><td>${s.profile}</td><td>${matched ? matched.itemCode : '-'}</td><td>${s.length} mm</td><td>${s.month}</td><td>${s.container}</td><td><span class="stock-badge bg-box">${s.shippedQty} Pcs</span></td><td><span class="stock-badge bg-punch">${s.remainingBalance} Pcs</span></td>
+            <td>${currentUserRole === 'Admin' ? `
+                <button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="openGenericEdit('shipments', ${s.id}, {shipped_qty: '${s.shippedQty}', container: '${s.container}'})"><i class="fa-solid fa-pen"></i></button>
+                <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button>
+            ` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; 
+        }); 
+        tbody.innerHTML = html;
     }
-    
-    const poSelect = document.getElementById('shipFilterPoInput');
-    const monthSelect = document.getElementById('shipFilterMonthInput');
-    
-    const currentPo = poSelect ? poSelect.value : '';
-    const currentMonth = monthSelect ? monthSelect.value : '';
-    
-    if (poSelect) {
-        poSelect.innerHTML = '<option value="">-- All PO Numbers --</option>';
-        [...new Set(shipmentList.map(s => String(s.poNumber).trim()))].forEach(po => {
-            const opt = new Option(po, po);
-            if(po === currentPo) opt.selected = true;
-            poSelect.appendChild(opt);
-        });
-    }
-    
-    if (monthSelect && currentMonth) {
-        monthSelect.value = currentMonth;
-    }
-    
-    tbody.innerHTML = ''; 
-    
-    let filteredList = shipmentList;
-    if(currentPo) {
-        filteredList = filteredList.filter(s => String(s.poNumber).trim() === currentPo);
-    }
-    if(currentMonth) {
-        filteredList = filteredList.filter(s => String(s.month).trim() === currentMonth);
-    }
-    
-    if (filteredList.length === 0) { 
-        tbody.innerHTML = `<tr><td colspan="10" style="color:#888; text-align:center;">No shipment records found.</td></tr>`; 
-        return; 
-    } 
-    let html = ''; 
-    filteredList.forEach(s => { 
-        const matched = masterData.find(m => String(m.profile) === String(s.profile) && cleanLen(m.length) === cleanLen(s.length)); 
-        html += `<tr><td>${s.date}</td><td><b>${s.poNumber}</b></td><td>${s.profile}</td><td>${matched ? matched.itemCode : '-'}</td><td>${s.length} mm</td><td>${s.month}</td><td>${s.container}</td><td><span class="stock-badge bg-box">${s.shippedQty} Pcs</span></td><td><span class="stock-badge bg-punch">${s.remainingBalance} Pcs</span></td>
-        <td>${currentUserRole === 'Admin' ? `
-            <button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="openGenericEdit('shipments', ${s.id}, {shipped_qty: '${s.shippedQty}', container: '${s.container}'})"><i class="fa-solid fa-pen"></i></button>
-            <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button>
-        ` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; 
-    }); 
-    tbody.innerHTML = html;
 }
 function deleteShipmentItem(id) { if (currentUserRole !== 'Admin') return; showConfirm("Delete this Shipment?", async () => { await supabaseClient.from('shipments').delete().eq('id', id); shipmentList = shipmentList.filter(s => s.id !== id); renderShipmentHistoryTable(); renderDashboard(); renderBalanceWorkTable(); updatePoFilters(); renderPoDetailsTable(); showToast("Deleted", "success"); }); }
 
@@ -827,8 +1022,6 @@ window.exportPlReadyCrates = function() {
     let readyCratesExportData = []; 
     let availableStock = masterData.map(m => ({ ...m })); 
     let sortedPls = [...packingLists].sort(sortCrates);
-
-    let manualCrates = JSON.parse(localStorage.getItem('manual_crates') || '{}');
 
     sortedPls.forEach(item => {
         const matched = availableStock.find(m => String(m.profile).trim() == String(item.profile).trim() && String(m.itemCode).trim() == String(item.itemCode).trim() && cleanLen(m.length) == cleanLen(item.length));
@@ -844,7 +1037,7 @@ window.exportPlReadyCrates = function() {
             }
         }
         
-        let isManualComplete = manualCrates[item.crateNo] ? true : false;
+        let isManualComplete = globalManualCrates[item.crateNo] ? true : false;
         
         let status = '';
         if (isManualComplete) { status = "Manual Packed"; }
@@ -928,16 +1121,13 @@ function renderPlAnalytics(filteredPls) {
              return valA[2].localeCompare(valB[2]);
         });
         
-        let manualCrates = JSON.parse(localStorage.getItem('manual_crates') || '{}');
-        
         let html = '';
         for (let crateId of sortedCrateKeys) {
             let crate = crateMap[crateId];
             if (crate.req === 0 && !crateId.toLowerCase().startsWith("crate")) continue; 
             if (crate.req === 0) continue; 
             
-            let isManualComplete = manualCrates[crateId] ? true : false;
-            let manualQty = manualCrates[crateId] ? manualCrates[crateId].qty : '';
+            let isManualComplete = globalManualCrates[crateId] ? true : false;
 
             let compPct = crate.req > 0 ? Math.min(100, Math.round((crate.comp / crate.req) * 100)) : 0;
             if (isManualComplete) compPct = 100;
@@ -982,7 +1172,7 @@ function renderPlAnalytics(filteredPls) {
             html += `
             <div class="crate-card" style="width: 100%; max-width: 900px; margin: 0 auto; ${cardStyle} border-radius: 12px; display: flex; flex-direction: row; overflow: hidden; transition: all 0.3s ease; padding: 0;"> 
                 
-                <div style="width: 110px; min-width: 110px; display: flex; flex-direction: column; justify-content: center; align-items: center; border-right: 2px dashed ${isManualComplete ? '#6ee7b7' : '#e2e8f0'}; padding: 15px; cursor: pointer; background: ${isManualComplete ? 'rgba(16, 185, 129, 0.05)' : 'transparent'}; transition: 0.3s;" onclick="window.toggleManualCrate('${crateId}', ${!isManualComplete})">
+                <div style="width: 110px; min-width: 110px; display: flex; flex-direction: column; justify-content: center; align-items: center; border-right: 2px dashed ${isManualComplete ? '#6ee7b7' : '#e2e8f0'}; padding: 15px; cursor: ${currentUserRole === 'Admin' ? 'pointer' : 'not-allowed'}; background: ${isManualComplete ? 'rgba(16, 185, 129, 0.05)' : 'transparent'}; transition: 0.3s;" onclick="${currentUserRole === 'Admin' ? `window.toggleManualCrate('${crateId}', ${!isManualComplete})` : `showToast('Only Admin can modify this!', 'error')`}">
                     <div style="width: 45px; height: 45px; border-radius: 50%; border: 2px solid ${isManualComplete ? '#10b981' : '#cbd5e1'}; background: ${isManualComplete ? '#10b981' : 'transparent'}; display: flex; align-items: center; justify-content: center; color: ${isManualComplete ? '#fff' : '#cbd5e1'}; font-size: 22px; transition: 0.3s;">
                         <i class="fa-solid fa-check"></i>
                     </div>
@@ -1014,26 +1204,30 @@ function renderPlAnalytics(filteredPls) {
     } catch(e) {}
 }
 
-window.toggleManualCrate = function(crateId, isChecked) {
-    let manualCrates = JSON.parse(localStorage.getItem('manual_crates') || '{}');
-    if (isChecked) {
-        let crateItem = packingLists.find(p => p.crateNo === crateId);
-        let currentQty = crateItem ? crateItem.pcsQty : 0;
-        manualCrates[crateId] = { qty: parseInt(currentQty) || 0 };
-    } else {
-        delete manualCrates[crateId];
+window.toggleManualCrate = async function(crateId, isChecked) {
+    if (currentUserRole !== 'Admin') {
+        showToast("Only Admin can mark crates as complete!", "error");
+        return;
     }
-    localStorage.setItem('manual_crates', JSON.stringify(manualCrates));
+    if (isChecked) {
+        let currentQty = 0;
+        let itemsInCrate = packingLists.filter(p => p.crateNo === crateId);
+        itemsInCrate.forEach(i => currentQty += (parseInt(i.pcsQty) || 0));
+        globalManualCrates[crateId] = { qty: currentQty };
+    } else {
+        delete globalManualCrates[crateId];
+    }
     renderPackingListTable();
     renderDashboard();
+    await window.saveManualCratesToDB();
 }
 
-window.saveManualCrateQty = function(crateId, qty) {
-    let manualCrates = JSON.parse(localStorage.getItem('manual_crates') || '{}');
-    if (manualCrates[crateId]) {
-        manualCrates[crateId].qty = parseInt(qty) || 0;
-        localStorage.setItem('manual_crates', JSON.stringify(manualCrates));
+window.saveManualCrateQty = async function(crateId, qty) {
+    if (currentUserRole !== 'Admin') return;
+    if (globalManualCrates[crateId]) {
+        globalManualCrates[crateId].qty = parseInt(qty) || 0;
         renderDashboard();
+        await window.saveManualCratesToDB();
     }
 }
 
@@ -1082,8 +1276,6 @@ function renderPackingListTable() {
         let availableStock = masterData.map(m => ({ ...m })); 
         let sortedPls = [...filtered].sort(sortCrates);
 
-        let manualCrates = JSON.parse(localStorage.getItem('manual_crates') || '{}');
-
         for (let i = 0; i < sortedPls.length; i++) {
             let item = sortedPls[i];
             
@@ -1111,10 +1303,10 @@ function renderPackingListTable() {
                 }
             }
 
-            let isManualComplete = manualCrates[item.crateNo] ? true : false;
+            let isManualComplete = globalManualCrates[item.crateNo] ? true : false;
             let status = ''; let actionBtn = '';
 
-            let manualTickHtml = `<label style="cursor:pointer; display:inline-flex; align-items:center; gap:4px; background:${isManualComplete ? '#059669' : '#f1f5f9'}; color:${isManualComplete ? '#fff' : '#475569'}; padding:4px 8px; border-radius:6px; font-size:11px; font-weight:bold; border:1px solid ${isManualComplete ? '#059669' : '#cbd5e1'};"><input type="checkbox" onchange="window.toggleManualCrate('${item.crateNo}', this.checked)" ${isManualComplete ? 'checked' : ''}> Pack</label>`;
+            let manualTickHtml = `<label style="cursor:${currentUserRole === 'Admin' ? 'pointer' : 'not-allowed'}; display:inline-flex; align-items:center; gap:4px; background:${isManualComplete ? '#059669' : '#f1f5f9'}; color:${isManualComplete ? '#fff' : '#475569'}; padding:4px 8px; border-radius:6px; font-size:11px; font-weight:bold; border:1px solid ${isManualComplete ? '#059669' : '#cbd5e1'};"><input type="checkbox" onchange="window.toggleManualCrate('${item.crateNo}', this.checked)" ${isManualComplete ? 'checked' : ''} ${currentUserRole === 'Admin' ? '' : 'disabled'}> Pack</label>`;
 
             if (isManualComplete) {
                 status = `<span style="color:#059669;font-weight:bold;background:rgba(209, 250, 229, 0.4);padding:4px 8px;border-radius:6px;"><i class="fa-solid fa-check-double"></i> Manual Packed</span>`;
@@ -1180,13 +1372,17 @@ function renderPackingListTable() {
         const rawTbody = document.getElementById('packingListTableBody'); if (rawTbody) rawTbody.innerHTML = rawHTML || '<tr><td colspan="12" style="text-align:center; color:var(--text-muted);">No logs</td></tr>';
     } catch(e) {}
 }
-window.deleteEntireCrate = function(crateId) {
+window.deleteEntireCrate = async function(crateId) {
     if(currentUserRole !== 'Admin') return;
     showConfirm(`Delete all items in ${crateId}?`, async () => {
         const items = packingLists.filter(p => p.crateNo === crateId);
         for (let item of items) {
             try { await supabaseClient.from('packing_list').delete().eq('id', item.id); } catch(e){}
             packingLists = packingLists.filter(p => p.id !== item.id);
+        }
+        if(globalManualCrates[crateId]) {
+            delete globalManualCrates[crateId];
+            await window.saveManualCratesToDB();
         }
         renderPackingListTable(); renderDashboard(); renderBalanceWorkTable();
         showToast(`Crate ${crateId} deleted`, "success");
