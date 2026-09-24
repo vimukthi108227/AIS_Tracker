@@ -8,6 +8,175 @@ let cardboardStockList = [], dailyInstructionsList = [], masterData = [], histor
 let globalManualCrates = {}; 
 let shipmentDeadline = null;
 
+
+/* ============================================================
+   AIS TRACKER V2.0 - DATA SAFETY & SUPABASE SYNC CORE
+   IMPORTANT: Existing business logic is preserved.
+   V2 changes are designed to prevent silent data loss:
+   - No "empty result = seed/reset" on failed reads.
+   - Full-table pagination instead of hard row limits.
+   - Explicit sync state and mutation error handling helpers.
+   - Browser backup/restore helpers for emergency recovery.
+   ============================================================ */
+
+const AIS_V2 = {
+  version: "2.0.0",
+  syncOk: false,
+  lastSyncAt: null,
+  readErrors: [],
+  writeErrors: [],
+  backupPrefix: "AIS_TRACKER_V2_BACKUP_",
+  criticalTables: [
+    "master_catalog",
+    "production_orders",
+    "shipments",
+    "packing_list",
+    "history_logs",
+    "reject_logs",
+    "recover_logs",
+    "cardboard_stock",
+    "daily_instructions"
+  ]
+};
+
+function setV2SyncStatus(ok, message = "") {
+  AIS_V2.syncOk = !!ok;
+  AIS_V2.lastSyncAt = ok ? new Date().toISOString() : AIS_V2.lastSyncAt;
+  const el = document.getElementById("v2SyncStatus");
+  if (el) {
+    el.textContent = ok
+      ? `● Supabase Synced ${new Date(AIS_V2.lastSyncAt).toLocaleTimeString()}`
+      : `● Sync Problem${message ? ": " + message : ""}`;
+    el.style.color = ok ? "#059669" : "#dc2626";
+    el.title = message || (ok ? "All required data loaded from Supabase." : "Data sync is not confirmed.");
+  }
+}
+
+function ensureV2StatusBadge() {
+  if (document.getElementById("v2SyncStatus")) return;
+  const host =
+    document.getElementById("userRoleBadge")?.parentElement ||
+    document.querySelector("header") ||
+    document.body;
+  if (!host) return;
+  const badge = document.createElement("span");
+  badge.id = "v2SyncStatus";
+  badge.textContent = "● Connecting Supabase...";
+  badge.style.cssText =
+    "display:inline-flex;align-items:center;gap:5px;margin-left:10px;font-size:11px;font-weight:800;";
+  host.appendChild(badge);
+}
+
+function v2SafeFileName(value) {
+  return String(value || "backup").replace(/[^a-z0-9._-]/gi, "_");
+}
+
+/* Download a complete browser-side snapshot of currently loaded data.
+   This does NOT delete or modify Supabase data. */
+window.downloadAISV2Backup = function() {
+  const snapshot = {
+    app: "AIS Tracker",
+    version: AIS_V2.version,
+    created_at: new Date().toISOString(),
+    source: "browser_loaded_state",
+    data: {
+      master_catalog: masterData,
+      production_orders: poList,
+      shipments: shipmentList,
+      packing_list: packingLists,
+      history_logs: historyLogs,
+      reject_logs: rejectLogs,
+      recover_logs: recoverLogs,
+      cardboard_stock: cardboardStockList,
+      daily_instructions: dailyInstructionsList,
+      manual_crates: globalManualCrates,
+      shipment_deadline: shipmentDeadline ? shipmentDeadline.toISOString() : null
+    }
+  };
+  const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${AIS_V2.backupPrefix}${v2SafeFileName(new Date().toISOString())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  showToast("V2 backup downloaded. Supabase data was not changed.", "success");
+};
+
+/* Local emergency snapshot. This is only a fallback copy; Supabase remains the
+   source of truth and this function never overwrites Supabase. */
+function saveV2EmergencySnapshot() {
+  try {
+    const snapshot = {
+      created_at: new Date().toISOString(),
+      masterData, poList, shipmentList, packingLists, historyLogs,
+      rejectLogs, recoverLogs, cardboardStockList, dailyInstructionsList,
+      globalManualCrates,
+      shipmentDeadline: shipmentDeadline ? shipmentDeadline.toISOString() : null
+    };
+    localStorage.setItem("ais_tracker_v2_emergency_snapshot", JSON.stringify(snapshot));
+  } catch (e) {
+    console.warn("V2 emergency snapshot failed:", e);
+  }
+}
+
+window.getAISV2Status = function() {
+  return {
+    ...AIS_V2,
+    lastSyncAt: AIS_V2.lastSyncAt,
+    readErrors: [...AIS_V2.readErrors],
+    writeErrors: [...AIS_V2.writeErrors]
+  };
+};
+
+/* Never silently accept a failed database write. */
+async function v2Insert(table, rows, options = {}) {
+  const result = await supabaseClient.from(table).insert(rows).select();
+  if (result.error) {
+    AIS_V2.writeErrors.push({
+      type: "insert",
+      table,
+      message: result.error.message,
+      at: new Date().toISOString()
+    });
+    if (!options.silent) showToast(`Save failed (${table}): ${result.error.message}`, "error");
+    throw result.error;
+  }
+  return result.data || [];
+}
+
+async function v2Update(table, values, filterColumn, filterValue, options = {}) {
+  const result = await supabaseClient.from(table).update(values).eq(filterColumn, filterValue).select();
+  if (result.error) {
+    AIS_V2.writeErrors.push({
+      type: "update",
+      table,
+      message: result.error.message,
+      at: new Date().toISOString()
+    });
+    if (!options.silent) showToast(`Update failed (${table}): ${result.error.message}`, "error");
+    throw result.error;
+  }
+  return result.data || [];
+}
+
+async function v2Delete(table, filterColumn, filterValue, options = {}) {
+  const result = await supabaseClient.from(table).delete().eq(filterColumn, filterValue);
+  if (result.error) {
+    AIS_V2.writeErrors.push({
+      type: "delete",
+      table,
+      message: result.error.message,
+      at: new Date().toISOString()
+    });
+    if (!options.silent) showToast(`Delete failed (${table}): ${result.error.message}`, "error");
+    throw result.error;
+  }
+  return true;
+}
+
+
 const cleanLen = (val) => String(val || '').replace(/ mm/gi, '').trim();
 
 function normalizeCardboardMatch(cType, item) { if (!cType || !item) return false; const clean = (s) => String(s || '').replace(/mm/gi, '').replace(/profile/gi, '').replace(/[^a-zA-Z0-9\.]/g, '').toLowerCase(); const cClean = clean(cType), pClean = clean(item.profile), iClean = clean(item.itemCode), lClean = clean(item.length); return cClean.includes(pClean) && (iClean ? cClean.includes(iClean) : true) && cClean.includes(lClean); }
@@ -214,7 +383,8 @@ window.clearShipmentDeadline = async function() {
     showToast("Shipment deadline cleared!", "success");
 };
 
-window.onload = function() {
+window.onload = function() { ensureV2StatusBadge(); ensureV2BackupButton();
+
   injectGenericEditModal();
   injectCountdownUI();
   startLiveClock(); const today = new Date().toISOString().split('T')[0];
@@ -252,113 +422,382 @@ function sortCrates(a, b) {
 }
 
 let isFetchingData = false;
+
 async function loadDataFromSupabase(isSilent = false) {
   if (isFetchingData) return;
   isFetchingData = true;
-  try {
-    if(!isSilent) showToast("Connecting & Syncing Data...", "warning");
-    const safeFetch = async (table, options = {}) => { try { let query = supabaseClient.from(table).select('*'); if(options.order) query = query.order(options.order.col, { ascending: options.order.asc }); if(options.limit) query = query.limit(options.limit); let { data, error } = await query; if (error) { console.warn(`DB Fetch error for ${table}:`, error); if(!isSilent) showToast(`DB Error (${table}): ${error.message}`, "error"); return []; } return data || []; } catch(e) { console.warn(`Exception on ${table}`, e); return []; } };
+  AIS_V2.readErrors = [];
 
-    const results = await Promise.all([
-        safeFetch('master_catalog'), safeFetch('production_orders', { order: {col: 'id', asc: false}, limit: 1000 }), safeFetch('shipments', { order: {col: 'id', asc: false}, limit: 1500 }), 
-        safeFetch('packing_list', { order: {col: 'id', asc: false}, limit: 2000 }), safeFetch('history_logs', { order: {col: 'id', asc: false}, limit: 1500 }), safeFetch('reject_logs', { order: {col: 'id', asc: false} }),
-        safeFetch('recover_logs', { order: {col: 'id', asc: false} }), safeFetch('cardboard_stock', { order: {col: 'id', asc: false}, limit: 1500 }), safeFetch('daily_instructions', { order: {col: 'id', asc: false} })
-    ]);
+  try {
+    ensureV2StatusBadge();
+    if (!isSilent) showToast("Connecting & syncing Supabase...", "warning");
+
+    /* Full pagination: the old V1 code used hard limits (1000/1500/2000),
+       which could make older records disappear from the UI. */
+    const safeFetch = async (table, options = {}) => {
+      const pageSize = 1000;
+      let all = [];
+      let from = 0;
+
+      try {
+        while (true) {
+          let query = supabaseClient
+            .from(table)
+            .select("*", { count: "exact" })
+            .range(from, from + pageSize - 1);
+
+          if (options.order) {
+            query = query.order(options.order.col, { ascending: options.order.asc });
+          } else {
+            query = query.order("id", { ascending: false });
+          }
+
+          const { data, error } = await query;
+
+          if (error) {
+            const msg = `${table}: ${error.message}`;
+            AIS_V2.readErrors.push(msg);
+            throw new Error(msg);
+          }
+
+          const rows = data || [];
+          all = all.concat(rows);
+
+          if (rows.length < pageSize) break;
+          from += pageSize;
+        }
+
+        return all;
+      } catch (e) {
+        console.error("V2 DB fetch failed:", table, e);
+        throw e;
+      }
+    };
+
+    let results;
+    try {
+      results = await Promise.all([
+        safeFetch("master_catalog"),
+        safeFetch("production_orders"),
+        safeFetch("shipments"),
+        safeFetch("packing_list"),
+        safeFetch("history_logs"),
+        safeFetch("reject_logs"),
+        safeFetch("recover_logs"),
+        safeFetch("cardboard_stock"),
+        safeFetch("daily_instructions")
+      ]);
+    } catch (readError) {
+      /* CRITICAL: If a table cannot be read, DO NOT seed, clear, rebuild,
+         or replace the current in-memory state with empty arrays. */
+      AIS_V2.syncOk = false;
+      setV2SyncStatus(false, readError.message);
+      showToast("Supabase read failed. Existing data was NOT replaced.", "error");
+      console.error("AIS V2 sync aborted:", readError);
+      return;
+    }
 
     let catDataRaw = results[0];
-    if (catDataRaw.length === 0) { try { const { data: seeded } = await supabaseClient.from('master_catalog').insert(INITIAL_CATALOG.map(i => ({ profile: i.profile, length: i.length, unit_weight: i.unit_weight || 0, item_code: i.item_code || '', material: i.material || '', cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0, box_capacity: 100, ex_length: '' }))).select(); catDataRaw = seeded || []; } catch(e) {} }
+    const poData = results[1], shipData = results[2], plData = results[3],
+          logData = results[4], rjData = results[5], rcData = results[6],
+          cbData = results[7], instData = results[8];
 
-    const poData = results[1], shipData = results[2], plData = results[3], logData = results[4], rjData = results[5], rcData = results[6], cbData = results[7], instData = results[8];
-    
-    let syncRow = instData.find(i => i.target_user === 'SYS_CRATES_SYNC');
+    /* Seed INITIAL_CATALOG only when Supabase was successfully read and the
+       master table is genuinely empty. A network/RLS failure can no longer
+       trigger accidental seed behavior. */
+    if (catDataRaw.length === 0) {
+      try {
+        const { data: seeded, error: seedError } = await supabaseClient
+          .from("master_catalog")
+          .insert(INITIAL_CATALOG.map(i => ({
+            profile: i.profile,
+            length: i.length,
+            unit_weight: i.unit_weight || 0,
+            item_code: i.item_code || "",
+            material: i.material || "",
+            cut_qty: 0,
+            punch_qty: 0,
+            wrap_qty: 0,
+            box_qty: 0,
+            crate_qty: 0,
+            box_capacity: 100,
+            ex_length: ""
+          })))
+          .select();
+
+        if (seedError) throw seedError;
+        catDataRaw = seeded || [];
+      } catch (e) {
+        AIS_V2.writeErrors.push({
+          type: "seed",
+          table: "master_catalog",
+          message: e.message,
+          at: new Date().toISOString()
+        });
+        showToast("Master catalog is empty and initial setup failed. No existing data was removed.", "error");
+        return;
+      }
+    }
+
+    let syncRow = instData.find(i => i.target_user === "SYS_CRATES_SYNC");
     if (syncRow && syncRow.message) {
-        try { globalManualCrates = JSON.parse(syncRow.message); } catch(e) { globalManualCrates = {}; }
+      try { globalManualCrates = JSON.parse(syncRow.message); }
+      catch(e) { globalManualCrates = {}; }
     } else {
-        globalManualCrates = {};
+      globalManualCrates = {};
     }
-    
-    let deadlineRow = instData.find(i => i.target_user === 'SYS_SHIPMENT_DEADLINE');
+
+    let deadlineRow = instData.find(i => i.target_user === "SYS_SHIPMENT_DEADLINE");
     if (deadlineRow && deadlineRow.message) {
-        shipmentDeadline = new Date(deadlineRow.message);
-        if (document.getElementById('shipmentDeadlineInput')) {
-            let d = shipmentDeadline;
-            let year = d.getFullYear();
-            let month = String(d.getMonth() + 1).padStart(2, '0');
-            let day = String(d.getDate()).padStart(2, '0');
-            let hour = String(d.getHours()).padStart(2, '0');
-            let min = String(d.getMinutes()).padStart(2, '0');
-            document.getElementById('shipmentDeadlineInput').value = `${year}-${month}-${day}T${hour}:${min}`;
-        }
+      shipmentDeadline = new Date(deadlineRow.message);
+      if (document.getElementById("shipmentDeadlineInput")) {
+        let d = shipmentDeadline;
+        let year = d.getFullYear();
+        let month = String(d.getMonth() + 1).padStart(2, "0");
+        let day = String(d.getDate()).padStart(2, "0");
+        let hour = String(d.getHours()).padStart(2, "0");
+        let min = String(d.getMinutes()).padStart(2, "0");
+        document.getElementById("shipmentDeadlineInput").value =
+          `${year}-${month}-${day}T${hour}:${min}`;
+      }
     } else {
-        shipmentDeadline = null;
-        if (document.getElementById('shipmentDeadlineInput')) document.getElementById('shipmentDeadlineInput').value = '';
+      shipmentDeadline = null;
+      if (document.getElementById("shipmentDeadlineInput"))
+        document.getElementById("shipmentDeadlineInput").value = "";
     }
-    
-    let localExtras = []; try { const stored = localStorage.getItem('alumex_master_extras'); if (stored) localExtras = JSON.parse(stored); } catch(e) {}
-    
-    const uniqueData = []; const seenMap = new Map();
+
+    let localExtras = [];
+    try {
+      const stored = localStorage.getItem("alumex_master_extras");
+      if (stored) localExtras = JSON.parse(stored);
+    } catch(e) {}
+
+    const uniqueData = [];
+    const seenMap = new Map();
+
     catDataRaw.forEach(item => {
-      const localExt = localExtras.find(e => String(e.p) === String(item.profile) && cleanLen(e.l) === cleanLen(item.length) && String(e.i) === String(item.item_code)) || {};
-      const obj = { db_id: item.id, profile: String(item.profile).trim(), itemCode: String(item.item_code || '').trim(), material: item.material || localExt.mat || '-', length: cleanLen(item.length), exLength: item.ex_length || localExt.ex || '', unitWeight: parseFloat(item.unit_weight) || 0, cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, boxCapacity: item.box_capacity || localExt.cap || 100 };
+      const localExt = localExtras.find(e =>
+        String(e.p) === String(item.profile) &&
+        cleanLen(e.l) === cleanLen(item.length) &&
+        String(e.i) === String(item.item_code)
+      ) || {};
+
+      const obj = {
+        db_id: item.id,
+        profile: String(item.profile).trim(),
+        itemCode: String(item.item_code || "").trim(),
+        material: item.material || localExt.mat || "-",
+        length: cleanLen(item.length),
+        exLength: item.ex_length || localExt.ex || "",
+        unitWeight: parseFloat(item.unit_weight) || 0,
+        cutQty: item.cut_qty || 0,
+        punchQty: item.punch_qty || 0,
+        wrapQty: item.wrap_qty || 0,
+        boxQty: item.box_qty || 0,
+        crateQty: item.crate_qty || 0,
+        boxCapacity: item.box_capacity || localExt.cap || 100
+      };
+
       const uniqueKey = `${obj.profile}_${obj.itemCode}_${obj.length}`;
-      if (!seenMap.has(uniqueKey)) { seenMap.set(uniqueKey, obj); uniqueData.push(obj); } 
-      else { const ex = seenMap.get(uniqueKey); ex.cutQty += obj.cutQty; ex.punchQty += obj.punchQty; ex.wrapQty += obj.wrapQty; ex.boxQty += obj.boxQty; ex.crateQty += obj.crateQty; if (!ex.itemCode || ex.itemCode === '-' || ex.itemCode === '') ex.itemCode = obj.itemCode; }
+      if (!seenMap.has(uniqueKey)) {
+        seenMap.set(uniqueKey, obj);
+        uniqueData.push(obj);
+      } else {
+        const ex = seenMap.get(uniqueKey);
+        ex.cutQty += obj.cutQty;
+        ex.punchQty += obj.punchQty;
+        ex.wrapQty += obj.wrapQty;
+        ex.boxQty += obj.boxQty;
+        ex.crateQty += obj.crateQty;
+        if (!ex.itemCode || ex.itemCode === "-" || ex.itemCode === "")
+          ex.itemCode = obj.itemCode;
+      }
     });
-    masterData = uniqueData.sort((a, b) => (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) || (parseFloat(a.length)||0) - (parseFloat(b.length)||0));
-    poList = poData.map(item => ({ id: item.id, date: item.po_date, poNumber: item.po_number, profile: item.profile, length: cleanLen(item.length), orderQty: item.order_qty }));
-    shipmentList = shipData.map(item => ({ id: item.id, date: item.shipment_date, month: item.shipment_month, poNumber: item.po_number, profile: item.profile, length: cleanLen(item.length), container: item.container, shippedQty: item.shipped_qty, remainingBalance: item.remaining_balance }));
-    packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate 1`, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date }));
-    historyLogs = logData.map(item => ({ id: item.id, date: item.log_date, shift: item.shift, profile: item.profile, length: cleanLen(item.length), cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, timestamp: item.log_time || item.created_at || new Date().toISOString() }));
-    rejectLogs = rjData; recoverLogs = rcData; dailyInstructionsList = instData;
-    if (cbData && cbData.length > 0) { cardboardStockList = cbData.map(c => ({ id: c.id, db_id: c.id, date: c.cb_date, type: c.cb_type, incoming: c.incoming || 0, used: c.used || 0, timestamp: c.created_at || new Date().toISOString() })); saveCardboardLocally(); } else { const localCb = localStorage.getItem('alumex_cardboard_local'); if(localCb) cardboardStockList = JSON.parse(localCb); }
+
+    masterData = uniqueData.sort((a,b) =>
+      (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) ||
+      (parseFloat(a.length)||0) - (parseFloat(b.length)||0)
+    );
+
+    poList = poData.map(item => ({
+      id: item.id, date: item.po_date, poNumber: item.po_number,
+      profile: item.profile, length: cleanLen(item.length), orderQty: item.order_qty
+    }));
+
+    shipmentList = shipData.map(item => ({
+      id: item.id, date: item.shipment_date, month: item.shipment_month,
+      poNumber: item.po_number, profile: item.profile, length: cleanLen(item.length),
+      container: item.container, shippedQty: item.shipped_qty,
+      remainingBalance: item.remaining_balance
+    }));
+
+    packingLists = plData.map(item => ({
+      id: item.id, plNumber: item.pl_number, poNumber: item.po_number,
+      month: item.shipment_month || "January", container: item.container || "1st Container",
+      crateNo: item.crate_no || `Crate ${item.box_qty || 1}`,
+      profile: item.profile, itemCode: item.item_code || "",
+      length: cleanLen(item.length), boxQty: item.box_qty || 1,
+      pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0,
+      grossWeight: item.gross_weight || 0, date: item.packing_date
+    }));
+
+    historyLogs = logData.map(item => ({
+      id: item.id, date: item.log_date, shift: item.shift,
+      profile: item.profile, length: cleanLen(item.length),
+      cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0,
+      wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0,
+      crateQty: item.crate_qty || 0,
+      timestamp: item.log_time || item.created_at || new Date().toISOString()
+    }));
+
+    rejectLogs = rjData;
+    recoverLogs = rcData;
+    dailyInstructionsList = instData;
+
+    /* Supabase is the source of truth. Local cardboard data is used only as
+       an emergency display fallback when the DB table is genuinely empty. */
+    if (cbData.length > 0) {
+      cardboardStockList = cbData.map(c => ({
+        id: c.id, db_id: c.id, date: c.cb_date, type: c.cb_type,
+        incoming: c.incoming || 0, used: c.used || 0,
+        timestamp: c.created_at || new Date().toISOString()
+      }));
+      saveCardboardLocally();
+    } else {
+      cardboardStockList = [];
+    }
 
     const profileLookup = new Map();
-    masterData.forEach(m => profileLookup.set(`${String(m.profile).trim()}_${cleanLen(m.length)}`, m));
+    masterData.forEach(m =>
+      profileLookup.set(`${String(m.profile).trim()}_${cleanLen(m.length)}`, m)
+    );
 
-    historyLogs.forEach(l => { if (!profileLookup.has(`${String(l.profile).trim()}_${cleanLen(l.length)}`)) { const nm = { db_id: null, profile: String(l.profile).trim(), itemCode: '-', material: '-', length: cleanLen(l.length), exLength: '', unitWeight: 0, cutQty: 0, punchQty: 0, wrapQty: 0, boxQty: 0, crateQty: 0, boxCapacity: 100 }; masterData.push(nm); profileLookup.set(`${String(l.profile).trim()}_${cleanLen(l.length)}`, nm); } });
-    poList.forEach(po => { if (!profileLookup.has(`${String(po.profile).trim()}_${cleanLen(po.length)}`)) { const nm = { db_id: null, profile: String(po.profile).trim(), itemCode: '-', material: '-', length: cleanLen(po.length), exLength: '', unitWeight: 0, cutQty: 0, punchQty: 0, wrapQty: 0, boxQty: 0, crateQty: 0, boxCapacity: 100 }; masterData.push(nm); profileLookup.set(`${String(po.profile).trim()}_${cleanLen(po.length)}`, nm); } });
+    historyLogs.forEach(l => {
+      if (!profileLookup.has(`${String(l.profile).trim()}_${cleanLen(l.length)}`)) {
+        const nm = {
+          db_id: null,
+          profile: String(l.profile).trim(),
+          itemCode: "-",
+          material: "-",
+          length: cleanLen(l.length),
+          exLength: "",
+          unitWeight: 0,
+          cutQty: 0,
+          punchQty: 0,
+          wrapQty: 0,
+          boxQty: 0,
+          crateQty: 0,
+          boxCapacity: 100
+        };
+        masterData.push(nm);
+        profileLookup.set(`${String(l.profile).trim()}_${cleanLen(l.length)}`, nm);
+      }
+    });
 
-    const hasAnyStock = masterData.some(m => m.cutQty > 0 || m.punchQty > 0 || m.wrapQty > 0 || m.boxQty > 0 || m.crateQty > 0);
+    poList.forEach(po => {
+      if (!profileLookup.has(`${String(po.profile).trim()}_${cleanLen(po.length)}`)) {
+        const nm = {
+          db_id: null,
+          profile: String(po.profile).trim(),
+          itemCode: "-",
+          material: "-",
+          length: cleanLen(po.length),
+          exLength: "",
+          unitWeight: 0,
+          cutQty: 0,
+          punchQty: 0,
+          wrapQty: 0,
+          boxQty: 0,
+          crateQty: 0,
+          boxCapacity: 100
+        };
+        masterData.push(nm);
+        profileLookup.set(`${String(po.profile).trim()}_${cleanLen(po.length)}`, nm);
+      }
+    });
+
+    const hasAnyStock = masterData.some(m =>
+      m.cutQty > 0 || m.punchQty > 0 || m.wrapQty > 0 || m.boxQty > 0 || m.crateQty > 0
+    );
+
     if (!hasAnyStock && historyLogs.length > 0) {
       [...historyLogs].reverse().forEach(l => {
-        const item = profileLookup.get(`${String(l.profile).trim()}_${cleanLen(l.length)}`);
+        const item = profileLookup.get(
+          `${String(l.profile).trim()}_${cleanLen(l.length)}`
+        );
         if (item) {
           item.cutQty = (item.cutQty || 0) + (l.cutQty || 0);
-          if (l.punchQty > 0) { item.cutQty = Math.max(0, item.cutQty - l.punchQty); item.punchQty = (item.punchQty || 0) + l.punchQty; }
-          if (l.wrapQty > 0) { if (isPunchBypassed(l.profile, l.length) || (item.punchQty || 0) <= 0) { item.cutQty = Math.max(0, item.cutQty - l.wrapQty); } else if (item.punchQty >= l.wrapQty) { item.punchQty -= l.wrapQty; } else { const rem = l.wrapQty - item.punchQty; item.punchQty = 0; item.cutQty = Math.max(0, item.cutQty - rem); } item.wrapQty = (item.wrapQty || 0) + l.wrapQty; }
-          if (l.boxQty > 0) { item.wrapQty = Math.max(0, item.wrapQty - l.boxQty); item.boxQty = (item.boxQty || 0) + l.boxQty; }
-          if (l.crateQty > 0) { item.boxQty = Math.max(0, item.boxQty - l.crateQty); item.crateQty = (item.crateQty || 0) + l.crateQty; }
+          if (l.punchQty > 0) {
+            item.cutQty = Math.max(0, item.cutQty - l.punchQty);
+            item.punchQty = (item.punchQty || 0) + l.punchQty;
+          }
+          if (l.wrapQty > 0) {
+            if (isPunchBypassed(l.profile, l.length) || (item.punchQty || 0) <= 0) {
+              item.cutQty = Math.max(0, item.cutQty - l.wrapQty);
+            } else if (item.punchQty >= l.wrapQty) {
+              item.punchQty -= l.wrapQty;
+            } else {
+              const rem = l.wrapQty - item.punchQty;
+              item.punchQty = 0;
+              item.cutQty = Math.max(0, item.cutQty - rem);
+            }
+            item.wrapQty = (item.wrapQty || 0) + l.wrapQty;
+          }
+          if (l.boxQty > 0) {
+            item.wrapQty = Math.max(0, item.wrapQty - l.boxQty);
+            item.boxQty = (item.boxQty || 0) + l.boxQty;
+          }
+          if (l.crateQty > 0) {
+            item.boxQty = Math.max(0, item.boxQty - l.crateQty);
+            item.crateQty = (item.crateQty || 0) + l.crateQty;
+          }
         }
       });
     }
-    if(!isSilent && masterData.length > 0) showToast(`Database Sync Complete!`, "success");
-  } catch (err) { console.error(err); } finally { 
-      isFetchingData = false;
-      populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateShipmentPoDropdown(); populatePlPoDropdown(); populateCbProfileDropdown(); populateRejProfile(); populateRecProfile();
-      if(currentUserRole) { 
-          updateRoleUI(); 
-          setTimeout(() => {
-              renderDashboard(); renderProfileSummaryTable(); checkDateStatus(); renderHistoryData(); updatePoFilters(); renderPoDetailsTable(); window.renderShipmentHistoryTable(); renderPackingListTable(); renderPoCharts(); renderBalanceWorkTable(); renderCardboardStock(); renderDailyInstructions(); renderRejectTable(); renderRecoverTable();
-              window.updateShipmentCountdown();
-          }, 10);
-      } 
+
+    AIS_V2.syncOk = true;
+    AIS_V2.lastSyncAt = new Date().toISOString();
+    setV2SyncStatus(true);
+    saveV2EmergencySnapshot();
+
+    if (!isSilent && masterData.length > 0)
+      showToast(`Database Sync Complete — ${masterData.length} catalog items loaded.`, "success");
+
+  } catch (err) {
+    console.error("AIS V2 sync exception:", err);
+    AIS_V2.syncOk = false;
+    setV2SyncStatus(false, err.message);
+    showToast("Sync stopped safely. Existing data was NOT cleared.", "error");
+  } finally {
+    isFetchingData = false;
+    populateStockFilterDropdown();
+    populateProfileDropdown();
+    populatePoProfileDropdown();
+    populateShipmentPoDropdown();
+    populatePlPoDropdown();
+    populateCbProfileDropdown();
+    populateRejProfile();
+    populateRecProfile();
+
+    if (currentUserRole) {
+      updateRoleUI();
+      setTimeout(() => {
+        renderDashboard();
+        renderProfileSummaryTable();
+        renderPoDetailsTable();
+        renderMasterCatalog();
+        renderShipmentHistoryTable();
+        renderPackingListTable();
+        renderCardboardStock();
+        renderDailyInstructions();
+        renderHistoryData();
+        renderRejectTable();
+        renderRecoverTable();
+        renderBalanceWorkTable();
+      }, 100);
+    }
   }
 }
-
-window.saveManualCratesToDB = async function() {
-    let jsonStr = JSON.stringify(globalManualCrates);
-    let existing = dailyInstructionsList.find(i => i.target_user === 'SYS_CRATES_SYNC');
-    if (existing) {
-        existing.message = jsonStr;
-        try { await supabaseClient.from('daily_instructions').update({ message: jsonStr }).eq('id', existing.id); } catch(e){}
-    } else {
-        let newRec = { target_date: new Date().toISOString().split('T')[0], target_user: 'SYS_CRATES_SYNC', priority: 'Normal', message: jsonStr, status: 'Completed', action_taken: 'System Data' };
-        try { 
-            let {data} = await supabaseClient.from('daily_instructions').insert([newRec]).select(); 
-            if(data && data.length>0) dailyInstructionsList.push(data[0]); 
-        } catch(e){}
-    }
-};
 
 function switchTab(tabId, btn) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active')); 
@@ -1536,3 +1975,26 @@ async function saveNewMasterProfile() { if(isAppBusy) return; isAppBusy=true; tr
 function resetAllDataToZero() { if (currentUserRole !== 'Admin') return; showConfirm("WARNING: Reset all Stock?", async () => { for (let item of masterData) { item.cutQty = 0; item.punchQty = 0; item.wrapQty = 0; item.boxQty = 0; item.crateQty = 0; if (item.db_id) await supabaseClient.from('master_catalog').update({ cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0 }).eq('id', item.db_id); } await supabaseClient.from('history_logs').delete().neq('id', 0); historyLogs = []; showToast("Reset success!", "success"); renderDashboard(); renderProfileSummaryTable(); renderHistoryData(); renderBalanceWorkTable(); }); }
 
 // END OF SCRIPT
+
+
+/* V2 emergency backup button. Added dynamically so the existing HTML remains compatible. */
+function ensureV2BackupButton() {
+  if (document.getElementById("v2BackupBtn")) return;
+  const candidates = [
+    document.getElementById("userRoleBadge")?.parentElement,
+    document.querySelector(".header-actions"),
+    document.querySelector("header")
+  ].filter(Boolean);
+  const host = candidates[0];
+  if (!host) return;
+
+  const btn = document.createElement("button");
+  btn.id = "v2BackupBtn";
+  btn.type = "button";
+  btn.className = "btn btn-accent";
+  btn.style.cssText = "margin-left:6px;padding:6px 10px;font-size:11px;";
+  btn.innerHTML = '<i class="fa-solid fa-shield-halved"></i> Backup';
+  btn.title = "Download a V2 JSON backup of the currently loaded data";
+  btn.onclick = () => window.downloadAISV2Backup();
+  host.appendChild(btn);
+}
