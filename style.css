@@ -728,3 +728,16 @@ body.dark-mode .chart-period-blue{background:rgba(2,132,199,.12);border-color:#0
   .header-controls{width:100%!important;justify-content:center!important;}
   .live-clock-badge{width:245px!important;min-width:245px!important;}
 }
+
+/* Production performance summary */
+.prod-summary-title{font-size:15px;font-weight:900;color:#065f5b;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.prod-summary-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.prod-metric{border:1px solid #dbeafe;border-radius:12px;padding:12px 13px;background:#fff;min-height:82px;display:flex;flex-direction:column;justify-content:center;box-shadow:0 3px 12px rgba(15,23,42,.05)}
+.prod-metric span{font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.03em}
+.prod-metric b{font-size:20px;line-height:1.2;margin-top:5px;color:#0f172a}
+.prod-metric small{font-size:10.5px;font-weight:700;color:#64748b;margin-top:4px}
+.prod-metric.daily{border-top:3px solid #0284c7}.prod-metric.monthly{border-top:3px solid #10b981}.prod-metric.reject{border-top:3px solid #e11d48}.prod-metric.recover{border-top:3px solid #059669}.prod-metric.net{border-top:3px solid #9f1239}
+.prod-daily-line{margin-top:10px;padding:9px 12px;border-radius:9px;background:rgba(15,118,110,.055);border:1px dashed #99f6e4;display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#475569}
+.prod-daily-line span{font-weight:700}.prod-daily-line span span{color:#0f172a}
+@media(max-width:1050px){.prod-summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:680px){.prod-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.prod-metric b{font-size:17px}}
