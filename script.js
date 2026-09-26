@@ -5,184 +5,62 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentUserRole = null; let isAdminUnlocked = false; let isDarkMode = false; let isAppBusy = false;
 let masterChartInstance = null, overallPoChartInstance = null, overallPlChartInstance = null, plChartInstance = null, monthlyShiftChartInstance = null, poChartInstances = [], rejectDashChart = null, rejectProfileChartInstance = null;
 let cardboardStockList = [], dailyInstructionsList = [], masterData = [], historyLogs = [], poList = [], shipmentList = [], packingLists = [], rejectLogs = [], recoverLogs = []; 
-let globalManualCrates = {}; 
+let globalManualCrates = {};
+let shipmentStates = {};
+let activePackingMonth = null;
+let activePackingContainer = null;
 let shipmentDeadline = null;
-
-
-/* ============================================================
-   AIS TRACKER V2.0 - DATA SAFETY & SUPABASE SYNC CORE
-   IMPORTANT: Existing business logic is preserved.
-   V2 changes are designed to prevent silent data loss:
-   - No "empty result = seed/reset" on failed reads.
-   - Full-table pagination instead of hard row limits.
-   - Explicit sync state and mutation error handling helpers.
-   - Browser backup/restore helpers for emergency recovery.
-   ============================================================ */
-
-const AIS_V2 = {
-  version: "2.0.0",
-  syncOk: false,
-  lastSyncAt: null,
-  readErrors: [],
-  writeErrors: [],
-  backupPrefix: "AIS_TRACKER_V2_BACKUP_",
-  criticalTables: [
-    "master_catalog",
-    "production_orders",
-    "shipments",
-    "packing_list",
-    "history_logs",
-    "reject_logs",
-    "recover_logs",
-    "cardboard_stock",
-    "daily_instructions"
-  ]
-};
-
-function setV2SyncStatus(ok, message = "") {
-  AIS_V2.syncOk = !!ok;
-  AIS_V2.lastSyncAt = ok ? new Date().toISOString() : AIS_V2.lastSyncAt;
-  const el = document.getElementById("v2SyncStatus");
-  if (el) {
-    el.textContent = ok
-      ? `● Supabase Synced ${new Date(AIS_V2.lastSyncAt).toLocaleTimeString()}`
-      : `● Sync Problem${message ? ": " + message : ""}`;
-    el.style.color = ok ? "#059669" : "#dc2626";
-    el.title = message || (ok ? "All required data loaded from Supabase." : "Data sync is not confirmed.");
-  }
-}
-
-function ensureV2StatusBadge() {
-  if (document.getElementById("v2SyncStatus")) return;
-  const host =
-    document.getElementById("userRoleBadge")?.parentElement ||
-    document.querySelector("header") ||
-    document.body;
-  if (!host) return;
-  const badge = document.createElement("span");
-  badge.id = "v2SyncStatus";
-  badge.textContent = "● Connecting Supabase...";
-  badge.style.cssText =
-    "display:inline-flex;align-items:center;gap:5px;margin-left:10px;font-size:11px;font-weight:800;";
-  host.appendChild(badge);
-}
-
-function v2SafeFileName(value) {
-  return String(value || "backup").replace(/[^a-z0-9._-]/gi, "_");
-}
-
-/* Download a complete browser-side snapshot of currently loaded data.
-   This does NOT delete or modify Supabase data. */
-window.downloadAISV2Backup = function() {
-  const snapshot = {
-    app: "AIS Tracker",
-    version: AIS_V2.version,
-    created_at: new Date().toISOString(),
-    source: "browser_loaded_state",
-    data: {
-      master_catalog: masterData,
-      production_orders: poList,
-      shipments: shipmentList,
-      packing_list: packingLists,
-      history_logs: historyLogs,
-      reject_logs: rejectLogs,
-      recover_logs: recoverLogs,
-      cardboard_stock: cardboardStockList,
-      daily_instructions: dailyInstructionsList,
-      manual_crates: globalManualCrates,
-      shipment_deadline: shipmentDeadline ? shipmentDeadline.toISOString() : null
-    }
-  };
-  const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `${AIS_V2.backupPrefix}${v2SafeFileName(new Date().toISOString())}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  showToast("V2 backup downloaded. Supabase data was not changed.", "success");
-};
-
-/* Local emergency snapshot. This is only a fallback copy; Supabase remains the
-   source of truth and this function never overwrites Supabase. */
-function saveV2EmergencySnapshot() {
-  try {
-    const snapshot = {
-      created_at: new Date().toISOString(),
-      masterData, poList, shipmentList, packingLists, historyLogs,
-      rejectLogs, recoverLogs, cardboardStockList, dailyInstructionsList,
-      globalManualCrates,
-      shipmentDeadline: shipmentDeadline ? shipmentDeadline.toISOString() : null
-    };
-    localStorage.setItem("ais_tracker_v2_emergency_snapshot", JSON.stringify(snapshot));
-  } catch (e) {
-    console.warn("V2 emergency snapshot failed:", e);
-  }
-}
-
-window.getAISV2Status = function() {
-  return {
-    ...AIS_V2,
-    lastSyncAt: AIS_V2.lastSyncAt,
-    readErrors: [...AIS_V2.readErrors],
-    writeErrors: [...AIS_V2.writeErrors]
-  };
-};
-
-/* Never silently accept a failed database write. */
-async function v2Insert(table, rows, options = {}) {
-  const result = await supabaseClient.from(table).insert(rows).select();
-  if (result.error) {
-    AIS_V2.writeErrors.push({
-      type: "insert",
-      table,
-      message: result.error.message,
-      at: new Date().toISOString()
-    });
-    if (!options.silent) showToast(`Save failed (${table}): ${result.error.message}`, "error");
-    throw result.error;
-  }
-  return result.data || [];
-}
-
-async function v2Update(table, values, filterColumn, filterValue, options = {}) {
-  const result = await supabaseClient.from(table).update(values).eq(filterColumn, filterValue).select();
-  if (result.error) {
-    AIS_V2.writeErrors.push({
-      type: "update",
-      table,
-      message: result.error.message,
-      at: new Date().toISOString()
-    });
-    if (!options.silent) showToast(`Update failed (${table}): ${result.error.message}`, "error");
-    throw result.error;
-  }
-  return result.data || [];
-}
-
-async function v2Delete(table, filterColumn, filterValue, options = {}) {
-  const result = await supabaseClient.from(table).delete().eq(filterColumn, filterValue);
-  if (result.error) {
-    AIS_V2.writeErrors.push({
-      type: "delete",
-      table,
-      message: result.error.message,
-      at: new Date().toISOString()
-    });
-    if (!options.silent) showToast(`Delete failed (${table}): ${result.error.message}`, "error");
-    throw result.error;
-  }
-  return true;
-}
-
 
 const cleanLen = (val) => String(val || '').replace(/ mm/gi, '').trim();
 
+// Reliability layer: surface unexpected runtime failures instead of silently failing.
+window.addEventListener('error', (event) => {
+  console.error('AIS Tracker runtime error:', event.error || event.message);
+  const msg = event?.message ? String(event.message).slice(0, 140) : 'Unexpected application error';
+  if (document.getElementById('toastContainer')) showToast(`System error: ${msg}`, 'error');
+});
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('AIS Tracker promise error:', event.reason);
+  if (document.getElementById('toastContainer')) showToast('A background operation failed. Please retry.', 'error');
+});
+
+
 function normalizeCardboardMatch(cType, item) { if (!cType || !item) return false; const clean = (s) => String(s || '').replace(/mm/gi, '').replace(/profile/gi, '').replace(/[^a-zA-Z0-9\.]/g, '').toLowerCase(); const cClean = clean(cType), pClean = clean(item.profile), iClean = clean(item.itemCode), lClean = clean(item.length); return cClean.includes(pClean) && (iClean ? cClean.includes(iClean) : true) && cClean.includes(lClean); }
-function selectRole(role) { if (role === 'Local') { currentUserRole = 'Local'; isAdminUnlocked = false; document.getElementById('roleLoginOverlay').style.display = 'none'; document.getElementById('mainContent').style.display = 'block'; showToast("Local User Logged in successfully!", "success"); updateRoleUI(); switchTab('dashboardTab', document.querySelector('.nav-tabs .tab-btn')); return; } document.getElementById('selectedRoleText').innerHTML = role === 'Admin' ? `<i class="fa-solid fa-user-gear"></i> Admin Login` : `<i class="fa-solid fa-calendar-days"></i> Planner Login`; document.getElementById('loginPassSection').style.display = 'block'; document.getElementById('roleSelectionArea').style.display = 'none'; document.getElementById('loginPassSection').dataset.role = role; document.getElementById('rolePassInput').value = ''; setTimeout(() => document.getElementById('rolePassInput').focus(), 100); }
+function ensureLoginInputReady(){
+  const input=document.getElementById('rolePassInput');
+  if(!input) return;
+  input.disabled=false; input.readOnly=false; input.tabIndex=0; input.style.pointerEvents='auto';
+}
+function toggleLoginPassword(){ const i=document.getElementById('rolePassInput'); if(!i) return; ensureLoginInputReady(); i.type=i.type==='password'?'text':'password'; i.focus(); }
+function enterAISApplication(role){
+  currentUserRole=role; isAdminUnlocked=(role==='Admin');
+  const overlay=document.getElementById('roleLoginOverlay'), main=document.getElementById('mainContent');
+  if(overlay) overlay.style.display='none'; if(main){ main.style.display='block'; main.classList.add('ais-app-entered'); }
+  updateRoleUI();
+  const dashBtn=document.querySelector('#mainNavTabs .tab-btn');
+  if(typeof switchTab==='function') switchTab('dashboardTab',dashBtn);
+  setTimeout(()=>{ try{ loadDataFromSupabase(true); }catch(e){ console.error(e); showToast('Application started, but data sync needs attention.','warning'); } },50);
+}
+function selectRole(role) {
+  if(role==='Local'){ enterAISApplication('Local'); showToast('Local User logged in successfully.','success'); return; }
+  const text=document.getElementById('selectedRoleText');
+  if(text) text.innerHTML=`<i class="fa-solid ${role==='Admin'?'fa-user-shield':'fa-calendar-check'}"></i> ${role} access`;
+  const section=document.getElementById('loginPassSection'), roles=document.getElementById('roleSelectionArea');
+  if(section) section.style.display='block'; if(roles) roles.style.display='none';
+  if(section) section.dataset.role=role;
+  const input=document.getElementById('rolePassInput'); if(input){ input.value=''; input.type='password'; ensureLoginInputReady(); setTimeout(()=>{ input.focus(); input.click(); },80); }
+}
+
 function resetRoleSelection() { document.getElementById('loginPassSection').style.display = 'none'; document.getElementById('roleSelectionArea').style.display = 'flex'; }
-function verifyLogin() { const role = document.getElementById('loginPassSection').dataset.role; const pass = document.getElementById('rolePassInput').value; if (role === 'Admin') { if (pass === 'Lr@108227') { currentUserRole = 'Admin'; isAdminUnlocked = true; } else { showToast("Invalid Admin Password!", "error"); return; } } else if (role === 'Planner') { if (pass === 'alumex123') { currentUserRole = 'Planner'; isAdminUnlocked = false; } else { showToast("Invalid Planner Password!", "error"); return; } } document.getElementById('roleLoginOverlay').style.display = 'none'; document.getElementById('mainContent').style.display = 'block'; showToast(role + " User Logged in successfully!", "success"); updateRoleUI(); switchTab('dashboardTab', document.querySelector('.nav-tabs .tab-btn')); }
+document.addEventListener('DOMContentLoaded', () => { ensureLoginInputReady(); });
+function verifyLogin() {
+  const section=document.getElementById('loginPassSection'); const role=section?.dataset.role||''; const pass=(document.getElementById('rolePassInput')?.value||'').trim();
+  if(role==='Admin' && pass==='Lr@108227') { enterAISApplication('Admin'); showToast('Admin access granted.','success'); return; }
+  if(role==='Planner' && pass==='alumex123') { enterAISApplication('Planner'); showToast('Planner access granted.','success'); return; }
+  showToast('Invalid authentication key.','error');
+  const box=document.querySelector('.ais-password-box'); if(box){ box.classList.remove('ais-shake'); void box.offsetWidth; box.classList.add('ais-shake'); }
+}
+
 function logoutUser() { currentUserRole = null; isAdminUnlocked = false; document.getElementById('mainContent').style.display = 'none'; document.getElementById('roleLoginOverlay').style.display = 'flex'; resetRoleSelection(); switchTab('dashboardTab', document.querySelector('.tab-btn')); showToast("Logged out successfully.", "success"); }
 
 function updateRoleUI() {
@@ -204,12 +82,39 @@ function showToast(message, type = 'success') { const container = document.getEl
 
 let confirmCallback = null; function showConfirm(message, callback) { document.getElementById('confirmMessage').innerHTML = message; document.getElementById('confirmModal').style.display = 'flex'; confirmCallback = callback; } function closeConfirmModal() { document.getElementById('confirmModal').style.display = 'none'; confirmCallback = null; } function executeConfirm() { if(confirmCallback) confirmCallback(); closeConfirmModal(); }
 function toggleTheme() { isDarkMode = !isDarkMode; if(isDarkMode) { document.body.classList.add('dark-mode'); showToast("Dark Mode", "success"); } else { document.body.classList.remove('dark-mode'); showToast("Light Mode", "success"); } renderDashboard(); }
+function toggleOverdueDetails(button) {
+    if (!button) return;
+    const details = button.closest('.po-overdue-item')?.querySelector('.overdue-balance-details');
+    if (!details) return;
+    const isHidden = details.style.display === 'none' || getComputedStyle(details).display === 'none';
+    details.style.display = isHidden ? 'block' : 'none';
+    button.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+    button.textContent = isHidden ? 'Hide balance details ▲' : 'View balance details ▼';
+}
+
 function startLiveClock() { 
     function updateClock() { 
         const now = new Date(); 
-        document.getElementById('liveClockDisplay').textContent = now.toLocaleTimeString('en-US', { hour12: true }); 
-        document.getElementById('liveDateDisplay').textContent = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); 
-        if(typeof window.updateShipmentCountdown === 'function') window.updateShipmentCountdown();
+        const clockEl = document.getElementById('liveClockDisplay');
+        const dateEl = document.getElementById('liveDateDisplay');
+        if (clockEl) {
+            clockEl.textContent = now.toLocaleTimeString('en-US', { hour12: false });
+        }
+        const amPmEl = document.getElementById('liveClockAmPm');
+        if (amPmEl) amPmEl.textContent = now.toLocaleTimeString('en-US', { hour12: true }).split(' ').pop();
+        if (dateEl) dateEl.textContent = now.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+        const clockBadge = document.querySelector('.live-clock-badge');
+        const second = now.getSeconds() + now.getMilliseconds() / 1000;
+        const minute = now.getMinutes() + second / 60;
+        const hour = (now.getHours() % 12) + minute / 60;
+        const root = document.documentElement;
+        root.style.setProperty('--clock-second-angle', `${second * 6}deg`);
+        root.style.setProperty('--clock-minute-angle', `${minute * 6}deg`);
+        root.style.setProperty('--clock-hour-angle', `${hour * 30}deg`);
+        root.style.setProperty('--clock-progress', `${(second / 60) * 360}deg`);
+        /* Live clock updates every second. Visual tick/sweep animations are intentionally disabled
+           so the time widget stays clean and professional. */
+        if (typeof window.updateShipmentCountdown === 'function') window.updateShipmentCountdown();
     } 
     updateClock(); 
     setInterval(updateClock, 1000); 
@@ -383,8 +288,7 @@ window.clearShipmentDeadline = async function() {
     showToast("Shipment deadline cleared!", "success");
 };
 
-window.onload = function() { ensureV2StatusBadge(); ensureV2BackupButton();
-
+window.onload = function() {
   injectGenericEditModal();
   injectCountdownUI();
   startLiveClock(); const today = new Date().toISOString().split('T')[0];
@@ -422,381 +326,250 @@ function sortCrates(a, b) {
 }
 
 let isFetchingData = false;
-
 async function loadDataFromSupabase(isSilent = false) {
   if (isFetchingData) return;
   isFetchingData = true;
-  AIS_V2.readErrors = [];
-
   try {
-    ensureV2StatusBadge();
-    if (!isSilent) showToast("Connecting & syncing Supabase...", "warning");
+    if(!isSilent) showToast("Connecting & Syncing Data...", "warning");
+    const safeFetch = async (table, options = {}) => { try { let query = supabaseClient.from(table).select('*'); if(options.order) query = query.order(options.order.col, { ascending: options.order.asc }); if(options.limit) query = query.limit(options.limit); let { data, error } = await query; if (error) { console.warn(`DB Fetch error for ${table}:`, error); if(!isSilent) showToast(`DB Error (${table}): ${error.message}`, "error"); return []; } return data || []; } catch(e) { console.warn(`Exception on ${table}`, e); return []; } };
 
-    /* Full pagination: the old V1 code used hard limits (1000/1500/2000),
-       which could make older records disappear from the UI. */
-    const safeFetch = async (table, options = {}) => {
-      const pageSize = 1000;
-      let all = [];
-      let from = 0;
-
-      try {
-        while (true) {
-          let query = supabaseClient
-            .from(table)
-            .select("*", { count: "exact" })
-            .range(from, from + pageSize - 1);
-
-          if (options.order) {
-            query = query.order(options.order.col, { ascending: options.order.asc });
-          } else {
-            query = query.order("id", { ascending: false });
-          }
-
-          const { data, error } = await query;
-
-          if (error) {
-            const msg = `${table}: ${error.message}`;
-            AIS_V2.readErrors.push(msg);
-            throw new Error(msg);
-          }
-
-          const rows = data || [];
-          all = all.concat(rows);
-
-          if (rows.length < pageSize) break;
-          from += pageSize;
-        }
-
-        return all;
-      } catch (e) {
-        console.error("V2 DB fetch failed:", table, e);
-        throw e;
-      }
-    };
-
-    let results;
-    try {
-      results = await Promise.all([
-        safeFetch("master_catalog"),
-        safeFetch("production_orders"),
-        safeFetch("shipments"),
-        safeFetch("packing_list"),
-        safeFetch("history_logs"),
-        safeFetch("reject_logs"),
-        safeFetch("recover_logs"),
-        safeFetch("cardboard_stock"),
-        safeFetch("daily_instructions")
-      ]);
-    } catch (readError) {
-      /* CRITICAL: If a table cannot be read, DO NOT seed, clear, rebuild,
-         or replace the current in-memory state with empty arrays. */
-      AIS_V2.syncOk = false;
-      setV2SyncStatus(false, readError.message);
-      showToast("Supabase read failed. Existing data was NOT replaced.", "error");
-      console.error("AIS V2 sync aborted:", readError);
-      return;
-    }
+    const results = await Promise.all([
+        safeFetch('master_catalog'), safeFetch('production_orders', { order: {col: 'id', asc: false}, limit: 1000 }), safeFetch('shipments', { order: {col: 'id', asc: false}, limit: 1500 }), 
+        safeFetch('packing_list', { order: {col: 'id', asc: false}, limit: 2000 }), safeFetch('history_logs', { order: {col: 'id', asc: false}, limit: 1500 }), safeFetch('reject_logs', { order: {col: 'id', asc: false} }),
+        safeFetch('recover_logs', { order: {col: 'id', asc: false} }), safeFetch('cardboard_stock', { order: {col: 'id', asc: false}, limit: 1500 }), safeFetch('daily_instructions', { order: {col: 'id', asc: false} })
+    ]);
 
     let catDataRaw = results[0];
-    const poData = results[1], shipData = results[2], plData = results[3],
-          logData = results[4], rjData = results[5], rcData = results[6],
-          cbData = results[7], instData = results[8];
+    if (catDataRaw.length === 0) { try { const { data: seeded } = await supabaseClient.from('master_catalog').insert(INITIAL_CATALOG.map(i => ({ profile: i.profile, length: i.length, unit_weight: i.unit_weight || 0, item_code: i.item_code || '', material: i.material || '', cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0, box_capacity: 100, ex_length: '' }))).select(); catDataRaw = seeded || []; } catch(e) {} }
 
-    /* Seed INITIAL_CATALOG only when Supabase was successfully read and the
-       master table is genuinely empty. A network/RLS failure can no longer
-       trigger accidental seed behavior. */
-    if (catDataRaw.length === 0) {
-      try {
-        const { data: seeded, error: seedError } = await supabaseClient
-          .from("master_catalog")
-          .insert(INITIAL_CATALOG.map(i => ({
-            profile: i.profile,
-            length: i.length,
-            unit_weight: i.unit_weight || 0,
-            item_code: i.item_code || "",
-            material: i.material || "",
-            cut_qty: 0,
-            punch_qty: 0,
-            wrap_qty: 0,
-            box_qty: 0,
-            crate_qty: 0,
-            box_capacity: 100,
-            ex_length: ""
-          })))
-          .select();
-
-        if (seedError) throw seedError;
-        catDataRaw = seeded || [];
-      } catch (e) {
-        AIS_V2.writeErrors.push({
-          type: "seed",
-          table: "master_catalog",
-          message: e.message,
-          at: new Date().toISOString()
-        });
-        showToast("Master catalog is empty and initial setup failed. No existing data was removed.", "error");
-        return;
-      }
-    }
-
-    let syncRow = instData.find(i => i.target_user === "SYS_CRATES_SYNC");
+    const poData = results[1], shipData = results[2], plData = results[3], logData = results[4], rjData = results[5], rcData = results[6], cbData = results[7], instData = results[8];
+    
+    let syncRow = instData.find(i => i.target_user === 'SYS_CRATES_SYNC');
     if (syncRow && syncRow.message) {
-      try { globalManualCrates = JSON.parse(syncRow.message); }
-      catch(e) { globalManualCrates = {}; }
+        try { globalManualCrates = JSON.parse(syncRow.message); } catch(e) { globalManualCrates = {}; }
     } else {
-      globalManualCrates = {};
+        globalManualCrates = {};
     }
 
-    let deadlineRow = instData.find(i => i.target_user === "SYS_SHIPMENT_DEADLINE");
+    let shipmentStateRow = instData.find(i => i.target_user === 'SYS_PL_SHIPMENT_STATE');
+    if (shipmentStateRow && shipmentStateRow.message) {
+        try { shipmentStates = JSON.parse(shipmentStateRow.message) || {}; } catch(e) { shipmentStates = {}; }
+    } else { shipmentStates = {}; }
+    
+    let deadlineRow = instData.find(i => i.target_user === 'SYS_SHIPMENT_DEADLINE');
     if (deadlineRow && deadlineRow.message) {
-      shipmentDeadline = new Date(deadlineRow.message);
-      if (document.getElementById("shipmentDeadlineInput")) {
-        let d = shipmentDeadline;
-        let year = d.getFullYear();
-        let month = String(d.getMonth() + 1).padStart(2, "0");
-        let day = String(d.getDate()).padStart(2, "0");
-        let hour = String(d.getHours()).padStart(2, "0");
-        let min = String(d.getMinutes()).padStart(2, "0");
-        document.getElementById("shipmentDeadlineInput").value =
-          `${year}-${month}-${day}T${hour}:${min}`;
-      }
+        shipmentDeadline = new Date(deadlineRow.message);
+        if (document.getElementById('shipmentDeadlineInput')) {
+            let d = shipmentDeadline;
+            let year = d.getFullYear();
+            let month = String(d.getMonth() + 1).padStart(2, '0');
+            let day = String(d.getDate()).padStart(2, '0');
+            let hour = String(d.getHours()).padStart(2, '0');
+            let min = String(d.getMinutes()).padStart(2, '0');
+            document.getElementById('shipmentDeadlineInput').value = `${year}-${month}-${day}T${hour}:${min}`;
+        }
     } else {
-      shipmentDeadline = null;
-      if (document.getElementById("shipmentDeadlineInput"))
-        document.getElementById("shipmentDeadlineInput").value = "";
+        shipmentDeadline = null;
+        if (document.getElementById('shipmentDeadlineInput')) document.getElementById('shipmentDeadlineInput').value = '';
     }
-
-    let localExtras = [];
-    try {
-      const stored = localStorage.getItem("alumex_master_extras");
-      if (stored) localExtras = JSON.parse(stored);
-    } catch(e) {}
-
-    const uniqueData = [];
-    const seenMap = new Map();
-
+    
+    let localExtras = []; try { const stored = localStorage.getItem('alumex_master_extras'); if (stored) localExtras = JSON.parse(stored); } catch(e) {}
+    
+    const uniqueData = []; const seenMap = new Map();
     catDataRaw.forEach(item => {
-      const localExt = localExtras.find(e =>
-        String(e.p) === String(item.profile) &&
-        cleanLen(e.l) === cleanLen(item.length) &&
-        String(e.i) === String(item.item_code)
-      ) || {};
-
-      const obj = {
-        db_id: item.id,
-        profile: String(item.profile).trim(),
-        itemCode: String(item.item_code || "").trim(),
-        material: item.material || localExt.mat || "-",
-        length: cleanLen(item.length),
-        exLength: item.ex_length || localExt.ex || "",
-        unitWeight: parseFloat(item.unit_weight) || 0,
-        cutQty: item.cut_qty || 0,
-        punchQty: item.punch_qty || 0,
-        wrapQty: item.wrap_qty || 0,
-        boxQty: item.box_qty || 0,
-        crateQty: item.crate_qty || 0,
-        boxCapacity: item.box_capacity || localExt.cap || 100
-      };
-
+      const localExt = localExtras.find(e => String(e.p) === String(item.profile) && cleanLen(e.l) === cleanLen(item.length) && String(e.i) === String(item.item_code)) || {};
+      const obj = { db_id: item.id, profile: String(item.profile).trim(), itemCode: String(item.item_code || '').trim(), material: item.material || localExt.mat || '-', length: cleanLen(item.length), exLength: item.ex_length || localExt.ex || '', unitWeight: parseFloat(item.unit_weight) || 0, cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, boxCapacity: item.box_capacity || localExt.cap || 100 };
       const uniqueKey = `${obj.profile}_${obj.itemCode}_${obj.length}`;
-      if (!seenMap.has(uniqueKey)) {
-        seenMap.set(uniqueKey, obj);
-        uniqueData.push(obj);
-      } else {
-        const ex = seenMap.get(uniqueKey);
-        ex.cutQty += obj.cutQty;
-        ex.punchQty += obj.punchQty;
-        ex.wrapQty += obj.wrapQty;
-        ex.boxQty += obj.boxQty;
-        ex.crateQty += obj.crateQty;
-        if (!ex.itemCode || ex.itemCode === "-" || ex.itemCode === "")
-          ex.itemCode = obj.itemCode;
-      }
+      if (!seenMap.has(uniqueKey)) { seenMap.set(uniqueKey, obj); uniqueData.push(obj); } 
+      else { const ex = seenMap.get(uniqueKey); ex.cutQty += obj.cutQty; ex.punchQty += obj.punchQty; ex.wrapQty += obj.wrapQty; ex.boxQty += obj.boxQty; ex.crateQty += obj.crateQty; if (!ex.itemCode || ex.itemCode === '-' || ex.itemCode === '') ex.itemCode = obj.itemCode; }
     });
-
-    masterData = uniqueData.sort((a,b) =>
-      (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) ||
-      (parseFloat(a.length)||0) - (parseFloat(b.length)||0)
-    );
-
-    poList = poData.map(item => ({
-      id: item.id, date: item.po_date, poNumber: item.po_number,
-      profile: item.profile, length: cleanLen(item.length), orderQty: item.order_qty
-    }));
-
-    shipmentList = shipData.map(item => ({
-      id: item.id, date: item.shipment_date, month: item.shipment_month,
-      poNumber: item.po_number, profile: item.profile, length: cleanLen(item.length),
-      container: item.container, shippedQty: item.shipped_qty,
-      remainingBalance: item.remaining_balance
-    }));
-
-    packingLists = plData.map(item => ({
-      id: item.id, plNumber: item.pl_number, poNumber: item.po_number,
-      month: item.shipment_month || "January", container: item.container || "1st Container",
-      crateNo: item.crate_no || `Crate ${item.box_qty || 1}`,
-      profile: item.profile, itemCode: item.item_code || "",
-      length: cleanLen(item.length), boxQty: item.box_qty || 1,
-      pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0,
-      grossWeight: item.gross_weight || 0, date: item.packing_date
-    }));
-
-    historyLogs = logData.map(item => ({
-      id: item.id, date: item.log_date, shift: item.shift,
-      profile: item.profile, length: cleanLen(item.length),
-      cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0,
-      wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0,
-      crateQty: item.crate_qty || 0,
-      timestamp: item.log_time || item.created_at || new Date().toISOString()
-    }));
-
-    rejectLogs = rjData;
-    recoverLogs = rcData;
-    dailyInstructionsList = instData;
-
-    /* Supabase is the source of truth. Local cardboard data is used only as
-       an emergency display fallback when the DB table is genuinely empty. */
-    if (cbData.length > 0) {
-      cardboardStockList = cbData.map(c => ({
-        id: c.id, db_id: c.id, date: c.cb_date, type: c.cb_type,
-        incoming: c.incoming || 0, used: c.used || 0,
-        timestamp: c.created_at || new Date().toISOString()
-      }));
-      saveCardboardLocally();
-    } else {
-      cardboardStockList = [];
-    }
+    masterData = uniqueData.sort((a, b) => (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) || (parseFloat(a.length)||0) - (parseFloat(b.length)||0));
+    poList = poData.map(item => ({ id: item.id, date: item.po_date, poNumber: item.po_number, profile: item.profile, length: cleanLen(item.length), orderQty: item.order_qty }));
+    shipmentList = shipData.map(item => ({ id: item.id, date: item.shipment_date, month: item.shipment_month, poNumber: item.po_number, profile: item.profile, length: cleanLen(item.length), container: item.container, shippedQty: item.shipped_qty, remainingBalance: item.remaining_balance }));
+    packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate 1`, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date }));
+    historyLogs = logData.map(item => ({ id: item.id, date: item.log_date, shift: item.shift, profile: item.profile, length: cleanLen(item.length), cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, timestamp: item.log_time || item.created_at || new Date().toISOString() }));
+    rejectLogs = rjData; recoverLogs = rcData; dailyInstructionsList = instData;
+    if (cbData && cbData.length > 0) { cardboardStockList = cbData.map(c => ({ id: c.id, db_id: c.id, date: c.cb_date, type: c.cb_type, incoming: c.incoming || 0, used: c.used || 0, timestamp: c.created_at || new Date().toISOString() })); saveCardboardLocally(); } else { const localCb = localStorage.getItem('alumex_cardboard_local'); if(localCb) cardboardStockList = JSON.parse(localCb); }
 
     const profileLookup = new Map();
-    masterData.forEach(m =>
-      profileLookup.set(`${String(m.profile).trim()}_${cleanLen(m.length)}`, m)
-    );
+    masterData.forEach(m => profileLookup.set(`${String(m.profile).trim()}_${cleanLen(m.length)}`, m));
 
-    historyLogs.forEach(l => {
-      if (!profileLookup.has(`${String(l.profile).trim()}_${cleanLen(l.length)}`)) {
-        const nm = {
-          db_id: null,
-          profile: String(l.profile).trim(),
-          itemCode: "-",
-          material: "-",
-          length: cleanLen(l.length),
-          exLength: "",
-          unitWeight: 0,
-          cutQty: 0,
-          punchQty: 0,
-          wrapQty: 0,
-          boxQty: 0,
-          crateQty: 0,
-          boxCapacity: 100
-        };
-        masterData.push(nm);
-        profileLookup.set(`${String(l.profile).trim()}_${cleanLen(l.length)}`, nm);
-      }
-    });
+    historyLogs.forEach(l => { if (!profileLookup.has(`${String(l.profile).trim()}_${cleanLen(l.length)}`)) { const nm = { db_id: null, profile: String(l.profile).trim(), itemCode: '-', material: '-', length: cleanLen(l.length), exLength: '', unitWeight: 0, cutQty: 0, punchQty: 0, wrapQty: 0, boxQty: 0, crateQty: 0, boxCapacity: 100 }; masterData.push(nm); profileLookup.set(`${String(l.profile).trim()}_${cleanLen(l.length)}`, nm); } });
+    poList.forEach(po => { if (!profileLookup.has(`${String(po.profile).trim()}_${cleanLen(po.length)}`)) { const nm = { db_id: null, profile: String(po.profile).trim(), itemCode: '-', material: '-', length: cleanLen(po.length), exLength: '', unitWeight: 0, cutQty: 0, punchQty: 0, wrapQty: 0, boxQty: 0, crateQty: 0, boxCapacity: 100 }; masterData.push(nm); profileLookup.set(`${String(po.profile).trim()}_${cleanLen(po.length)}`, nm); } });
 
-    poList.forEach(po => {
-      if (!profileLookup.has(`${String(po.profile).trim()}_${cleanLen(po.length)}`)) {
-        const nm = {
-          db_id: null,
-          profile: String(po.profile).trim(),
-          itemCode: "-",
-          material: "-",
-          length: cleanLen(po.length),
-          exLength: "",
-          unitWeight: 0,
-          cutQty: 0,
-          punchQty: 0,
-          wrapQty: 0,
-          boxQty: 0,
-          crateQty: 0,
-          boxCapacity: 100
-        };
-        masterData.push(nm);
-        profileLookup.set(`${String(po.profile).trim()}_${cleanLen(po.length)}`, nm);
-      }
-    });
-
-    const hasAnyStock = masterData.some(m =>
-      m.cutQty > 0 || m.punchQty > 0 || m.wrapQty > 0 || m.boxQty > 0 || m.crateQty > 0
-    );
-
+    const hasAnyStock = masterData.some(m => m.cutQty > 0 || m.punchQty > 0 || m.wrapQty > 0 || m.boxQty > 0 || m.crateQty > 0);
     if (!hasAnyStock && historyLogs.length > 0) {
       [...historyLogs].reverse().forEach(l => {
-        const item = profileLookup.get(
-          `${String(l.profile).trim()}_${cleanLen(l.length)}`
-        );
+        const item = profileLookup.get(`${String(l.profile).trim()}_${cleanLen(l.length)}`);
         if (item) {
           item.cutQty = (item.cutQty || 0) + (l.cutQty || 0);
-          if (l.punchQty > 0) {
-            item.cutQty = Math.max(0, item.cutQty - l.punchQty);
-            item.punchQty = (item.punchQty || 0) + l.punchQty;
-          }
-          if (l.wrapQty > 0) {
-            if (isPunchBypassed(l.profile, l.length) || (item.punchQty || 0) <= 0) {
-              item.cutQty = Math.max(0, item.cutQty - l.wrapQty);
-            } else if (item.punchQty >= l.wrapQty) {
-              item.punchQty -= l.wrapQty;
-            } else {
-              const rem = l.wrapQty - item.punchQty;
-              item.punchQty = 0;
-              item.cutQty = Math.max(0, item.cutQty - rem);
-            }
-            item.wrapQty = (item.wrapQty || 0) + l.wrapQty;
-          }
-          if (l.boxQty > 0) {
-            item.wrapQty = Math.max(0, item.wrapQty - l.boxQty);
-            item.boxQty = (item.boxQty || 0) + l.boxQty;
-          }
-          if (l.crateQty > 0) {
-            item.boxQty = Math.max(0, item.boxQty - l.crateQty);
-            item.crateQty = (item.crateQty || 0) + l.crateQty;
-          }
+          if (l.punchQty > 0) { item.cutQty = Math.max(0, item.cutQty - l.punchQty); item.punchQty = (item.punchQty || 0) + l.punchQty; }
+          if (l.wrapQty > 0) { if (isPunchBypassed(l.profile, l.length) || (item.punchQty || 0) <= 0) { item.cutQty = Math.max(0, item.cutQty - l.wrapQty); } else if (item.punchQty >= l.wrapQty) { item.punchQty -= l.wrapQty; } else { const rem = l.wrapQty - item.punchQty; item.punchQty = 0; item.cutQty = Math.max(0, item.cutQty - rem); } item.wrapQty = (item.wrapQty || 0) + l.wrapQty; }
+          if (l.boxQty > 0) { item.wrapQty = Math.max(0, item.wrapQty - l.boxQty); item.boxQty = (item.boxQty || 0) + l.boxQty; }
+          if (l.crateQty > 0) { item.boxQty = Math.max(0, item.boxQty - l.crateQty); item.crateQty = (item.crateQty || 0) + l.crateQty; }
         }
       });
     }
-
-    AIS_V2.syncOk = true;
-    AIS_V2.lastSyncAt = new Date().toISOString();
-    setV2SyncStatus(true);
-    saveV2EmergencySnapshot();
-
-    if (!isSilent && masterData.length > 0)
-      showToast(`Database Sync Complete — ${masterData.length} catalog items loaded.`, "success");
-
-  } catch (err) {
-    console.error("AIS V2 sync exception:", err);
-    AIS_V2.syncOk = false;
-    setV2SyncStatus(false, err.message);
-    showToast("Sync stopped safely. Existing data was NOT cleared.", "error");
-  } finally {
-    isFetchingData = false;
-    populateStockFilterDropdown();
-    populateProfileDropdown();
-    populatePoProfileDropdown();
-    populateShipmentPoDropdown();
-    populatePlPoDropdown();
-    populateCbProfileDropdown();
-    populateRejProfile();
-    populateRecProfile();
-
-    if (currentUserRole) {
-      updateRoleUI();
-      setTimeout(() => {
-        renderDashboard();
-        renderProfileSummaryTable();
-        renderPoDetailsTable();
-        renderMasterCatalog();
-        renderShipmentHistoryTable();
-        renderPackingListTable();
-        renderCardboardStock();
-        renderDailyInstructions();
-        renderHistoryData();
-        renderRejectTable();
-        renderRecoverTable();
-        renderBalanceWorkTable();
-      }, 100);
-    }
+    if(!isSilent && masterData.length > 0) showToast(`Database Sync Complete!`, "success");
+  } catch (err) { console.error(err); } finally { 
+      isFetchingData = false;
+      populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateShipmentPoDropdown(); populatePlPoDropdown(); populateCbProfileDropdown(); populateRejProfile(); populateRecProfile();
+      if(currentUserRole) { 
+          updateRoleUI(); 
+          setTimeout(() => {
+              renderDashboard(); renderProfileSummaryTable(); checkDateStatus(); renderHistoryData(); updatePoFilters(); renderPoDetailsTable(); window.renderShipmentHistoryTable(); renderPackingListTable(); renderPoCharts(); renderBalanceWorkTable(); renderCardboardStock(); renderDailyInstructions(); renderRejectTable(); renderRecoverTable();
+              window.updateShipmentCountdown();
+          }, 10);
+      } 
   }
+}
+
+window.saveManualCratesToDB = async function() {
+    let jsonStr = JSON.stringify(globalManualCrates);
+    let existing = dailyInstructionsList.find(i => i.target_user === 'SYS_CRATES_SYNC');
+    if (existing) {
+        existing.message = jsonStr;
+        try { await supabaseClient.from('daily_instructions').update({ message: jsonStr }).eq('id', existing.id); } catch(e){}
+    } else {
+        let newRec = { target_date: new Date().toISOString().split('T')[0], target_user: 'SYS_CRATES_SYNC', priority: 'Normal', message: jsonStr, status: 'Completed', action_taken: 'System Data' };
+        try { 
+            let {data} = await supabaseClient.from('daily_instructions').insert([newRec]).select(); 
+            if(data && data.length>0) dailyInstructionsList.push(data[0]); 
+        } catch(e){}
+    }
+};
+
+
+function getPackingMonths() {
+    const months = [...new Set(packingLists.map(p => String(p.month || '').trim()).filter(Boolean))];
+    const now = new Date();
+    const current = now.toLocaleString('en-US', {month:'long'});
+    if (!months.includes(current)) months.unshift(current);
+    return months;
+}
+function getContainerList() { return ['1st Container','2nd Container','3rd Container']; }
+function shipmentStateKey(month, container) { return `${String(month||'').trim()}__${String(container||'').trim()}`; }
+function manualCrateKey(crateId, container=activePackingContainer) { return `${String(container||'').trim()}::${String(crateId||'').trim()}`; }
+function isManualCrateComplete(crateId, container=activePackingContainer) { return !!(globalManualCrates[manualCrateKey(crateId,container)] || globalManualCrates[crateId]); }
+function isPackingShipmentComplete(month, container) { return !!shipmentStates[shipmentStateKey(month, container)]?.completed; }
+function getContainerNumber(container) { const m=String(container||'').match(/(\d+)/); return m ? parseInt(m[1]) : 99; }
+function getPackingContainerRecords(month, container) { return packingLists.filter(p => String(p.month||'').trim()===String(month||'').trim() && String(p.container||'').trim()===String(container||'').trim()); }
+function getNextPackingContainer(month, container) {
+    const n=getContainerNumber(container);
+    if (n >= 3) return null;
+    const next = n + 1;
+    const suffix = next === 1 ? 'st' : next === 2 ? 'nd' : next === 3 ? 'rd' : 'th';
+    return `${next}${suffix} Container`;
+}
+function normalizeContainerName(v) {
+    const s=String(v||'').trim().toLowerCase().replace(/\s+/g,' ');
+    if(/1st|first|container 1|1 container/.test(s)) return '1st Container';
+    if(/2nd|second|container 2|2 container/.test(s)) return '2nd Container';
+    if(/3rd|third|container 3|3 container/.test(s)) return '3rd Container';
+        return String(v||'').trim() || '1st Container';
+}
+async function savePackingShipmentStates() {
+    const jsonStr=JSON.stringify(shipmentStates||{});
+    let existing=dailyInstructionsList.find(i=>i.target_user==='SYS_PL_SHIPMENT_STATE');
+    try {
+        if(existing) { existing.message=jsonStr; await supabaseClient.from('daily_instructions').update({message:jsonStr}).eq('id',existing.id); }
+        else { const {data}=await supabaseClient.from('daily_instructions').insert([{target_date:new Date().toISOString().split('T')[0],target_user:'SYS_PL_SHIPMENT_STATE',priority:'Normal',message:jsonStr,status:'Completed',action_taken:'System Data'}]).select(); if(data?.length) dailyInstructionsList.push(data[0]); }
+    } catch(e) { showToast('Shipment status could not be synced.','warning'); }
+}
+function ensurePackingSelection() {
+    const months=getPackingMonths();
+    const hadMonth=!!activePackingMonth, hadContainer=!!activePackingContainer;
+    if(!activePackingMonth || !months.includes(activePackingMonth)) activePackingMonth=months[0] || new Date().toLocaleString('en-US',{month:'long'});
+    const containers=getContainerList();
+    if(!activePackingContainer || !containers.includes(activePackingContainer)) activePackingContainer=containers[0];
+    // On first load only, open the latest useful shipment: first incomplete container with data,
+    // otherwise the next container after the latest completed one.
+    if(!hadMonth && !hadContainer) {
+        const withData=containers.filter(c=>getPackingContainerRecords(activePackingMonth,c).length>0);
+        const incompleteWithData=withData.find(c=>!isPackingShipmentComplete(activePackingMonth,c));
+        if(incompleteWithData) activePackingContainer=incompleteWithData;
+        else {
+            const completedNums=containers.filter(c=>isPackingShipmentComplete(activePackingMonth,c)).map(getContainerNumber);
+            const nextNum=completedNums.length?Math.max(...completedNums)+1:0;
+            if(nextNum>=1 && nextNum<=4) activePackingContainer=containers[nextNum-1];
+            else if(withData.length) activePackingContainer=withData[withData.length-1];
+        }
+    }
+}
+window.setPackingShipment = function(month,container){ activePackingMonth=month; activePackingContainer=container; renderPackingListTable(); };
+window.completePackingShipment = async function(){
+    if(currentUserRole!=='Admin') return showToast('Only Admin can complete a shipment.','error');
+    ensurePackingSelection();
+    const key=shipmentStateKey(activePackingMonth,activePackingContainer);
+    const records=getPackingContainerRecords(activePackingMonth,activePackingContainer);
+    if(!records.length) return showToast('No packing list data found for this container.','warning');
+    const crateIds=[...new Set(records.map(r=>r.crateNo).filter(Boolean))];
+    const completedCrates=crateIds.filter(c=>isManualCrateComplete(c,activePackingContainer)).length;
+    if(completedCrates<crateIds.length) {
+        showConfirm(`Mark <b>${activePackingContainer}</b> as shipped/completed? ${crateIds.length-completedCrates} crate(s) are not marked Packed.`, async()=>{ await finalizePackingShipment(key); });
+    } else await finalizePackingShipment(key);
+};
+async function finalizePackingShipment(key){
+    shipmentStates[key]={completed:true,completedAt:new Date().toISOString(),completedBy:currentUserRole};
+    await savePackingShipmentStates();
+    const next=getNextPackingContainer(activePackingMonth,activePackingContainer);
+    if(next){ activePackingContainer=next; showToast(`${key.split('__')[1]} completed. Now ready for ${next}.`,'success'); }
+    renderPackingListTable(); renderDashboard();
+}
+window.reopenPackingShipment = async function(){
+    if(currentUserRole!=='Admin') return;
+    const key=shipmentStateKey(activePackingMonth,activePackingContainer); delete shipmentStates[key]; await savePackingShipmentStates(); renderPackingListTable(); showToast(`${activePackingContainer} reopened.`,'success');
+};
+window.printPackingShipment = function(){
+    const month=activePackingMonth, container=activePackingContainer, rows=getPackingContainerRecords(month,container);
+    if(!rows.length) return showToast('No data to print for this shipment.','warning');
+    const win=window.open('','_blank'); if(!win) return;
+    const totalPcs=rows.reduce((a,r)=>a+(+r.pcsQty||0),0), totalWt=rows.reduce((a,r)=>a+(+r.netWeight||0),0);
+    win.document.write(`<html><head><title>${month} - ${container} Packing List</title><style>body{font-family:Arial;padding:30px;color:#123}h1{margin-bottom:4px}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{border:1px solid #ccc;padding:8px;text-align:left}th{background:#064e3b;color:#fff}.sum{margin:12px 0;font-weight:700}</style></head><body><h1>Alumex PLC - Packing List</h1><div>${month} • ${container}</div><div class="sum">Total: ${totalPcs} Pcs | ${totalWt.toFixed(2)} kg</div><table><thead><tr><th>Crate</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Qty</th><th>Net Weight</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.crateNo}</td><td>${r.profile}</td><td>${r.itemCode}</td><td>${r.length} mm</td><td>${r.pcsQty}</td><td>${(+r.netWeight||0).toFixed(2)} kg</td></tr>`).join('')}</tbody></table><script>window.onload=()=>window.print()</script></body></html>`); win.document.close();
+};
+function renderPackingShipmentControls() {
+    const host=document.getElementById('packingShipmentControls'); if(!host) return;
+    ensurePackingSelection(); const months=getPackingMonths(), containers=getContainerList();
+    const records=getPackingContainerRecords(activePackingMonth,activePackingContainer);
+    const crateIds=[...new Set(records.map(r=>r.crateNo).filter(Boolean))];
+    const doneCrates=crateIds.filter(c=>isManualCrateComplete(c,activePackingContainer)).length; const completed=isPackingShipmentComplete(activePackingMonth,activePackingContainer);
+    const pcs=records.reduce((a,r)=>a+(+r.pcsQty||0),0), wt=records.reduce((a,r)=>a+(+r.netWeight||0),0);
+    const monthOptions=months.map(m=>`<option value="${m}" ${m===activePackingMonth?'selected':''}>${m}</option>`).join('');
+    const tabs=containers.map(c=>{const rec=getPackingContainerRecords(activePackingMonth,c), done=isPackingShipmentComplete(activePackingMonth,c), has=rec.length>0; return `<button class="pl-ship-tab ${c===activePackingContainer?'active':''} ${done?'done':''}" onclick="window.setPackingShipment('${activePackingMonth}','${c}')"><span>${c.replace(' Container','')}</span><small>${done?'✓ Completed':has?`${rec.length} items`:'No data'}</small></button>`;}).join('');
+    host.innerHTML=`<div class="pl-control-head"><div><div class="pl-eyebrow">SHIPMENT CONTROL CENTER</div><h3><i class="fa-solid fa-ship"></i> Monthly Shipment Flow</h3><p>Complete one container, then continue directly with the next shipment.</p></div><div class="pl-control-actions"><select onchange="window.setPackingShipment(this.value,activePackingContainer)">${monthOptions}</select><button class="btn btn-accent" onclick="window.printPackingShipment()"><i class="fa-solid fa-print"></i> Print</button></div></div><div class="pl-ship-tabs">${tabs}</div><div class="pl-active-summary"><div><span class="pl-status-dot ${completed?'done':''}"></span><b>${activePackingContainer}</b><span class="pl-status ${completed?'done':''}">${completed?'SHIPMENT COMPLETED':'ACTIVE SHIPMENT'}</span></div><div class="pl-summary-metrics"><span><b>${crateIds.length}</b> Crates</span><span><b>${doneCrates}/${crateIds.length}</b> Packed</span><span><b>${pcs}</b> Pcs</span><span><b>${wt.toFixed(2)}</b> kg</span></div><div class="pl-control-buttons">${completed?`<button class="btn" style="background:#64748b" onclick="window.reopenPackingShipment()"><i class="fa-solid fa-rotate-left"></i> Reopen</button>`:`<button class="btn btn-accent" onclick="window.completePackingShipment()"><i class="fa-solid fa-circle-check"></i> Complete Shipment</button>`}</div></div>`;
+}
+
+function toggleNavCategory(category, btn) {
+  const nav=document.getElementById('mainNavTabs'); if(!nav) return;
+  const panel=document.getElementById('smartSubnav');
+  const same=btn && btn.classList.contains('active') && panel && panel.classList.contains('open');
+  nav.querySelectorAll('.smart-category').forEach(b=>b.classList.remove('active'));
+  nav.querySelectorAll('.smart-submenu').forEach(m=>m.classList.remove('active'));
+  if(same){ panel.classList.remove('open'); return; }
+  if(btn) btn.classList.add('active');
+  const menu=nav.querySelector(`.smart-submenu[data-menu="${category}"]`);
+  if(menu){ menu.classList.add('active'); panel.classList.add('open'); }
+}
+
+function activateNavCategoryForTab(tabId, btn){
+  const nav=document.getElementById('mainNavTabs'); if(!nav) return;
+  const item=btn || nav.querySelector(`.tab-btn[onclick*="${tabId}"]`);
+  const direct=nav.querySelector(`.smart-category[data-tab="${tabId}"]`);
+  if(direct){
+    nav.querySelectorAll('.smart-category').forEach(b=>b.classList.remove('active'));
+    direct.classList.add('active');
+    const panel=document.getElementById('smartSubnav'); if(panel) panel.classList.remove('open');
+    return;
+  }
+  const menu=item?.closest('.smart-submenu');
+  if(!menu) return;
+  nav.querySelectorAll('.smart-category').forEach(b=>b.classList.remove('active'));
+  const cat=menu.dataset.menu;
+  const catBtn=nav.querySelector(`.smart-category[data-category="${cat}"]`);
+  if(catBtn) catBtn.classList.add('active');
+  nav.querySelectorAll('.smart-submenu').forEach(m=>m.classList.remove('active'));
+  menu.classList.add('active');
+  const panel=document.getElementById('smartSubnav'); if(panel) panel.classList.add('open');
 }
 
 function switchTab(tabId, btn) {
@@ -804,6 +577,7 @@ function switchTab(tabId, btn) {
   document.querySelectorAll('#mainNavTabs .tab-btn').forEach(el => el.classList.remove('active')); 
   document.getElementById(tabId).classList.add('active'); 
   if(btn && btn.classList.contains('tab-btn')) btn.classList.add('active');
+  activateNavCategoryForTab(tabId, btn);
   
   setTimeout(() => {
       if (tabId === 'dashboardTab') renderDashboard(); 
@@ -827,14 +601,139 @@ function calcRejWeight() { const p = document.getElementById('rejProfile') ? doc
 async function saveRejectEntry() { if(isAppBusy) return; isAppBusy = true; try { if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return; const d = document.getElementById('rejDate').value, sh = document.getElementById('rejShift') ? document.getElementById('rejShift').value : '', tm = document.getElementById('rejTeam') ? document.getElementById('rejTeam').value : '', loc = document.getElementById('rejLoc') ? document.getElementById('rejLoc').value : '', stg = document.getElementById('rejStage') ? document.getElementById('rejStage').value : '', p = document.getElementById('rejProfile').value, ic = document.getElementById('rejItemCode').value, l = cleanLen(document.getElementById('rejLength').value), pcs = parseInt(document.getElementById('rejPcs').value) || 0; if(!d || !p || !ic || !l || pcs <= 0) return; const matched = masterData.find(m => String(m.profile).trim() === p && String(m.itemCode).trim() === ic && cleanLen(m.length) === l); if(!matched) return; const wt = parseFloat((pcs * (matched.unitWeight || 0)).toFixed(2)); let deducted = false; if(String(stg).toLowerCase().includes('punch')) { matched.cutQty = Math.max(0, (matched.cutQty||0) - pcs); deducted = true; } else if(String(stg).toLowerCase().includes('wrap')) { matched.punchQty = Math.max(0, (matched.punchQty||0) - pcs); deducted = true; } if(matched.db_id && deducted) { try { await supabaseClient.from('master_catalog').update({ cut_qty: matched.cutQty, punch_qty: matched.punchQty }).eq('id', matched.db_id); } catch(e) {} } const entry = { reject_date: d, shift: sh, team: tm, location: loc, stage: stg, profile: p, item_code: ic, length: l, pcs: pcs, weight: wt }; const localEntry = { ...entry, id: Date.now() }; rejectLogs.unshift(localEntry); renderRejectTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable(); try { let {data} = await supabaseClient.from('reject_logs').insert([entry]).select(); if (data && data.length > 0) localEntry.id = data[0].id; } catch(e) { } showToast("Reject Saved & Stock Deducted!", "success"); document.getElementById('rejectEntryForm').reset(); document.getElementById('rejDate').value = d; } finally { isAppBusy = false; } }
 function renderRejectTable() { try { const subTab = document.getElementById('rejectEntrySubTab'); let filterDiv = document.getElementById('rejectFilterContainer'); if (!filterDiv && subTab) { filterDiv = document.createElement('div'); filterDiv.id = 'rejectFilterContainer'; filterDiv.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; background: rgba(16, 185, 129, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px dashed var(--emerald-border); flex-wrap: wrap; gap: 15px;"><div><label style="font-weight:800; margin-right:10px; color:var(--primary-dark);"><i class="fa-solid fa-calendar-days"></i> Filter by Month:</label><input type="month" id="rejectMonthFilter" onchange="renderRejectTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700;"></div><div style="display:flex; gap: 12px; font-weight: 800; font-size: 13.5px; flex-wrap: wrap;"><div style="background: #fee2e2; color: #9f1239; padding: 8px 14px; border-radius: 6px;"><i class="fa-solid fa-dumpster"></i> Total: <span id="rejSumTotal">0.00</span> kg</div></div></div>`; const tableContainer = subTab.querySelector('.table-container'); subTab.insertBefore(filterDiv, tableContainer); const now = new Date(); document.getElementById('rejectMonthFilter').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; } const selectedMonthVal = document.getElementById('rejectMonthFilter') ? document.getElementById('rejectMonthFilter').value : ''; let filteredLogs = rejectLogs; let sumTotal = 0; if (selectedMonthVal) filteredLogs = rejectLogs.filter(r => r.reject_date && r.reject_date.startsWith(selectedMonthVal)); filteredLogs.forEach(r => { sumTotal += (parseFloat(r.weight) || 0); }); if (document.getElementById('rejSumTotal')) document.getElementById('rejSumTotal').textContent = sumTotal.toFixed(2); const tb = document.getElementById('rejectTableBody'); if(!tb) return; let html = ''; if(filteredLogs.length===0) html = `<tr><td colspan="10" style="text-align:center;">No Reject Records Found.</td></tr>`; else { filteredLogs.forEach(r => { html += `<tr><td>${r.reject_date}</td><td>${r.shift}</td><td>${r.location}</td><td>${r.stage}</td><td><b>${r.profile}</b></td><td>${r.item_code}</td><td>${r.length}</td><td>${r.pcs}</td><td>${r.weight} kg</td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-danger" onclick="deleteRejectItem(${r.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock"></i>`}</td></tr>`; }); } tb.innerHTML = html; } catch(e) {} }
 window.deleteRejectItem = function(id) { if(currentUserRole !== 'Admin') return; showConfirm("Delete this Reject record?", async () => { try { await supabaseClient.from('reject_logs').delete().eq('id', id); } catch(e){} rejectLogs = rejectLogs.filter(r => r.id !== id); renderRejectTable(); renderDashboard(); showToast("Deleted", "success"); }); }
-function populateRecProfile() { const sel = document.getElementById('recProfile'); if(!sel) return; sel.innerHTML = '<option value="">-- Choose Profile --</option>'; [...new Set(rejectLogs.map(r=>String(r.profile).trim()))].forEach(p => sel.appendChild(new Option(p, p))); }
-function onRecProfileSelect() { const p = document.getElementById('recProfile').value; const sel = document.getElementById('recItemCode'); sel.innerHTML = '<option value="">-- Choose Item Code --</option>'; document.getElementById('recOrigLength').innerHTML = '<option value="">-- Orig Length --</option>'; document.getElementById('recNewLength').innerHTML = '<option value="">-- New Length --</option>'; if(!p) return; const items = rejectLogs.filter(r=>String(r.profile).trim()===p); [...new Set(items.map(m=>m.item_code))].forEach(ic => sel.appendChild(new Option(ic, ic))); }
-function onRecItemCodeSelect() { const p = document.getElementById('recProfile').value; const ic = document.getElementById('recItemCode').value; const sel = document.getElementById('recOrigLength'); sel.innerHTML = '<option value="">-- Orig Length --</option>'; if(!p||!ic) return; const items = rejectLogs.filter(r=>String(r.profile).trim()===p && r.item_code===ic); [...new Set(items.map(m=>String(m.length).trim()))].forEach(l => sel.appendChild(new Option(`${l} mm`, l))); }
-function showRecAvailable() { const p = document.getElementById('recProfile').value, ic = document.getElementById('recItemCode').value, l = cleanLen(document.getElementById('recOrigLength').value), newSel = document.getElementById('recNewLength'), maxEl = document.getElementById('recAvailableDisplay'); if(!newSel) return; newSel.innerHTML = '<option value="">-- Select New Length --</option>'; if(!p||!ic||!l) { maxEl.textContent = "0 Pcs / 0.00 kg"; maxEl.dataset.max = 0; return; } let totRejPcs=0; rejectLogs.filter(r=>String(r.profile).trim()===p && r.item_code===ic && cleanLen(r.length)===l).forEach(r=>{ totRejPcs+=r.pcs; }); let totRecPcs=0; recoverLogs.filter(r=>String(r.profile).trim()===p && r.item_code===ic && cleanLen(r.original_length)===l).forEach(r=>{ totRecPcs+=r.pcs; }); const balPcs = Math.max(0, totRejPcs - totRecPcs); maxEl.textContent = `${balPcs} Pcs Remaining`; maxEl.dataset.max = balPcs; masterData.filter(m=>String(m.profile).trim()===p && m.itemCode===ic).forEach(m => newSel.appendChild(new Option(`${m.length} mm`, m.length))); }
-function calcRecWeight() { const p = document.getElementById('recProfile').value, ic = document.getElementById('recItemCode').value, nl = document.getElementById('recNewLength').value, pcs = parseInt(document.getElementById('recPcs').value)||0; if(!p||!ic||!nl||pcs<=0) return; const matched = masterData.find(m=>String(m.profile).trim()===p && m.itemCode===ic && cleanLen(m.length)===cleanLen(nl)); if(matched && document.getElementById('recWeight')) document.getElementById('recWeight').value = (pcs * (matched.unitWeight || 0)).toFixed(2); }
-async function saveRecoverEntry() { if(isAppBusy) return; isAppBusy = true; try { if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return; const d = document.getElementById('recDate').value, p = document.getElementById('recProfile').value, ic = document.getElementById('recItemCode').value, ol = cleanLen(document.getElementById('recOrigLength').value), nl = cleanLen(document.getElementById('recNewLength').value), pcs = parseInt(document.getElementById('recPcs').value)||0, maxPcs = parseInt(document.getElementById('recAvailableDisplay').dataset.max)||0; if(!d||!p||!ic||!ol||!nl||pcs<=0) return; if(pcs > maxPcs) return; const matched = masterData.find(m=>String(m.profile).trim()===p && m.itemCode===ic && cleanLen(m.length)===nl); if(!matched) return; const wt = parseFloat((pcs * (matched.unitWeight || 0)).toFixed(2)); const entry = { recover_date: d, profile: p, item_code: ic, original_length: ol, new_length: nl, pcs: pcs, recovered_weight: wt }; const localEntry = { ...entry, id: Date.now() }; recoverLogs.unshift(localEntry); renderRecoverTable(); renderDashboard(); showRecAvailable(); try { await supabaseClient.from('recover_logs').insert([entry]); } catch(e) { } showToast("Recovery Processed!", "success"); document.getElementById('rejectRecoverForm').reset(); } finally { isAppBusy = false; } }
-function renderRecoverTable() { const tb = document.getElementById('recoverTableBody'); if(!tb) return; let html = ''; if(recoverLogs.length===0) html = `<tr><td colspan="8">No Recovery Records Found.</td></tr>`; else { recoverLogs.slice(0,50).forEach(r => html += `<tr><td>${r.recover_date}</td><td><b>${r.profile}</b></td><td>${r.item_code}</td><td>${r.original_length} mm</td><td>${r.new_length} mm</td><td>${r.pcs}</td><td>${r.recovered_weight} kg</td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-danger" onclick="deleteRecoverItem(${r.id})"><i class="fa-solid fa-trash"></i></button>` : `-`}</td></tr>`); } tb.innerHTML = html; }
-window.deleteRecoverItem = function(id) { if(currentUserRole !== 'Admin') return; showConfirm("Delete?", async () => { await supabaseClient.from('recover_logs').delete().eq('id', id); recoverLogs = recoverLogs.filter(r => r.id !== id); renderRecoverTable(); showToast("Deleted", "success"); }); }
+function recKey(v){ return String(v ?? '').trim().toLowerCase(); }
+function getRecoveryMasterRows(profile, itemCode){
+  const p = recKey(profile), ic = recKey(itemCode);
+  return masterData
+    .filter(m => recKey(m.profile) === p && cleanLen(m.length) !== '')
+    .map(m => ({...m, _lengthNum: parseFloat(cleanLen(m.length))}))
+    .filter(m => Number.isFinite(m._lengthNum));
+}
+function getRejectBalance(profile, itemCode, originalLength){
+  const p = recKey(profile), ic = recKey(itemCode), l = cleanLen(originalLength);
+  let rejected = 0, recovered = 0;
+  rejectLogs.forEach(r => { if(recKey(r.profile)===p && recKey(r.item_code)===ic && cleanLen(r.length)===l) rejected += Number(r.pcs)||0; });
+  recoverLogs.forEach(r => { if(recKey(r.profile)===p && recKey(r.item_code)===ic && cleanLen(r.original_length)===l) recovered += Number(r.pcs)||0; });
+  return Math.max(0, rejected - recovered);
+}
+function populateRecProfile() {
+  const sel = document.getElementById('recProfile'); if(!sel) return;
+  sel.innerHTML = '<option value="">-- Choose Profile --</option>';
+  const profiles = [...new Set(rejectLogs.map(r=>String(r.profile||'').trim()).filter(Boolean))];
+  profiles.forEach(profile => {
+    const hasBalance = rejectLogs.some(r => recKey(r.profile)===recKey(profile) && getRejectBalance(profile, r.item_code, r.length) > 0);
+    if(hasBalance) sel.appendChild(new Option(profile, profile));
+  });
+  // If only one profile currently has recoverable rejects, select it automatically.
+  if(sel.options.length === 2){ sel.selectedIndex = 1; onRecProfileSelect(); }
+}
+function onRecProfileSelect() {
+  const p = document.getElementById('recProfile').value;
+  const sel = document.getElementById('recItemCode');
+  sel.innerHTML = '<option value="">-- Choose Item Code --</option>';
+  document.getElementById('recOrigLength').innerHTML = '<option value="">-- Original Reject Length --</option>';
+  document.getElementById('recNewLength').innerHTML = '<option value="">-- Select New Cut Length --</option>';
+  document.getElementById('recAvailableDisplay').textContent = '0 Pcs / 0.00 kg';
+  document.getElementById('recAvailableDisplay').dataset.max = 0;
+  document.getElementById('recWeight').value = '';
+  if(!p) return;
+  const itemCodes = [...new Set(rejectLogs.filter(r=>recKey(r.profile)===recKey(p)).map(r=>String(r.item_code||'').trim()).filter(Boolean))];
+  itemCodes.forEach(ic => {
+    const hasBalance = rejectLogs.some(r => recKey(r.profile)===recKey(p) && recKey(r.item_code)===recKey(ic) && getRejectBalance(p, ic, r.length)>0);
+    if(hasBalance) sel.appendChild(new Option(ic, ic));
+  });
+  if(sel.options.length === 2){ sel.selectedIndex = 1; onRecItemCodeSelect(); }
+}
+function onRecItemCodeSelect() {
+  const p = document.getElementById('recProfile').value;
+  const ic = document.getElementById('recItemCode').value;
+  const sel = document.getElementById('recOrigLength');
+  sel.innerHTML = '<option value="">-- Original Reject Length --</option>';
+  document.getElementById('recNewLength').innerHTML = '<option value="">-- Select New Cut Length --</option>';
+  document.getElementById('recAvailableDisplay').textContent = '0 Pcs / 0.00 kg';
+  document.getElementById('recAvailableDisplay').dataset.max = 0;
+  document.getElementById('recWeight').value = '';
+  if(!p||!ic) return;
+  const lengths = [...new Set(rejectLogs.filter(r=>recKey(r.profile)===recKey(p) && recKey(r.item_code)===recKey(ic)).map(r=>cleanLen(r.length)).filter(Boolean))];
+  lengths.sort((a,b)=>(parseFloat(a)||0)-(parseFloat(b)||0));
+  lengths.forEach(l => { const balance=getRejectBalance(p,ic,l); if(balance>0) sel.appendChild(new Option(`${l} mm  •  ${balance} Pcs available`, l)); });
+  if(sel.options.length === 2){ sel.selectedIndex = 1; showRecAvailable(); }
+}
+function showRecAvailable() {
+  const p = document.getElementById('recProfile').value;
+  const ic = document.getElementById('recItemCode').value;
+  const l = cleanLen(document.getElementById('recOrigLength').value);
+  const newSel = document.getElementById('recNewLength');
+  const maxEl = document.getElementById('recAvailableDisplay');
+  const weightEl = document.getElementById('recWeight');
+  if(!newSel) return;
+  newSel.innerHTML = '<option value="">-- Select New Cut Length --</option>';
+  weightEl.value = '';
+  if(!p||!ic||!l) { maxEl.textContent = '0 Pcs / 0.00 kg'; maxEl.dataset.max = 0; return; }
+
+  const balPcs = getRejectBalance(p,ic,l);
+  const original = getRecoveryMasterRows(p,ic).find(m => cleanLen(m.length)===l);
+  const originalWt = original ? (Number(original.unitWeight)||0) : 0;
+  const originalBalanceWt = balPcs * originalWt;
+  maxEl.innerHTML = `<strong>${balPcs} Pcs</strong> <span style="opacity:.8">/ ${originalBalanceWt.toFixed(2)} kg recoverable from ${l} mm</span>`;
+  maxEl.dataset.max = balPcs;
+
+  // IMPORTANT: recovery choices come ONLY from Master Catalog and MUST be shorter than the reject length.
+  const shorter = getRecoveryMasterRows(p,ic)
+    .filter(m => m._lengthNum < (parseFloat(l)||0))
+    .sort((a,b) => (recKey(a.itemCode)===recKey(ic)?0:1) - (recKey(b.itemCode)===recKey(ic)?0:1) || a._lengthNum-b._lengthNum);
+  if(shorter.length===0){
+    const o=document.createElement('option'); o.value=''; o.textContent='No shorter Master Catalog length available'; o.disabled=true; newSel.appendChild(o);
+    return;
+  }
+  shorter.forEach(m => {
+    const codeLabel = recKey(m.itemCode) && recKey(m.itemCode)!==recKey(ic) ? ` • ${m.itemCode}` : '';
+    const opt = new Option(`${m.length} mm${codeLabel}  •  ${Number(m.unitWeight||0).toFixed(4)} kg/pc`, cleanLen(m.length));
+    opt.dataset.unitWeight = Number(m.unitWeight||0);
+    newSel.appendChild(opt);
+  });
+}
+function calcRecWeight() {
+  const p = document.getElementById('recProfile').value;
+  const ic = document.getElementById('recItemCode').value;
+  const ol = cleanLen(document.getElementById('recOrigLength').value);
+  const nl = cleanLen(document.getElementById('recNewLength').value);
+  const pcs = parseInt(document.getElementById('recPcs').value)||0;
+  const weightEl = document.getElementById('recWeight');
+  if(weightEl) weightEl.value = '';
+  if(!p||!ic||!ol||!nl||pcs<=0) return;
+  const maxPcs = parseInt(document.getElementById('recAvailableDisplay').dataset.max)||0;
+  if(pcs > maxPcs){ if(weightEl) weightEl.value=''; return; }
+  const originalNum=parseFloat(ol), newNum=parseFloat(nl);
+  if(!Number.isFinite(originalNum)||!Number.isFinite(newNum)||newNum>=originalNum) return;
+  const matched = getRecoveryMasterRows(p,ic).find(m=>cleanLen(m.length)===nl);
+  if(matched && weightEl) weightEl.value = (pcs * (Number(matched.unitWeight)||0)).toFixed(2);
+}
+async function saveRecoverEntry() { if(isAppBusy) return; isAppBusy = true; try { if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return; const d = document.getElementById('recDate').value, p = document.getElementById('recProfile').value, ic = document.getElementById('recItemCode').value, ol = cleanLen(document.getElementById('recOrigLength').value), nl = cleanLen(document.getElementById('recNewLength').value), pcs = parseInt(document.getElementById('recPcs').value)||0, maxPcs = parseInt(document.getElementById('recAvailableDisplay').dataset.max)||0; if(!d||!p||!ic||!ol||!nl||pcs<=0) return; if(pcs > maxPcs) return; const originalNum=parseFloat(ol), newNum=parseFloat(nl); if(!Number.isFinite(originalNum)||!Number.isFinite(newNum)||newNum>=originalNum) { showToast('New Cut Length must be shorter than Original Reject Length.', 'warning'); return; } const recoveryRows = getRecoveryMasterRows(p,ic).filter(m=>cleanLen(m.length)===nl); const matched = recoveryRows.find(m=>recKey(m.itemCode)===recKey(ic)) || recoveryRows[0]; if(!matched) { showToast('Selected New Cut Length is not available in Master Catalog.', 'warning'); return; } const wt = parseFloat((pcs * (Number(matched.unitWeight)||0)).toFixed(2)); const entry = { recover_date: d, profile: p, item_code: ic, original_length: ol, new_length: nl, pcs: pcs, recovered_weight: wt }; const localEntry = { ...entry, id: Date.now() }; recoverLogs.unshift(localEntry); renderRecoverTable(); renderDashboard(); showRecAvailable(); try { await supabaseClient.from('recover_logs').insert([entry]); } catch(e) { } showToast("Recovery Processed!", "success"); document.getElementById('rejectRecoverForm').reset(); } finally { isAppBusy = false; } }
+function renderRecoverTable() {
+  const tb = document.getElementById('recoverTableBody'); if(!tb) return;
+  const now = new Date(); const y = now.getFullYear(); const m = now.getMonth();
+  let monthlyReject = 0, monthlyRecover = 0;
+  rejectLogs.forEach(r => { const d = new Date(r.reject_date); if(d.getFullYear()===y && d.getMonth()===m) monthlyReject += Number(r.weight)||0; });
+  recoverLogs.forEach(r => { const d = new Date(r.recover_date); if(d.getFullYear()===y && d.getMonth()===m) monthlyRecover += Number(r.recovered_weight)||0; });
+  const monthlyNet = Math.max(0, monthlyReject - monthlyRecover);
+  const recoveryRate = monthlyReject > 0 ? Math.min(100, (monthlyRecover / monthlyReject) * 100) : 0;
+  const mr=document.getElementById('recMonthlyReject'), mc=document.getElementById('recMonthlyRecover'), mn=document.getElementById('recMonthlyNet'), mrate=document.getElementById('recMonthlyRate'), mm=document.getElementById('recoverySummaryMonth'), rbar=document.getElementById('recMonthlyRecoverBar'), rbadge=document.getElementById('recMonthlyRateBadge');
+  if(mr) mr.textContent = `${monthlyReject.toFixed(2)} kg`;
+  if(mc) mc.textContent = `${monthlyRecover.toFixed(2)} kg`;
+  if(mn) mn.textContent = `${monthlyNet.toFixed(2)} kg`;
+  if(mrate) mrate.textContent = `${recoveryRate.toFixed(1)}%`;
+  if(rbar) rbar.style.width = `${recoveryRate.toFixed(1)}%`;
+  if(rbadge) rbadge.textContent = `${recoveryRate.toFixed(1)}% of reject recovered`;
+  if(mm) mm.textContent = now.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+  let html = '';
+  if(recoverLogs.length===0) html = `<tr><td colspan="8" style="text-align:center;padding:24px;">No Recovery Records Found.</td></tr>`;
+  else recoverLogs.slice(0,50).forEach(r => {
+    html += `<tr><td>${r.recover_date}</td><td><b>${r.profile}</b></td><td>${r.item_code}</td><td>${r.original_length} mm</td><td><span class="stock-badge" style="background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;">${r.new_length} mm</span></td><td><b>${r.pcs}</b> Pcs</td><td><b style="color:#047857;">${Number(r.recovered_weight||0).toFixed(2)} kg</b></td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-danger" onclick="deleteRecoverItem(${r.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock"></i>`}</td></tr>`;
+  });
+  tb.innerHTML = html;
+}
+window.deleteRecoverItem = function(id) { if(currentUserRole !== 'Admin') return; showConfirm("Delete?", async () => { await supabaseClient.from('recover_logs').delete().eq('id', id); recoverLogs = recoverLogs.filter(r => r.id !== id); renderRecoverTable(); renderDashboard(); showRecAvailable(); showToast("Deleted", "success"); }); }
 
 function renderCardboardStock() { 
     const capTbody = document.getElementById('cardboardCapacityTableBody'); const histTbody = document.getElementById('cardboardHistoryTableBody'); const totalDisplay = document.getElementById('totalCardboardStockDisplay'); 
@@ -871,6 +770,65 @@ function renderDailyInstructions() { const container = document.getElementById('
 let displayList = dailyInstructionsList.filter(i => i.target_user !== 'SYS_CRATES_SYNC' && i.target_user !== 'SYS_SHIPMENT_DEADLINE');
 let pendingCount = displayList.filter(i => i.status === 'Pending').length; if(pendingCount > 0) { badge.style.display = 'inline-block'; badge.textContent = pendingCount; headerBtn.style.animation = 'pulseNotepadBtn 2s infinite'; } else { badge.style.display = 'none'; headerBtn.style.animation = 'none'; } if (displayList.length === 0) { container.innerHTML = `<div style="text-align: center; color: #b45309; padding: 20px; font-weight:800; font-size:16px;">Board is clear!</div>`; return; } displayList.forEach(inst => { const isDone = inst.status === 'Completed'; const statusClass = isDone ? 'status-badge-completed' : 'status-badge-pending'; let actionHtml = isDone ? `<div style="width: 100%; margin-top: 10px; padding: 8px; background: rgba(16, 185, 129, 0.1); border-radius: 6px; font-size: 13px;"><b>Action:</b> ${inst.action_taken || 'Completed.'}</div>` : (currentUserRole === 'Local' || currentUserRole === 'Admin' ? `<div style="width: 100%; margin-top: 10px; display: flex; gap: 8px;"><input type="text" id="action_txt_${inst.id}" placeholder="Type action..." style="flex: 1; padding: 8px; border-radius: 6px; font-size: 13px;"><button class="btn btn-accent" onclick="markInstructionDone(${inst.id})"><i class="fa-solid fa-check"></i> Done</button></div>` : ''); let adminActions = (currentUserRole === 'Admin' || currentUserRole === 'Planner') ? `<button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteInstruction(${inst.id})"><i class="fa-solid fa-trash"></i></button>` : ''; html += `<div class="instruction-card ${inst.priority === 'High' ? 'inst-high' : 'inst-normal'}"><div class="inst-header"><span>Date: <b>${inst.target_date}</b></span><span>To: <b>${inst.target_user}</b></span>${inst.priority === 'High' ? `<span style="color: #ef4444;"><i class="fa-solid fa-thumbtack"></i> High</span>` : ''}</div><div class="inst-body">${inst.message}</div><div class="inst-footer"><span class="${statusClass}">${inst.status}</span>${adminActions}</div>${actionHtml}</div>`; }); container.innerHTML = html; }
 
+function dashboardMonthLabelFromDate(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+}
+function dashboardDataPeriodFromMonthFields(values, fallbackLabel = 'Current month') {
+  const labels = [...new Set((values || []).map(v => {
+    const raw = String(v || '').trim();
+    if (!raw) return null;
+    const d = new Date(raw);
+    if (Number.isFinite(d.getTime())) return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+    const monthMatch = raw.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)$/i);
+    return monthMatch ? `${monthMatch[1].slice(0,3)} ${new Date().getFullYear()}` : raw;
+  }).filter(Boolean))];
+  if (labels.length === 1) return labels[0];
+  if (labels.length > 1) return 'Multiple months';
+  return fallbackLabel;
+}
+function dashboardDataPeriod(values, fallbackLabel = 'Current month') {
+  const labels = [...new Set((values || []).map(dashboardMonthLabelFromDate).filter(Boolean))];
+  if (labels.length === 1) return labels[0];
+  if (labels.length > 1) return 'Multiple months';
+  return fallbackLabel;
+}
+function setDashboardPeriodBadge(id, text, blue = false) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('chart-period-blue', !!blue);
+}
+function dashboardChartOptions(textColor, showLegend = true) {
+  return {
+    responsive: true,
+    animation: { duration: 1200, easing: 'easeOutQuart', animateRotate: true, animateScale: true },
+    hover: { mode: 'nearest', intersect: true },
+    plugins: {
+      legend: { display: showLegend, labels: { color: textColor, usePointStyle: true, padding: 14, font: { size: 11, weight: '700' } } },
+      tooltip: {
+        backgroundColor: 'rgba(8,63,70,.96)',
+        titleFont: { size: 12, weight: '800' },
+        bodyFont: { size: 11, weight: '600' },
+        padding: 11,
+        cornerRadius: 10,
+        displayColors: true,
+        callbacks: {
+          label: function(ctx) {
+            const data = ctx.dataset.data || [];
+            const total = data.reduce((a,b) => Number(a||0)+Number(b||0), 0);
+            const val = Number(ctx.raw || 0);
+            const pct = total > 0 ? ((val / total) * 100).toFixed(1) : '0.0';
+            return ` ${ctx.label}: ${val.toLocaleString(undefined,{maximumFractionDigits:2})} kg (${pct}%)`;
+          }
+        }
+      }
+    }
+  };
+}
+
 function renderDashboard() {
   let totalStockPcs = 0, totalStockWt = 0;
   let totalCut = 0, totalPunch = 0, totalWrap = 0, totalBox = 0, totalCrate = 0;
@@ -891,6 +849,10 @@ function renderDashboard() {
   let todayPcs = 0, todayWt = 0;
 
   const now = new Date(); const cm = now.getMonth(); const cy = now.getFullYear(); 
+  const currentMonthLabel = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  setDashboardPeriodBadge('factoryStockPeriod', 'LIVE SNAPSHOT');
+  setDashboardPeriodBadge('overallPoPeriod', dashboardDataPeriod(poList.map(p => p.date), 'No dated POs'));
+  setDashboardPeriodBadge('overallPlPeriod', dashboardDataPeriodFromMonthFields(packingLists.map(p => p.date || p.month), 'Active PL data'), true);
   let mRejWt = 0, mRecWt = 0, mPlantRejWt = 0, mOtherRejWt = 0; 
   let mProdWrapWt = 0; 
   let profileRejMap = {}; 
@@ -990,70 +952,149 @@ function renderDashboard() {
   
   if(document.getElementById('kpiShipBoxes')) document.getElementById('kpiShipBoxes').textContent = `${Math.floor(domTotalPlCompletedBoxes)} / ${Math.ceil(domTotalPlReqBoxes)} Boxes Completed`;
 
-  const overdueContainer = document.getElementById('overdueActionContainer'); if(overdueContainer) overdueContainer.innerHTML = ''; 
-  let grandPoOrderWt = 0, grandPoShippedWt = 0, grandPoReadyWt = 0; let hasOverdue = false; const poGroups = {}; poList.forEach(po => { if(!poGroups[po.poNumber]) poGroups[po.poNumber] = { date: po.date, items: [] }; poGroups[po.poNumber].items.push(po); });
-  
+  /*
+   * OVERDUE PO ALERT — single source of truth
+   * The dashboard alert must use the same balance quantity shown on the
+   * Production Orders page. A shipment alone does NOT clear an overdue line;
+   * only when the calculated PO balance reaches zero is that line complete.
+   */
+  const overdueContainer = document.getElementById('overdueActionContainer');
+  if (overdueContainer) overdueContainer.innerHTML = '';
+
+  let grandPoOrderWt = 0, grandPoShippedWt = 0, grandPoReadyWt = 0;
+  let hasOverdue = false;
+  let overduePoCount = 0, overdueBalancePcs = 0, overdueBalanceWt = 0;
+  const poGroups = {};
+  poList.forEach(po => {
+      const key = String(po.poNumber).trim();
+      if (!poGroups[key]) poGroups[key] = { date: po.date, items: [] };
+      poGroups[key].items.push(po);
+  });
+
   const shipLookup = new Map();
-  let shipContainerWeights = {'1st Container': 0, '2nd Container': 0, '3rd Container': 0};
-  
+  const shipContainerWeights = {'1st Container': 0, '2nd Container': 0, '3rd Container': 0};
   shipmentList.forEach(s => {
       const k = `${String(s.poNumber).trim()}_${String(s.profile).trim()}_${cleanLen(s.length)}`;
-      shipLookup.set(k, (shipLookup.get(k) || 0) + s.shippedQty);
-      
+      shipLookup.set(k, (shipLookup.get(k) || 0) + (parseInt(s.shippedQty) || 0));
       const matchedCat = masterData.find(m => String(m.profile).trim() === String(s.profile).trim() && cleanLen(m.length) === cleanLen(s.length));
-      if(matchedCat) {
-          let cName = s.container || '1st Container';
-          if(shipContainerWeights[cName] !== undefined) shipContainerWeights[cName] += (s.shippedQty * (matchedCat.unitWeight||0));
+      if (matchedCat) {
+          const cName = s.container || '1st Container';
+          if (shipContainerWeights[cName] !== undefined) {
+              shipContainerWeights[cName] += (parseInt(s.shippedQty) || 0) * (matchedCat.unitWeight || 0);
+          }
       }
   });
 
   let overdueHtml = '';
-  Object.keys(poGroups).forEach((poNumber) => { 
-      const group = poGroups[poNumber]; let totalOrderWt = 0, totalShippedWt = 0, totalCompleteWt = 0; 
-      let poItemsHtmlList = group.items.map(poItem => `<li><span style="color:#0f172a;">Pr: ${poItem.profile}</span> | L: ${poItem.length}mm | Qty: <b>${poItem.orderQty}</b></li>`).join('');
-      
-      group.items.forEach(poItem => { 
-          const matchedItem = masterMap.get(`${String(poItem.profile).trim()}_${cleanLen(poItem.length)}_${poItem.itemCode}`) || masterData.find(m => String(m.profile).trim() === String(poItem.profile).trim() && cleanLen(m.length) === cleanLen(poItem.length));
-          const uw = matchedItem ? (matchedItem.unitWeight || 0) : 0; 
-          const orderWt = poItem.orderQty * uw; 
-          totalOrderWt += orderWt; 
-          
-          let shippedQty = shipLookup.get(`${String(poNumber).trim()}_${String(poItem.profile).trim()}_${cleanLen(poItem.length)}`) || 0;
-          const shippedWt = shippedQty * uw; 
-          totalShippedWt += shippedWt; 
-          
-          const completeWt = Math.min(matchedItem ? (matchedItem.boxQty + matchedItem.crateQty) : 0, Math.max(0, poItem.orderQty - shippedQty)) * uw; 
-          totalCompleteWt += completeWt; 
-      }); 
-      
-      const pendingWt = Math.max(0, totalOrderWt - totalShippedWt - totalCompleteWt); 
-      grandPoOrderWt += totalOrderWt; grandPoShippedWt += totalShippedWt; grandPoReadyWt += totalCompleteWt; 
-      const diffDays = Math.ceil(Math.abs(new Date() - new Date(group.date)) / (1000 * 60 * 60 * 24)); 
-      
-      if (diffDays > 30 && (pendingWt > 0 || totalCompleteWt > 0)) { 
-          hasOverdue = true; 
+  Object.keys(poGroups).forEach((poNumber) => {
+      const group = poGroups[poNumber];
+      let totalOrderWt = 0, totalShippedWt = 0, totalCompleteWt = 0;
+      const overdueLines = [];
+
+      group.items.forEach(poItem => {
+          const matchedItem = masterMap.get(`${String(poItem.profile).trim()}_${cleanLen(poItem.length)}_${poItem.itemCode}`)
+              || masterData.find(m => String(m.profile).trim() === String(poItem.profile).trim() && cleanLen(m.length) === cleanLen(poItem.length));
+          const uw = matchedItem ? (Number(matchedItem.unitWeight) || 0) : 0;
+          const orderQty = Math.max(0, parseInt(poItem.orderQty) || 0);
+          const orderWt = orderQty * uw;
+          totalOrderWt += orderWt;
+
+          const shipKey = `${String(poNumber).trim()}_${String(poItem.profile).trim()}_${cleanLen(poItem.length)}`;
+          const shippedQty = Math.max(0, shipLookup.get(shipKey) || 0);
+          const shippedForLine = Math.min(orderQty, shippedQty);
+          const shippedWt = shippedForLine * uw;
+          totalShippedWt += shippedWt;
+
+          /* Production Orders page balance = Order Qty - shipped Qty. */
+          const balanceQty = Math.max(0, orderQty - shippedForLine);
+          const balanceWt = balanceQty * uw;
+
+          /* Keep ready stock as a separate information metric only.
+             It must NOT make a fully-shipped PO appear overdue. */
+          const availableReadyPcs = matchedItem ? ((matchedItem.boxQty || 0) + (matchedItem.crateQty || 0)) : 0;
+          const completeQty = Math.min(availableReadyPcs, balanceQty);
+          totalCompleteWt += completeQty * uw;
+
+          if (balanceQty > 0) {
+              overdueLines.push({
+                  profile: poItem.profile,
+                  length: cleanLen(poItem.length),
+                  qty: balanceQty,
+                  weight: balanceWt,
+                  orderQty,
+                  shippedQty: shippedForLine,
+                  readyQty: completeQty
+              });
+          }
+      });
+
+      grandPoOrderWt += totalOrderWt;
+      grandPoShippedWt += totalShippedWt;
+      grandPoReadyWt += totalCompleteWt;
+
+      const poDate = new Date(group.date);
+      const diffDays = Number.isFinite(poDate.getTime())
+          ? Math.max(0, Math.floor((Date.now() - poDate.getTime()) / (1000 * 60 * 60 * 24)))
+          : 0;
+
+      /* Alert only when an actual PO balance remains AND the PO is older than 30 days. */
+      if (diffDays > 30 && overdueLines.length > 0) {
+          hasOverdue = true;
+          overduePoCount++;
+          const poBalancePcs = overdueLines.reduce((sum, x) => sum + x.qty, 0);
+          const poBalanceWt = overdueLines.reduce((sum, x) => sum + x.weight, 0);
+          overdueBalancePcs += poBalancePcs;
+          overdueBalanceWt += poBalanceWt;
+
+          const severity = diffDays >= 90
+              ? { label: 'Critical', bg: '#991b1b', soft: '#fef2f2', border: '#fca5a5' }
+              : diffDays >= 60
+                  ? { label: 'High', bg: '#c2410c', soft: '#fff7ed', border: '#fdba74' }
+                  : { label: 'Overdue', bg: '#e11d48', soft: '#fff1f2', border: '#fecaca' };
+
+          const lineHtml = overdueLines.map(line => `
+              <div style="display:grid;grid-template-columns:minmax(130px,1fr) 110px 110px 110px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px dashed ${severity.border};font-size:12px;">
+                  <div><b>Pr: ${line.profile}</b> <span style="color:#64748b;">| ${line.length} mm</span></div>
+                  <span style="font-weight:800;color:#9f1239;">Balance: ${line.qty.toLocaleString()} Pcs</span>
+                  <span style="font-weight:800;color:#9f1239;">${line.weight.toFixed(1)} kg</span>
+                  <span style="font-weight:700;color:#059669;">Ready: ${line.readyQty.toLocaleString()} Pcs</span>
+              </div>`).join('');
+
           overdueHtml += `
-          <div style="background: #fff1f2; border: 1px solid #fecaca; border-radius: 12px; padding: 16px; margin-bottom: 15px; box-shadow: 0 4px 10px rgba(225,29,72,0.05); transition: 0.3s;">
-              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom: 12px;">
-                  <div style="display:flex; align-items:center; gap: 10px;">
-                      <h4 style="margin: 0; color: #9f1239; font-size: 16px; font-weight: 900;"><i class="fa-solid fa-triangle-exclamation"></i> ${poNumber}</h4>
-                      <span style="background: #e11d48; color: #fff; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 800; box-shadow: 0 2px 4px rgba(225,29,72,0.3);">Overdue: ${diffDays} Days</span>
+          <div class="po-overdue-item" style="background:${severity.soft};border:1px solid ${severity.border};border-radius:14px;padding:15px;margin-bottom:12px;box-shadow:0 3px 10px rgba(15,23,42,.05);">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                  <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;">
+                      <h4 style="margin:0;color:#9f1239;font-size:15px;font-weight:900;"><i class="fa-solid fa-triangle-exclamation"></i> ${poNumber}</h4>
+                      <span style="background:${severity.bg};color:#fff;padding:4px 9px;border-radius:999px;font-size:10px;font-weight:900;">${severity.label}: ${diffDays} Days</span>
+                      <span style="background:#fff;border:1px solid ${severity.border};color:#9f1239;padding:4px 9px;border-radius:999px;font-size:10px;font-weight:900;">Balance ${poBalancePcs.toLocaleString()} Pcs · ${poBalanceWt.toFixed(1)} kg</span>
                   </div>
-                  <button onclick="const d = this.parentElement.nextElementSibling; d.style.display = d.style.display === 'none' ? 'block' : 'none';" style="background: #fff; border: 1px solid #fca5a5; border-radius: 8px; padding: 6px 12px; font-size: 11px; font-weight:700; cursor: pointer; color: #475569; transition:0.3s;">Click to view profiles ▼</button>
+                  <button type="button" class="overdue-details-toggle" aria-expanded="false" onclick="toggleOverdueDetails(this)" style="background:#fff;border:1px solid ${severity.border};border-radius:8px;padding:7px 12px;font-size:11px;font-weight:800;cursor:pointer;color:#475569;">View balance details ▼</button>
               </div>
-              <div class="po-details-list" style="display:none; width:100%; margin-bottom:12px; padding:12px; background:rgba(255,255,255,0.8); border-radius:8px; border:1px solid #fca5a5;">
-                  <ul style="margin:0; padding-left:18px; font-size:12.5px; color:#9f1239; font-weight:600;">${poItemsHtmlList}</ul>
+              <div class="overdue-balance-details" style="display:none;width:100%;margin-top:10px;padding:0 10px;background:rgba(255,255,255,.72);border-radius:9px;border:1px solid ${severity.border};">
+                  <div style="display:grid;grid-template-columns:minmax(130px,1fr) 110px 110px 110px;gap:8px;padding:7px 0;font-size:10px;font-weight:900;color:#64748b;text-transform:uppercase;">
+                      <span>Profile / Length</span><span>PO Balance</span><span>Balance Wt</span><span>Ready Stock</span>
+                  </div>
+                  ${lineHtml}
               </div>
-              <div style="display: flex; gap: 20px; font-size: 13px; font-weight: 800; border-top: 1px dashed #fca5a5; padding-top: 12px; background: transparent;">
-                  <span style="color: #e11d48;"><i class="fa-solid fa-hourglass-half"></i> Pending Wt: ${pendingWt.toFixed(1)} kg</span>
-                  <span style="color: #059669;"><i class="fa-solid fa-box-open"></i> Ready Wt: ${totalCompleteWt.toFixed(1)} kg</span>
-              </div>
-          </div>`; 
-      } 
+          </div>`;
+      }
   });
-  if(overdueContainer) overdueContainer.innerHTML = overdueHtml;
-  const overdueCard = document.getElementById('overdueCard'); if(overdueCard) { overdueCard.style.display = hasOverdue ? 'block' : 'none'; }
-  
+
+  if (overdueContainer) {
+      overdueContainer.innerHTML = overdueHtml || `<div style="padding:18px;text-align:center;color:#059669;font-weight:800;background:rgba(16,185,129,.06);border:1px dashed #6ee7b7;border-radius:12px;"><i class="fa-solid fa-circle-check"></i> No production order with remaining balance is older than 30 days.</div>`;
+  }
+  const overdueCard = document.getElementById('overdueCard');
+  if (overdueCard) overdueCard.style.display = hasOverdue ? 'block' : 'none';
+
+  /* Optional compact alert metrics, added without changing the database schema. */
+  const alertSummary = document.getElementById('overdueSummaryMetrics');
+  if (alertSummary) {
+      alertSummary.innerHTML = hasOverdue ? `
+          <span><b>${overduePoCount}</b> overdue PO${overduePoCount === 1 ? '' : 's'}</span>
+          <span><b>${overdueBalancePcs.toLocaleString()}</b> balance Pcs</span>
+          <span><b>${overdueBalanceWt.toFixed(1)} kg</b> balance weight</span>` : '';
+  }
+
   if(document.getElementById('kpiTotalPoWeightSum')) document.getElementById('kpiTotalPoWeightSum').textContent = `${totalStockWt.toFixed(1)} kg`; 
   
   if(document.getElementById('kpiOverallPoTotal')) {
@@ -1137,7 +1178,7 @@ function renderDashboard() {
       let crate = crateMapForChart[crateId];
       if (crate.req === 0) continue;
       
-      let isManualComplete = globalManualCrates[crateId] ? true : false;
+      let isManualComplete = isManualCrateComplete(crateId, activePackingContainer) ? true : false;
       
       crate.items.forEach(i => {
           let w = i.unitWeight;
@@ -1158,21 +1199,21 @@ function renderDashboard() {
   try {
       if(typeof Chart !== 'undefined') {
           const textColor = isDarkMode ? '#f8fafc' : '#0f172a'; 
-          if(document.getElementById('masterWeightChart')) { if(masterChartInstance) masterChartInstance.destroy(); let mData = [ totalCut, totalPunch, totalWrap, totalBox, funnelCrateDisplay ]; if (mData.every(v => v === 0)) mData = [1]; masterChartInstance = new Chart(document.getElementById('masterWeightChart'), { type: 'doughnut', data: { labels: mData.length === 1 ? ['No Stock'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Crate'], datasets: [{ data: mData, backgroundColor: mData.length === 1 ? ['#e2e8f0'] : ['#0ea5e9', '#ea580c', '#d946ef', '#10b981', '#f59e0b'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { display: mData.length > 1, labels: { color: textColor } } } } }); }
+          if(document.getElementById('masterWeightChart')) { if(masterChartInstance) masterChartInstance.destroy(); let mData = [ totalCut, totalPunch, totalWrap, totalBox, funnelCrateDisplay ]; if (mData.every(v => v === 0)) mData = [1]; masterChartInstance = new Chart(document.getElementById('masterWeightChart'), { type: 'doughnut', data: { labels: mData.length === 1 ? ['No Stock'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Crate'], datasets: [{ hoverOffset: 10, data: mData, backgroundColor: mData.length === 1 ? ['#e2e8f0'] : ['#0ea5e9', '#ea580c', '#d946ef', '#10b981', '#f59e0b'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, mData.length > 1), cutout: '65%' } }); }
           
           if(document.getElementById('overallPoChart')) { 
               if(overallPoChartInstance) overallPoChartInstance.destroy(); 
               let remainingPendingPo = Math.max(0, grandPoOrderWt - (grandPoShippedWt+grandPoReadyWt));
               let poDataArr = [ shipContainerWeights['1st Container'], shipContainerWeights['2nd Container'], shipContainerWeights['3rd Container'], grandPoReadyWt, remainingPendingPo ]; 
               if (poDataArr.every(v => v === 0)) poDataArr = [1]; 
-              overallPoChartInstance = new Chart(document.getElementById('overallPoChart'), { type: 'doughnut', data: { labels: poDataArr.length === 1 ? ['No Orders'] : ['1st Container', '2nd Container', '3rd Container', 'Ready', 'Pending'], datasets: [{ data: poDataArr, backgroundColor: poDataArr.length === 1 ? ['#e2e8f0'] : ['#3b82f6', '#ec4899', '#a855f7', '#10b981', '#fb7185'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { display: poDataArr.length > 1, labels: { color: textColor } } } } }); 
+              overallPoChartInstance = new Chart(document.getElementById('overallPoChart'), { type: 'doughnut', data: { labels: poDataArr.length === 1 ? ['No Orders'] : ['1st Container', '2nd Container', '3rd Container', 'Ready', 'Pending'], datasets: [{ hoverOffset: 10, data: poDataArr, backgroundColor: poDataArr.length === 1 ? ['#e2e8f0'] : ['#3b82f6', '#ec4899', '#a855f7', '#10b981', '#fb7185'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, poDataArr.length > 1), cutout: '65%' } }); 
           }
           
           if(document.getElementById('overallPlChart')) { 
               if(overallPlChartInstance) overallPlChartInstance.destroy(); 
               let cData = [ Number(chartCutWt.toFixed(2))||0, Number(chartPunchWt.toFixed(2))||0, Number(chartWrapWt.toFixed(2))||0, Number(chartBoxWt.toFixed(2))||0, Number(chartManualWt.toFixed(2))||0, Number(chartPendingWt.toFixed(2))||0 ]; 
               if(cData.every(v => v===0)) cData = [1]; 
-              overallPlChartInstance = new Chart(document.getElementById('overallPlChart'), { type: 'doughnut', data: { labels: cData.length===1 ? ['No PLs'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Completed', 'Pending'], datasets: [{ data: cData, backgroundColor: cData.length===1 ? ['#e2e8f0'] : ['#0284c7', '#ea580c', '#d946ef', '#10b981', '#059669', '#e11d48'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { display: false } } } }); 
+              overallPlChartInstance = new Chart(document.getElementById('overallPlChart'), { type: 'doughnut', data: { labels: cData.length===1 ? ['No PLs'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Completed', 'Pending'], datasets: [{ hoverOffset: 10, data: cData, backgroundColor: cData.length===1 ? ['#e2e8f0'] : ['#0284c7', '#ea580c', '#d946ef', '#10b981', '#059669', '#e11d48'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, false), cutout: '65%' } }); 
               
               let plWeightBreakdownHtml = `
               <div style="font-size: 11px; margin-top: 15px; width: 100%; display: flex; flex-direction: column; gap: 4px;">
@@ -1199,6 +1240,9 @@ function renderDashboard() {
               if(document.getElementById('kpiMonthlyReject')) document.getElementById('kpiMonthlyReject').textContent = `${mRejWt.toFixed(2)} kg`; 
               if(document.getElementById('kpiMonthlyRecover')) document.getElementById('kpiMonthlyRecover').textContent = `${mRecWt.toFixed(2)} kg`; 
               if(document.getElementById('kpiNetReject')) document.getElementById('kpiNetReject').textContent = `${netRej.toFixed(2)} kg`;
+              if(document.getElementById('kpiMonthlyRejectTop')) document.getElementById('kpiMonthlyRejectTop').textContent = mRejWt.toFixed(2);
+              if(document.getElementById('kpiMonthlyRecoverTop')) document.getElementById('kpiMonthlyRecoverTop').textContent = mRecWt.toFixed(2);
+              if(document.getElementById('kpiNetRejectTop')) document.getElementById('kpiNetRejectTop').textContent = netRej.toFixed(2);
               
               const ctx = document.getElementById('rejectDashboardChart'); 
               if(ctx) { 
@@ -1219,7 +1263,7 @@ function renderDashboard() {
               }
           }
       }
-  } catch(err) {}
+  } catch(err) { console.error('Dashboard render error:', err); }
   renderMonthlyShiftChart();
 }
 
@@ -1537,6 +1581,15 @@ window.renderShipmentHistoryTable = function() {
 
 function deleteShipmentItem(id) { if (currentUserRole !== 'Admin') return; showConfirm("Delete this Shipment?", async () => { await supabaseClient.from('shipments').delete().eq('id', id); shipmentList = shipmentList.filter(s => s.id !== id); window.renderShipmentHistoryTable(); renderDashboard(); renderBalanceWorkTable(); updatePoFilters(); renderPoDetailsTable(); showToast("Deleted", "success"); }); }
 
+window.downloadPackingTemplate = function(){
+    if(typeof XLSX==='undefined') return showToast('Excel library not loaded.','error');
+    const rows=[
+      {Date:new Date().toISOString().slice(0,10),'PL Number':'PL-001','PO Number':'PO-001',Month:new Date().toLocaleString('en-US',{month:'long'}),'Container No':'3rd Container','Crate No':'Crate 1',Profile:'1038','Item Code':'ITEM-001',Length:'2438.4', 'Pcs Qty':250},
+      {Date:new Date().toISOString().slice(0,10),'PL Number':'PL-001','PO Number':'PO-001',Month:new Date().toLocaleString('en-US',{month:'long'}),'Container No':'3rd Container','Crate No':'Crate 2',Profile:'1039','Item Code':'ITEM-002',Length:'1204.9', 'Pcs Qty':180}
+    ];
+    exportTableToExcel(rows,'AIS_Packing_List_Template','Packing List');
+};
+
 window.exportPlReadyCrates = function() {
     let readyCratesExportData = []; 
     let availableStock = masterData.map(m => ({ ...m })); 
@@ -1556,7 +1609,7 @@ window.exportPlReadyCrates = function() {
             }
         }
         
-        let isManualComplete = globalManualCrates[item.crateNo] ? true : false;
+        let isManualComplete = isManualCrateComplete(item.crateNo, activePackingContainer) ? true : false;
         
         let status = '';
         if (isManualComplete) { status = "Manual Packed"; }
@@ -1627,7 +1680,7 @@ function renderPlAnalytics(filteredPls) {
             let crate = crateMap[crateId];
             if (crate.req === 0) continue;
             
-            let isManualComplete = globalManualCrates[crateId] ? true : false;
+            let isManualComplete = isManualCrateComplete(crateId, activePackingContainer) ? true : false;
             let isFullyAllocated = (crate.comp === crate.req && crate.req > 0);
             
             crate.items.forEach(i => {
@@ -1646,7 +1699,7 @@ function renderPlAnalytics(filteredPls) {
             });
         }
 
-        try { const ctx = document.getElementById('plWeightChart'); if(ctx && typeof Chart !== 'undefined') { if (plChartInstance) { plChartInstance.destroy(); } const textColor = isDarkMode ? '#f8fafc' : '#0f172a'; if (totalWt === 0) { plChartInstance = new Chart(ctx.getContext('2d'), { type: 'doughnut', data: { labels: ['No Data'], datasets: [{ data: [1], backgroundColor: ['#e2e8f0'] }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { display: false } } } }); } else { let cData = [ Number(totCutWt.toFixed(2))||0, Number(totPunchWt.toFixed(2))||0, Number(totWrapWt.toFixed(2))||0, Number(totBoxWt.toFixed(2))||0, Number(totManualWt.toFixed(2))||0, Number(totPendingWt.toFixed(2))||0 ]; if(cData.every(v => v===0)) cData = [1]; plChartInstance = new Chart(ctx.getContext('2d'), { type: 'doughnut', data: { labels: cData.length===1?['No Data']:['Cut', 'Punch', 'Wrap', 'Box', 'Completed', 'Pending'], datasets: [{ data: cData, backgroundColor: cData.length===1?['#e2e8f0']:['#0284c7', '#ea580c', '#d946ef', '#10b981', '#059669', '#e11d48'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { position: 'bottom', labels: { color: textColor } } } } }); } } } catch(err) {}
+        try { const ctx = document.getElementById('plWeightChart'); if(ctx && typeof Chart !== 'undefined') { if (plChartInstance) { plChartInstance.destroy(); } const textColor = isDarkMode ? '#f8fafc' : '#0f172a'; if (totalWt === 0) { plChartInstance = new Chart(ctx.getContext('2d'), { type: 'doughnut', data: { labels: ['No Data'], datasets: [{ data: [1], backgroundColor: ['#e2e8f0'] }] }, options: { ...dashboardChartOptions(textColor, false), cutout: '65%' } }); } else { let cData = [ Number(totCutWt.toFixed(2))||0, Number(totPunchWt.toFixed(2))||0, Number(totWrapWt.toFixed(2))||0, Number(totBoxWt.toFixed(2))||0, Number(totManualWt.toFixed(2))||0, Number(totPendingWt.toFixed(2))||0 ]; if(cData.every(v => v===0)) cData = [1]; plChartInstance = new Chart(ctx.getContext('2d'), { type: 'doughnut', data: { labels: cData.length===1?['No Data']:['Cut', 'Punch', 'Wrap', 'Box', 'Completed', 'Pending'], datasets: [{ data: cData, backgroundColor: cData.length===1?['#e2e8f0']:['#0284c7', '#ea580c', '#d946ef', '#10b981', '#059669', '#e11d48'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, cutout: '65%', plugins: { legend: { position: 'bottom', labels: { color: textColor } } } } }); } } } catch(err) {}
         
         let plWeightBreakdownHtml = `
         <div style="font-size: 11px; margin-top: 15px; width: 100%; display: flex; flex-direction: column; gap: 4px;">
@@ -1667,7 +1720,7 @@ function renderPlAnalytics(filteredPls) {
             if (crate.req === 0 && !crateId.toLowerCase().startsWith("crate")) continue; 
             if (crate.req === 0) continue; 
             
-            let isManualComplete = globalManualCrates[crateId] ? true : false;
+            let isManualComplete = isManualCrateComplete(crateId, activePackingContainer) ? true : false;
 
             let compPct = crate.req > 0 ? Math.min(100, Math.round((crate.comp / crate.req) * 100)) : 0;
             if (isManualComplete) compPct = 100;
@@ -1740,7 +1793,7 @@ function renderPlAnalytics(filteredPls) {
                 </div>
             </div>`;
         } 
-        container.innerHTML = html;
+        container.innerHTML = html || `<div style="padding:30px;text-align:center;color:var(--text-muted);font-weight:700;"><i class="fa-solid fa-box-open" style="font-size:32px;display:block;margin-bottom:10px;"></i>No crate data for <b>${activePackingContainer}</b> yet.</div>`;
     } catch(e) {}
 }
 
@@ -1749,13 +1802,16 @@ window.toggleManualCrate = async function(crateId, isChecked) {
         showToast("Only Admin can mark crates as complete!", "error");
         return;
     }
+    const stateKey = manualCrateKey(crateId, activePackingContainer);
     if (isChecked) {
         let currentQty = 0;
-        let itemsInCrate = packingLists.filter(p => p.crateNo === crateId);
+        let itemsInCrate = getPackingContainerRecords(activePackingMonth, activePackingContainer).filter(p => p.crateNo === crateId);
         itemsInCrate.forEach(i => currentQty += (parseInt(i.pcsQty) || 0));
-        globalManualCrates[crateId] = { qty: currentQty };
+        globalManualCrates[stateKey] = { qty: currentQty, container: activePackingContainer };
     } else {
-        delete globalManualCrates[crateId];
+        delete globalManualCrates[stateKey];
+        // Preserve compatibility with older single-container records.
+        if (activePackingContainer === '1st Container') delete globalManualCrates[crateId];
     }
     localStorage.setItem('manual_crates', JSON.stringify(globalManualCrates));
     renderPackingListTable();
@@ -1765,8 +1821,9 @@ window.toggleManualCrate = async function(crateId, isChecked) {
 
 window.saveManualCrateQty = async function(crateId, qty) {
     if (currentUserRole !== 'Admin') return;
-    if (globalManualCrates[crateId]) {
-        globalManualCrates[crateId].qty = parseInt(qty) || 0;
+    const stateKey = manualCrateKey(crateId, activePackingContainer);
+    if (globalManualCrates[stateKey]) {
+        globalManualCrates[stateKey].qty = parseInt(qty) || 0;
         localStorage.setItem('manual_crates', JSON.stringify(globalManualCrates));
         renderDashboard();
         await window.saveManualCratesToDB();
@@ -1801,7 +1858,9 @@ function renderPackingListTable() {
         const tabCard = document.querySelector('#packingListTab .card:last-child');
         if(!tabCard) return;
 
-        let filtered = packingLists; 
+        ensurePackingSelection();
+        renderPackingShipmentControls();
+        let filtered = getPackingContainerRecords(activePackingMonth, activePackingContainer);
         if(document.getElementById('crateCardsContainer')) renderPlAnalytics(filtered);
 
         let consolidatedMap = {};
@@ -1845,7 +1904,7 @@ function renderPackingListTable() {
                 }
             }
 
-            let isManualComplete = globalManualCrates[item.crateNo] ? true : false;
+            let isManualComplete = isManualCrateComplete(item.crateNo, activePackingContainer);
             let status = ''; let actionBtn = '';
 
             let manualTickHtml = `<label style="cursor:${currentUserRole === 'Admin' ? 'pointer' : 'not-allowed'}; display:inline-flex; align-items:center; gap:4px; background:${isManualComplete ? '#059669' : '#f1f5f9'}; color:${isManualComplete ? '#fff' : '#475569'}; padding:4px 8px; border-radius:6px; font-size:11px; font-weight:bold; border:1px solid ${isManualComplete ? '#059669' : '#cbd5e1'};"><input type="checkbox" onchange="window.toggleManualCrate('${item.crateNo}', this.checked)" ${isManualComplete ? 'checked' : ''} ${currentUserRole === 'Admin' ? '' : 'disabled'}> Pack</label>`;
@@ -1912,7 +1971,7 @@ function renderPackingListTable() {
         const sumTbody = document.getElementById('plSummaryTableBody'); if (sumTbody) sumTbody.innerHTML = consHTML || '<tr><td colspan="7" style="text-align:center;">No data</td></tr>';
         const readyTbody = document.getElementById('plReadyToPackTableBody'); if (readyTbody) readyTbody.innerHTML = readyCratesHTML || '<tr><td colspan="8" style="text-align:center; color:var(--text-muted);">No crates available in Box Stage</td></tr>';
         const rawTbody = document.getElementById('packingListTableBody'); if (rawTbody) rawTbody.innerHTML = rawHTML || '<tr><td colspan="12" style="text-align:center; color:var(--text-muted);">No logs</td></tr>';
-    } catch(e) {}
+    } catch(e) { console.error('Packing list render error:', e); const body=document.getElementById('packingListTableBody'); if(body) body.innerHTML='<tr><td colspan=12 style="text-align:center;color:#e11d48;font-weight:700;">Packing List could not be rendered. Check browser console for details.</td></tr>'; }
 }
 window.deleteEntireCrate = async function(crateId) {
     if(currentUserRole !== 'Admin') return;
@@ -1922,8 +1981,9 @@ window.deleteEntireCrate = async function(crateId) {
             try { await supabaseClient.from('packing_list').delete().eq('id', item.id); } catch(e){}
             packingLists = packingLists.filter(p => p.id !== item.id);
         }
-        if(globalManualCrates[crateId]) {
-            delete globalManualCrates[crateId];
+        const stateKey = manualCrateKey(crateId, activePackingContainer);
+        if(globalManualCrates[stateKey]) {
+            delete globalManualCrates[stateKey];
             await window.saveManualCratesToDB();
         }
         renderPackingListTable(); renderDashboard(); renderBalanceWorkTable();
@@ -1932,13 +1992,207 @@ window.deleteEntireCrate = async function(crateId) {
 }
 window.deletePackingListItem = function(id) { if(currentUserRole !== 'Admin') return; showConfirm("Delete this packing list record?", async () => { try { await supabaseClient.from('packing_list').delete().eq('id', id); } catch(e){} packingLists = packingLists.filter(p => p.id !== id); renderPackingListTable(); renderDashboard(); renderBalanceWorkTable(); showToast("Deleted", "success"); }); }
 
+/*
+ * PACKING LIST DATA RESET
+ * -----------------------
+ * Deletes the complete Packing List dataset for the currently selected
+ * Month + Container. This is intentionally scoped to packing_list only;
+ * Production Orders, Master Catalog, Production History, Rejects, Recoveries
+ * and Cardboard Stock are NOT touched. Shipment/manual-crate state for the
+ * same container is reset after the database deletion succeeds.
+ */
+window.clearCurrentPackingContainer = function() {
+    if (currentUserRole !== 'Admin') {
+        showToast('Admin access is required to clear Packing List data.', 'warning');
+        return;
+    }
+    ensurePackingSelection();
+    const month = String(activePackingMonth || '').trim();
+    const container = String(activePackingContainer || '').trim();
+    const records = getPackingContainerRecords(month, container);
+    const count = records.length;
+    if (!month || !container) return showToast('Please select a Month and Container first.', 'warning');
+    if (!count) return showToast(`No Packing List data found for ${month} / ${container}.`, 'info');
+
+    showConfirm(
+      `<b style="color:#b91c1c">PERMANENT DELETE</b><br><br>Delete <b>${count}</b> Packing List record(s) from <b>${month}</b> → <b>${container}</b>?<br><br><span style="color:#b91c1c;font-weight:700">This cannot be undone.</span><br><br>Only Packing List records for this selected container will be deleted. Production Orders, Master Catalog, Production History, Reject/Recover and Cardboard data will remain unchanged.`,
+      async () => {
+        const btn = document.getElementById('plClearContainerBtn');
+        const oldHtml = btn ? btn.innerHTML : '';
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Deleting...'; }
+        try {
+            // Delete exact IDs one-by-one so the operation remains compatible
+            // with the existing Supabase RLS policies used by this app.
+            let deleted = 0;
+            const failed = [];
+            for (const row of records) {
+                const { error } = await supabaseClient.from('packing_list').delete().eq('id', row.id);
+                if (error) failed.push(`${row.id}: ${error.message}`);
+                else deleted++;
+            }
+            if (failed.length) {
+                console.error('Packing List clear failed:', failed);
+                await loadDataFromSupabase(true);
+                throw new Error(`${failed.length} record(s) could not be deleted. No local reset was applied to the remaining data.`);
+            }
+
+            // Remove only this container's in-memory rows.
+            packingLists = packingLists.filter(p => !(String(p.month || '').trim() === month && String(p.container || '').trim() === container));
+
+            // Reset shipment completion state for the emptied container.
+            const shipmentKey = shipmentStateKey(month, container);
+            if (shipmentStates[shipmentKey]) {
+                delete shipmentStates[shipmentKey];
+                await savePackingShipmentStates();
+            }
+
+            // Reset manual crate completion/qty state belonging to this container.
+            let manualChanged = false;
+            Object.keys(globalManualCrates || {}).forEach(k => {
+                if (k.startsWith(`${container}::`)) { delete globalManualCrates[k]; manualChanged = true; }
+            });
+            // Legacy unscoped crate keys are deliberately not deleted because
+            // they may belong to older 1st-container records.
+            if (manualChanged) {
+                localStorage.setItem('manual_crates', JSON.stringify(globalManualCrates));
+                await window.saveManualCratesToDB();
+            }
+
+            renderPackingListTable();
+            renderDashboard();
+            renderBalanceWorkTable();
+            showToast(`${deleted} Packing List record(s) deleted from ${month} / ${container}.`, 'success');
+        } catch (e) {
+            console.error('Clear Packing List error:', e);
+            showToast(`Delete failed: ${e.message || 'Supabase rejected the operation.'}`, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = oldHtml; }
+        }
+      }
+    );
+};
+
 function populatePlPoDropdown() { const plPoSelect = document.getElementById('plSelectPo'); if(!plPoSelect) return; plPoSelect.innerHTML = '<option value="">-- Choose PO Number --</option>'; [...new Set(poList.map(p => String(p.poNumber).trim()))].forEach(po => plPoSelect.appendChild(new Option(po, po))); }
 function onPlPoSelect() { const poNum = document.getElementById('plSelectPo').value; const profileSelect = document.getElementById('plSelectProfile'); profileSelect.innerHTML = '<option value="">-- Select Profile --</option>'; document.getElementById('plSelectItemCode').innerHTML = '<option value="">-- Select Item Code --</option>'; document.getElementById('plSelectLength').innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('plNetWeight').value = ''; if (!poNum) return; const poItems = poList.filter(p => String(p.poNumber).trim() === String(poNum).trim()); [...new Set(poItems.map(p => String(p.profile).trim()))].forEach(prof => profileSelect.appendChild(new Option(prof, prof))); }
 function onPlProfileSelect() { const poNum = document.getElementById('plSelectPo').value; const profile = document.getElementById('plSelectProfile').value; const itemSelect = document.getElementById('plSelectItemCode'); itemSelect.innerHTML = '<option value="">-- Select Item Code --</option>'; document.getElementById('plSelectLength').innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('plNetWeight').value = ''; if (!poNum || !profile) return; const poItems = poList.filter(p => String(p.poNumber).trim() === poNum && String(p.profile).trim() === profile); const uniqueItems = []; poItems.forEach(p => { const matchedCat = masterData.find(m => String(m.profile) === profile && cleanLen(m.length) === cleanLen(p.length)); if(matchedCat && matchedCat.itemCode && !uniqueItems.includes(matchedCat.itemCode)) { uniqueItems.push(matchedCat.itemCode); itemSelect.appendChild(new Option(matchedCat.itemCode, matchedCat.itemCode)); } }); }
 function onPlItemCodeSelect() { const poNum = document.getElementById('plSelectPo').value; const profile = document.getElementById('plSelectProfile').value; const itemCode = document.getElementById('plSelectItemCode').value; const lengthSelect = document.getElementById('plSelectLength'); lengthSelect.innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('plNetWeight').value = ''; if (!poNum || !profile || !itemCode) return; const poItems = poList.filter(p => String(p.poNumber).trim() === poNum && String(p.profile).trim() === profile); const matches = poItems.filter(p => { const matchedCat = masterData.find(m => String(m.profile) === profile && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); matches.forEach(p => lengthSelect.appendChild(new Option(`${p.length} mm`, p.length))); if(matches.length === 1) { lengthSelect.value = matches[0].length; calculatePlWeights(); } }
 function calculatePlWeights() { const poNum = document.getElementById('plSelectPo').value; const profile = document.getElementById('plSelectProfile').value; const itemCode = document.getElementById('plSelectItemCode').value; const length = document.getElementById('plSelectLength').value; const pcsQty = parseInt(document.getElementById('plPcsQty').value) || 0; if (!profile || !itemCode || !length || pcsQty <= 0) { document.getElementById('plNetWeight').value = ''; return; } const po = poList.find(p => { if (String(p.poNumber).trim() !== String(poNum).trim() || cleanLen(p.length) !== cleanLen(length)) return false; const matchedCat = masterData.find(m => String(m.profile) === String(p.profile) && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); if(!po) return; const matched = masterData.find(m => String(m.profile).trim() === String(profile).trim() && cleanLen(m.length) === cleanLen(length)); const uw = matched ? matched.unitWeight : 0; document.getElementById('plNetWeight').value = `${(pcsQty * uw).toFixed(2)} kg`; }
-async function savePackingListEntry() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const plNum = document.getElementById('plNumber').value.trim(); const poNum = document.getElementById('plSelectPo').value; const container = document.getElementById('plContainer').value; const plDate = document.getElementById('plDate').value; const profile = document.getElementById('plSelectProfile').value; const itemCode = document.getElementById('plSelectItemCode').value; const length = document.getElementById('plSelectLength').value; const crateNo = document.getElementById('plBoxQty').value.trim() || 'Crate 1'; const pcsQty = parseInt(document.getElementById('plPcsQty').value) || 0; const grossWeight = parseFloat(document.getElementById('plGrossWeight').value) || 0; if (!plNum || !poNum || !profile || !itemCode || !length || pcsQty <= 0) return; const po = poList.find(p => { if (String(p.poNumber).trim() !== String(poNum).trim() || cleanLen(p.length) !== cleanLen(length)) return false; const matchedCat = masterData.find(m => String(m.profile) === String(p.profile) && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); if (!po) return; const matched = masterData.find(m => String(m.profile).trim() === String(profile).trim() && cleanLen(m.length) === cleanLen(length)); const uw = matched ? matched.unitWeight : 0; const netWeight = parseFloat((pcsQty * uw).toFixed(2)); const filterMonth = document.getElementById('plFilterMonth') ? document.getElementById('plFilterMonth').value : 'January'; const newPl = { pl_number: plNum, po_number: poNum, shipment_month: filterMonth, container: container, crate_no: crateNo, profile: profile, item_code: itemCode, length: cleanLen(length), box_qty: 1, pcs_qty: pcsQty, net_weight: netWeight, gross_weight: grossWeight, packing_date: plDate }; const { data: inserted } = await supabaseClient.from('packing_list').insert([newPl]).select(); if (inserted && inserted.length > 0) packingLists.unshift({ id: inserted[0].id, plNumber: plNum, poNumber: poNum, month: filterMonth, container: container, crateNo: crateNo, profile: profile, itemCode: itemCode, length: cleanLen(length), boxQty: 1, pcsQty: pcsQty, netWeight: netWeight, grossWeight: grossWeight, date: plDate }); showToast("PL record saved!", "success"); document.getElementById('packingListForm').reset(); renderPackingListTable(); } finally { isAppBusy=false; } }
-async function processPlExcelUpload() { const fileInput = document.getElementById('plExcelUpload'); if (!fileInput.files || fileInput.files.length === 0) return; if (currentUserRole !== 'Admin') return; const uploadBtn = document.getElementById('plUploadBtn'); const originalBtnText = uploadBtn.innerHTML; uploadBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Uploading...`; uploadBtn.disabled = true; const file = fileInput.files[0]; const defaultPlNum = file.name.replace(/\.[^/.]+$/, "").trim(); const reader = new FileReader(); reader.onload = async function(e) { try { const data = new Uint8Array(e.target.result); const workbook = XLSX.read(data, { type: 'array' }); const sheetName = workbook.SheetNames[0]; const worksheet = workbook.Sheets[sheetName]; const rawJson = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }); if (!rawJson || rawJson.length === 0) return; let headerRowIndex = -1; let headers = []; for (let i = 0; i < Math.min(15, rawJson.length); i++) { const rowStr = rawJson[i].map(String).join('').toLowerCase().replace(/[\s_\-\(\)\.]/g, ''); let matchCount = 0; if (rowStr.includes('po') || rowStr.includes('order')) matchCount++; if (rowStr.includes('profile') || rowStr.includes('extrusion')) matchCount++; if (rowStr.includes('item') || rowStr.includes('code') || rowStr.includes('desc')) matchCount++; if (rowStr.includes('crate') || rowStr.includes('box') || rowStr.includes('no')) matchCount++; if (rowStr.includes('pcs') || rowStr.includes('qty') || rowStr.includes('quantity') || rowStr.includes('piece')) matchCount++; if (matchCount >= 2) { headerRowIndex = i; headers = rawJson[i].map(h => String(h).toLowerCase().replace(/[\s_\-\(\)\.]/g, '')); break; } } if (headerRowIndex === -1) return; const rowsToInsert = []; let currentCrateGroup = 'Crate 1'; let currentPO = ''; const defaultMonth = document.getElementById('plFilterMonth') ? document.getElementById('plFilterMonth').value : 'September'; const defaultContainer = document.getElementById('plFilterContainer') ? document.getElementById('plFilterContainer').value : '1st Container'; for (let i = headerRowIndex + 1; i < rawJson.length; i++) { const rowArr = rawJson[i]; if (rowArr.join('').trim() === '') continue; const norm = {}; headers.forEach((h, idx) => { if (h) norm[h] = rowArr[idx]; }); const exactVal = (keys) => { for(let k of keys) { if(norm[k] !== undefined && norm[k] !== '') return norm[k]; } return undefined; }; let rawNo = exactVal(['no', 'sn', 's/n', 'crateno', 'boxno', 'index', 'serial', 'number']); if (rawNo !== undefined) currentCrateGroup = 'Crate ' + String(rawNo).replace('.0', '').trim(); let rawPo = exactVal(['ponumber', 'po', 'order', 'orderno', 'purchaseorder']); if (rawPo !== undefined) currentPO = String(rawPo).replace('.0', '').trim(); const plNum = String(exactVal(['plnumber', 'pl', 'packinglist']) || defaultPlNum).trim(); const poNum = currentPO || 'Unknown PO'; const month = String(exactVal(['month', 'shipmentmonth']) || defaultMonth).trim(); const container = String(exactVal(['containerno', 'container']) || defaultContainer).trim(); const crateNo = currentCrateGroup; let profile = String(exactVal(['profile', 'profileno', 'profilecode', 'extrusion']) || '').trim(); if (profile.toUpperCase().startsWith('AL-')) profile = profile.substring(3); const itemCode = String(exactVal(['itemcode', 'item', 'code', 'partno']) || '').trim(); let length = cleanLen(String(exactVal(['length', 'lengthmm']) || '').trim()); let unitWeight = 0; if (profile && itemCode) { const matchedCat = masterData.find(m => String(m.profile).trim() === String(profile).trim() && m.itemCode.toLowerCase() === itemCode.toLowerCase()); if (matchedCat) { length = cleanLen(matchedCat.length); unitWeight = matchedCat.unitWeight; } } const pcsQty = parseInt(exactVal(['totalpcs', 'pcspercrate', 'pcsqty', 'qty', 'quantity', 'pcs', 'pieces'])) || 0; const numberOfCrates = parseInt(exactVal(['numberofcrates', 'crates', 'boxqty', 'boxes', 'cratecount'])) || 1; if (profile && pcsQty > 0) { const totalPcs = pcsQty * numberOfCrates; let finalCrateName = crateNo; if (numberOfCrates > 1) finalCrateName += ` (x${numberOfCrates})`; let parsedNet = parseFloat(exactVal(['weight', 'netweight', 'netwt', 'totalweight'])); let netWeight = !isNaN(parsedNet) ? parsedNet : parseFloat((totalPcs * unitWeight).toFixed(2)); let parsedGross = parseFloat(exactVal(['grossweight', 'grosswt'])); let grossWeight = !isNaN(parsedGross) ? parsedGross : netWeight; let parsedDate = exactVal(['date', 'packingdate']); let finalDate = formatExcelDate(parsedDate); rowsToInsert.push({ pl_number: plNum, po_number: poNum, shipment_month: month, container: container, crate_no: finalCrateName, profile: profile, item_code: itemCode, length: length || '0', box_qty: numberOfCrates, pcs_qty: totalPcs, net_weight: netWeight, gross_weight: grossWeight, packing_date: finalDate }); } } if (rowsToInsert.length === 0) return; await supabaseClient.from('packing_list').insert(rowsToInsert); let { data: plData } = await supabaseClient.from('packing_list').select('*'); if (plData) { plData.sort((a, b) => b.id - a.id); packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate ${item.box_qty || 1}`, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date })); } fileInput.value = ''; showToast(`Uploaded PL!`, "success"); renderPackingListTable(); renderDashboard(); } catch (err) {} finally { uploadBtn.innerHTML = originalBtnText; uploadBtn.disabled = false; } }; reader.readAsArrayBuffer(file); }
+async function savePackingListEntry() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const plNum = document.getElementById('plNumber').value.trim(); const poNum = document.getElementById('plSelectPo').value; const container = normalizeContainerName(document.getElementById('plContainer').value); const plDate = document.getElementById('plDate').value; const profile = document.getElementById('plSelectProfile').value; const itemCode = document.getElementById('plSelectItemCode').value; const length = document.getElementById('plSelectLength').value; const crateNo = document.getElementById('plBoxQty').value.trim() || 'Crate 1'; const pcsQty = parseInt(document.getElementById('plPcsQty').value) || 0; const grossWeight = parseFloat(document.getElementById('plGrossWeight').value) || 0; if (!plNum || !poNum || !profile || !itemCode || !length || pcsQty <= 0) return; const po = poList.find(p => { if (String(p.poNumber).trim() !== String(poNum).trim() || cleanLen(p.length) !== cleanLen(length)) return false; const matchedCat = masterData.find(m => String(m.profile) === String(p.profile) && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); if (!po) return; const matched = masterData.find(m => String(m.profile).trim() === String(profile).trim() && cleanLen(m.length) === cleanLen(length)); const uw = matched ? matched.unitWeight : 0; const netWeight = parseFloat((pcsQty * uw).toFixed(2)); const filterMonth = activePackingMonth || new Date().toLocaleString('en-US',{month:'long'}); const newPl = { pl_number: plNum, po_number: poNum, shipment_month: filterMonth, container: container, crate_no: crateNo, profile: profile, item_code: itemCode, length: cleanLen(length), box_qty: 1, pcs_qty: pcsQty, net_weight: netWeight, gross_weight: grossWeight, packing_date: plDate }; const { data: inserted } = await supabaseClient.from('packing_list').insert([newPl]).select(); if (inserted && inserted.length > 0) packingLists.unshift({ id: inserted[0].id, plNumber: plNum, poNumber: poNum, month: filterMonth, container: container, crateNo: crateNo, profile: profile, itemCode: itemCode, length: cleanLen(length), boxQty: 1, pcsQty: pcsQty, netWeight: netWeight, grossWeight: grossWeight, date: plDate }); showToast("PL record saved!", "success"); document.getElementById('packingListForm').reset(); renderPackingListTable(); } finally { isAppBusy=false; } }
+async function processPlExcelUpload() {
+  const fileInput = document.getElementById('plExcelUpload');
+  if (!fileInput?.files?.length) { showToast('Please select an Excel file first.', 'warning'); return; }
+  if (currentUserRole !== 'Admin') { showToast('Admin access is required for Excel upload.', 'warning'); return; }
+  const uploadBtn = document.getElementById('plUploadBtn');
+  const originalBtnText = uploadBtn?.innerHTML || 'Upload';
+  if (uploadBtn) { uploadBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Validating...'; uploadBtn.disabled = true; }
+
+  const file = fileInput.files[0];
+  const defaultPlNum = file.name.replace(/\.[^/.]+$/, '').trim();
+  const roman = ['i','ii','iii','iv','v','vi','vii','viii','ix','x'];
+  const toRoman = n => roman[n-1] || String(n);
+  const normalHeader = h => String(h ?? '').toLowerCase().replace(/[\s_\-\(\)\.\/]/g,'');
+
+  try {
+    const data = new Uint8Array(await file.arrayBuffer());
+    const workbook = XLSX.read(data, { type: 'array' });
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rawJson = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+    if (!rawJson.length) throw new Error('The Excel sheet is empty.');
+
+    let headerRowIndex = -1, headers = [];
+    for (let i = 0; i < Math.min(20, rawJson.length); i++) {
+      const row = rawJson[i].map(normalHeader);
+      const rowStr = row.join('|');
+      let score = 0;
+      if (rowStr.includes('ponumber') || rowStr.includes('po')) score++;
+      if (rowStr.includes('profile') || rowStr.includes('profileno')) score++;
+      if (rowStr.includes('itemcode') || rowStr.includes('item')) score++;
+      if (rowStr.includes('crateno') || rowStr.includes('crate') || rowStr.includes('numberofcrates')) score++;
+      if (rowStr.includes('pcsqty') || rowStr.includes('pcspercrate') || rowStr.includes('qty')) score++;
+      if (score >= 3) { headerRowIndex=i; headers=row; break; }
+    }
+    if (headerRowIndex < 0) throw new Error('Excel headers were not recognised. Use the AIS Packing List template.');
+
+    const rowsToInsert=[];
+    let currentCrateBase='1';
+    let currentPO='';
+    const defaultMonth = activePackingMonth || new Date().toLocaleString('en-US',{month:'long'});
+    const defaultContainer = activePackingContainer || '1st Container';
+
+    for (let i=headerRowIndex+1; i<rawJson.length; i++) {
+      const rowArr=rawJson[i];
+      if (rowArr.join('').trim()==='') continue;
+      const norm={}; headers.forEach((h,idx)=>{ if(h) norm[h]=rowArr[idx]; });
+      const val=(keys)=>{ for(const k of keys){ if(norm[k]!==undefined && String(norm[k]).trim()!=='') return norm[k]; } return undefined; };
+
+      const rawCrate=val(['crateno','boxno','index','serial','number','no','sn']);
+      if(rawCrate!==undefined) currentCrateBase=String(rawCrate).replace(/^crate\s*/i,'').replace(/\.0$/,'').trim();
+      const rawPo=val(['ponumber','po','order','orderno','purchaseorder']);
+      if(rawPo!==undefined) currentPO=String(rawPo).replace(/\.0$/,'').trim();
+
+      const plNum=String(val(['plnumber','pl','packinglist']) || defaultPlNum).trim();
+      const poNum=currentPO || 'Unknown PO';
+      const month=String(val(['month','shipmentmonth']) || defaultMonth).trim();
+      const container=normalizeContainerName(val(['containerno','container']) || defaultContainer);
+      let profile=String(val(['profile','profileno','profilecode','extrusion']) || '').trim();
+      if(profile.toUpperCase().startsWith('AL-')) profile=profile.substring(3);
+      const itemCode=String(val(['itemcode','item','code','partno']) || '').trim();
+      if(!profile || !itemCode) continue;
+
+      let length=cleanLen(String(val(['length','lengthmm']) || '').trim());
+      let unitWeight=0;
+      const matchedCat=masterData.find(m=>String(m.profile).trim()===String(profile).trim() && String(m.itemCode||'').toLowerCase()===itemCode.toLowerCase() && (!length || cleanLen(m.length)===length));
+      const fallbackCat=matchedCat || masterData.find(m=>String(m.profile).trim()===String(profile).trim() && String(m.itemCode||'').toLowerCase()===itemCode.toLowerCase());
+      if(fallbackCat){ length=cleanLen(fallbackCat.length); unitWeight=Number(fallbackCat.unitWeight)||0; }
+
+      const explicitCrate=rawCrate!==undefined;
+      const pcsPerCrate=parseInt(val(['pcspercrate','pcsqty','qty','quantity','pcs','pieces','totalpcs']),10)||0;
+      const numberOfCrates=Math.max(1,parseInt(val(['numberofcrates','crates','boxqty','boxes','cratecount']),10)||1);
+      if(pcsPerCrate<=0) continue;
+
+      // If the sheet already has explicit suffixes such as 11-i, use exactly that crate ID.
+      // If it supplies Number of Crates > 1 without suffixes, expand to 11-i, 11-ii, ...
+      const hasSuffix=/-[a-z]+$/i.test(currentCrateBase);
+      const crateNames=explicitCrate && hasSuffix ? [currentCrateBase] :
+        (numberOfCrates>1 ? Array.from({length:numberOfCrates},(_,k)=>`${currentCrateBase}-${toRoman(k+1)}`) : [currentCrateBase]);
+
+      for(const crateName of crateNames){
+        const parsedNet=parseFloat(val(['weight','netweight','netwt','totalweight']));
+        const netWeight=!Number.isNaN(parsedNet) ? parsedNet : Number((pcsPerCrate*unitWeight).toFixed(2));
+        const parsedGross=parseFloat(val(['grossweight','grosswt']));
+        const grossWeight=!Number.isNaN(parsedGross) ? parsedGross : netWeight;
+        const parsedDate=val(['date','packingdate']);
+        const finalDate=formatExcelDate(parsedDate);
+        rowsToInsert.push({
+          pl_number:plNum, po_number:poNum, shipment_month:month, container,
+          crate_no:`Crate ${crateName}`, profile, item_code:itemCode,
+          length:length || '0', box_qty:1, pcs_qty:pcsPerCrate,
+          net_weight:netWeight, gross_weight:grossWeight, packing_date:finalDate
+        });
+      }
+    }
+
+    if(!rowsToInsert.length) throw new Error('No valid packing rows were found. Check Profile, Item Code and Pcs Qty.');
+    if(uploadBtn) uploadBtn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+    const {error:insertError}=await supabaseClient.from('packing_list').insert(rowsToInsert);
+    if(insertError) throw insertError;
+
+    const {data:plData,error:readError}=await supabaseClient.from('packing_list').select('*');
+    if(readError) throw readError;
+    if(plData){
+      plData.sort((a,b)=>b.id-a.id);
+      packingLists=plData.map(item=>({id:item.id,plNumber:item.pl_number,poNumber:item.po_number,month:item.shipment_month||'January',container:item.container||'1st Container',crateNo:item.crate_no||`Crate ${item.box_qty||1}`,profile:item.profile,itemCode:item.item_code||'',length:cleanLen(item.length),boxQty:item.box_qty||1,pcsQty:item.pcs_qty||0,netWeight:item.net_weight||0,grossWeight:item.gross_weight||0,date:item.packing_date}));
+    }
+    fileInput.value='';
+    showToast(`Packing List uploaded successfully: ${rowsToInsert.length} crate-item records.`, 'success');
+    renderPackingListTable(); renderDashboard();
+  } catch(err) {
+    console.error('Packing List Excel upload error:',err);
+    showToast(`Upload failed: ${err?.message || 'Invalid Excel or database error'}`, 'error');
+  } finally {
+    if(uploadBtn){ uploadBtn.innerHTML=originalBtnText; uploadBtn.disabled=false; }
+  }
+}
 
 function renderHistoryData() { 
     try {
@@ -1974,27 +2228,21 @@ function closeAddMasterModal() { document.getElementById('addMasterModal').style
 async function saveNewMasterProfile() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const profile = document.getElementById('addMasterProfile').value.trim(); const itemCode = document.getElementById('addMasterItemCode').value.trim(); const material = document.getElementById('addMasterMaterial').value.trim(); const length = document.getElementById('addMasterLength').value.trim(); const exLength = document.getElementById('addMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('addMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('addMasterBoxCapacity').value) || 100; if (!profile || !itemCode || !length) { showToast("Fill all fields", "warning"); return; } const exists = masterData.find(m => String(m.profile).trim() === profile && cleanLen(m.length) === cleanLen(length) && m.itemCode === itemCode); if (exists) { showToast("Already exists!", "error"); return; } const newEntry = { profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0 }; const mapped = { db_id: Date.now(), profile: profile, itemCode: itemCode, material: material, length: length, exLength: exLength, unitWeight: uw, cutQty: 0, punchQty: 0, wrapQty: 0, boxQty: 0, crateQty: 0, boxCapacity: cap }; try { const { data } = await supabaseClient.from('master_catalog').insert([newEntry]).select(); if (data && data.length > 0) { mapped.db_id = data[0].id; } } catch (e) {} masterData.push(mapped); masterData.sort((a, b) => (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) || (parseFloat(a.length)||0) - (parseFloat(b.length)||0)); saveMasterExtrasLocally(); closeAddMasterModal(); showToast("Profile added!", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
 function resetAllDataToZero() { if (currentUserRole !== 'Admin') return; showConfirm("WARNING: Reset all Stock?", async () => { for (let item of masterData) { item.cutQty = 0; item.punchQty = 0; item.wrapQty = 0; item.boxQty = 0; item.crateQty = 0; if (item.db_id) await supabaseClient.from('master_catalog').update({ cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0 }).eq('id', item.db_id); } await supabaseClient.from('history_logs').delete().neq('id', 0); historyLogs = []; showToast("Reset success!", "success"); renderDashboard(); renderProfileSummaryTable(); renderHistoryData(); renderBalanceWorkTable(); }); }
 
+// Manual system health check for Admin troubleshooting. It never mutates data.
+window.runSystemHealthCheck = async function() {
+  const checks = [];
+  const requiredIds = ['dashboardTab','packingListTab','masterWeightChart','overallPoChart','overallPlChart','rejectDashboardChart','rejectProfileChart','plWeightChart','packingShipmentControls','packingListTableBody'];
+  requiredIds.forEach(id => checks.push({ check: `DOM: ${id}`, ok: !!document.getElementById(id) }));
+  checks.push({ check: 'Chart.js loaded', ok: typeof Chart !== 'undefined' });
+  checks.push({ check: 'XLSX loaded', ok: typeof XLSX !== 'undefined' });
+  checks.push({ check: 'Supabase client loaded', ok: !!supabaseClient });
+  checks.push({ check: 'Master catalog loaded', ok: masterData.length >= 0 });
+  checks.push({ check: 'Packing data loaded', ok: packingLists.length >= 0 });
+  const failed = checks.filter(c => !c.ok);
+  console.table(checks);
+  if (failed.length) showToast(`Health check: ${failed.length} issue(s) found. Check console.`, 'warning');
+  else showToast('System health check passed.', 'success');
+  return checks;
+};
+
 // END OF SCRIPT
-
-
-/* V2 emergency backup button. Added dynamically so the existing HTML remains compatible. */
-function ensureV2BackupButton() {
-  if (document.getElementById("v2BackupBtn")) return;
-  const candidates = [
-    document.getElementById("userRoleBadge")?.parentElement,
-    document.querySelector(".header-actions"),
-    document.querySelector("header")
-  ].filter(Boolean);
-  const host = candidates[0];
-  if (!host) return;
-
-  const btn = document.createElement("button");
-  btn.id = "v2BackupBtn";
-  btn.type = "button";
-  btn.className = "btn btn-accent";
-  btn.style.cssText = "margin-left:6px;padding:6px 10px;font-size:11px;";
-  btn.innerHTML = '<i class="fa-solid fa-shield-halved"></i> Backup';
-  btn.title = "Download a V2 JSON backup of the currently loaded data";
-  btn.onclick = () => window.downloadAISV2Backup();
-  host.appendChild(btn);
-}
