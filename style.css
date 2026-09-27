@@ -84,7 +84,7 @@ body.dark-mode .tab-btn { color: var(--text-muted); }
 @keyframes zoomModal { to { transform: scale(1); } }
 .modal-content input, .modal-content select { width: 100%; padding: 10px 12px; margin: 6px 0 14px 0; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 13.5px; text-align: left; }
 
-.login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: #050b14; background-image: linear-gradient(rgba(2, 6, 23, 0.65), rgba(2, 6, 23, 0.85)), url('ais_2.jpg'); background-size: cover; background-position: center; background-repeat: no-repeat; z-index: 99999; display: flex; justify-content: center; align-items: center; animation: bgZoomInOut 30s infinite alternate ease-in-out; overflow: hidden; }
+.login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: #050b14; background-image: linear-gradient(rgba(2, 6, 23, 0.65), rgba(2, 6, 23, 0.85)), url('ais_2.jpg'), url('alumex-global.png'); background-size: cover; background-position: center; background-repeat: no-repeat; z-index: 99999; display: flex; justify-content: center; align-items: center; animation: bgZoomInOut 30s infinite alternate ease-in-out; overflow: hidden; }
 @keyframes bgZoomInOut { 0% { background-size: 100%; } 100% { background-size: 110%; } }
 
 .tech-grid-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-image: linear-gradient(rgba(16, 185, 129, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(16, 185, 129, 0.05) 1px, transparent 1px); background-size: 30px 30px; pointer-events: none; z-index: 1; }
@@ -557,7 +557,7 @@ input:focus,select:focus{border-color:#64b232!important;box-shadow:0 0 0 4px rgb
 .ais-role-icon{background:#edf7e9!important;color:#0e6b75!important;}
 .ais-selected-role{background:#f0f7f5!important;border-color:#cde1d8!important;color:#0e6b75!important;}
 .ais-login-visual:after{background:linear-gradient(180deg,rgba(8,63,70,.12),rgba(8,63,70,.72))!important;}
-@media(max-width:900px){.header-titles h1{font-size:16px}.alumex-logo-svg{height:44px;width:126px}.smart-category{font-size:12px!important}.smart-submenu .tab-btn{font-size:11px!important;}}
+@media(max-width:900px){.header-titles h1{font-size:16px}.alumex-logo-svg{height:44px;width:126px}.alumex-logo-frame{width:72px;height:72px;min-width:72px}.logo-orbit{width:92px;height:38px;margin-left:-46px;margin-top:-19px}.smart-category{font-size:12px!important}.smart-submenu .tab-btn{font-size:11px!important;}}
 
 /* Dashboard chart polish v10 */
 .dashboard-chart-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;border-bottom:2px dashed rgba(16,185,129,.18);padding-bottom:9px;}
@@ -585,21 +585,36 @@ body.dark-mode .chart-period-blue{background:rgba(2,132,199,.12);border-color:#0
 }
 .header-logo-container{gap:16px!important;align-items:center!important;position:relative;z-index:2;}
 .alumex-logo-frame{
-  width:78px;height:78px;min-width:78px;border-radius:16px;
+  width:94px;height:94px;min-width:94px;border-radius:18px;
   background:rgba(255,255,255,.98);
   display:flex;align-items:center;justify-content:center;
-  padding:5px;box-sizing:border-box;
-  box-shadow:0 10px 24px rgba(0,0,0,.18),0 0 0 1px rgba(255,255,255,.45);
-  position:relative;overflow:hidden;
-  animation:alumexLogoFloat 4.2s ease-in-out infinite;
+  padding:6px;box-sizing:border-box;
+  box-shadow:0 12px 28px rgba(0,0,0,.20),0 0 0 1px rgba(255,255,255,.50);
+  position:relative;overflow:visible;
+  animation:alumexLogoFloat 4.8s ease-in-out infinite;
+  isolation:isolate;
 }
 .alumex-logo-frame::after{
-  content:"";position:absolute;inset:-30%;
-  background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,.75) 48%,transparent 60%);
-  transform:translateX(-80%);animation:logoShine 5s ease-in-out infinite;
-  pointer-events:none;
+  content:"";position:absolute;inset:-22%;border-radius:26px;
+  background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,.72) 48%,transparent 60%);
+  transform:translateX(-80%);animation:logoShine 5.5s ease-in-out infinite;
+  pointer-events:none;z-index:4;mix-blend-mode:screen;
 }
-.alumex-logo-svg{width:100%!important;height:100%!important;object-fit:contain!important;filter:drop-shadow(0 3px 7px rgba(6,78,59,.14));position:relative;z-index:1;}
+.logo-orbit{
+  position:absolute;left:50%;top:50%;width:118px;height:48px;
+  margin-left:-59px;margin-top:-24px;border:2px solid rgba(74,243,178,.78);
+  border-radius:50%;pointer-events:none;z-index:0;
+  box-shadow:0 0 9px rgba(74,243,178,.38);
+}
+.logo-orbit::after{
+  content:"";position:absolute;width:7px;height:7px;border-radius:50%;
+  background:#72f6b9;box-shadow:0 0 10px rgba(114,246,185,.95);
+  left:50%;top:-4px;margin-left:-3.5px;
+}
+.logo-orbit-a{transform:rotate(28deg);animation:logoOrbitA 5.5s linear infinite;}
+.logo-orbit-b{width:118px;height:48px;transform:rotate(-28deg);border-color:rgba(83,214,255,.58);box-shadow:0 0 8px rgba(83,214,255,.26);animation:logoOrbitB 7s linear infinite reverse;}
+.logo-orbit-b::after{background:#75dfff;box-shadow:0 0 9px rgba(117,223,255,.9);left:auto;right:8px;top:50%;margin-top:-3.5px;margin-left:0;}
+.alumex-logo-svg{width:100%!important;height:100%!important;object-fit:contain!important;filter:drop-shadow(0 3px 7px rgba(6,78,59,.14));position:relative;z-index:2;}
 .header-titles{position:relative;z-index:2;}
 .header-titles h1{font-size:22px!important;letter-spacing:-.5px!important;text-shadow:0 2px 12px rgba(0,0,0,.14);}
 .header-titles p{font-size:11.5px!important;letter-spacing:.15px;}
@@ -625,6 +640,8 @@ body.dark-mode .chart-period-blue{background:rgba(2,132,199,.12);border-color:#0
 .clock-date-line i{color:#9fd8c2;font-size:9px;}
 .clock-tick .clock-main-line strong{animation:none!important;}
 @keyframes alumexLogoFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+@keyframes logoOrbitA{from{transform:rotate(28deg) rotate(0deg)}to{transform:rotate(28deg) rotate(360deg)}}
+@keyframes logoOrbitB{from{transform:rotate(-28deg) rotate(0deg)}to{transform:rotate(-28deg) rotate(360deg)}}
 @keyframes logoShine{0%,55%{transform:translateX(-80%)}75%,100%{transform:translateX(80%)}}
 @keyframes clockSweep{0%,58%{transform:translateX(-120%)}78%,100%{transform:translateX(120%)}}
 @keyframes clockPulse{0%,100%{box-shadow:0 0 0 0 rgba(101,240,174,.60)}50%{box-shadow:0 0 0 5px rgba(101,240,174,0)}}
@@ -741,3 +758,278 @@ body.dark-mode .chart-period-blue{background:rgba(2,132,199,.12);border-color:#0
 .prod-daily-line span{font-weight:700}.prod-daily-line span span{color:#0f172a}
 @media(max-width:1050px){.prod-summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:680px){.prod-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.prod-metric b{font-size:17px}}
+
+/* AIS Tracker v2.0 - Ready-to-Pack filters */
+.pl-ready-filterbar{display:grid;grid-template-columns:minmax(180px,240px) minmax(240px,1fr);gap:12px;align-items:end;margin-bottom:14px;padding:12px 14px;background:var(--emerald-light);border:1px solid var(--emerald-border);border-radius:var(--radius-md);}
+.pl-ready-filterbar .form-group{min-width:0;}
+.pl-ready-filterbar label{font-size:11px;font-weight:800;color:var(--primary-dark);margin-bottom:5px;display:block;}
+.pl-ready-filterbar input,.pl-ready-filterbar select{padding:9px 11px;border:1px solid var(--border-color);border-radius:10px;font-size:13px;background:var(--card-bg);color:var(--text-color);}
+@media(max-width:700px){.pl-ready-filterbar{grid-template-columns:1fr;}}
+
+/* AIS Tracker v2.0 Recovery Cut / Recovery Wrapping */
+.recovery-available-box{padding:10px 12px;background:#fff;border:1px solid var(--success-color);border-radius:8px;font-weight:800;color:var(--success-color);min-height:40px;display:flex;align-items:center;}
+.recovery-secondary-card{border-color:#99f6e4;background:linear-gradient(135deg,rgba(240,253,250,.96),rgba(248,250,252,.98));}
+.recovery-month-reminder{margin:0 0 18px 0;padding:14px 18px;border-radius:14px;border:1px solid #f59e0b;background:linear-gradient(135deg,#fffbeb,#fef3c7);color:#92400e;display:flex;align-items:center;justify-content:space-between;gap:14px;box-shadow:0 8px 18px rgba(245,158,11,.12);font-size:13px;font-weight:700;}
+.recovery-month-reminder>div{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.recovery-month-reminder i{font-size:18px;color:#d97706;}
+.recovery-month-reminder span{font-weight:600;color:#92400e;}
+body.dark-mode .recovery-available-box{background:#0f1c2b;color:#6ee7b7;border-color:#34d399;}
+body.dark-mode .recovery-secondary-card{background:linear-gradient(135deg,rgba(15,118,110,.12),rgba(15,23,42,.94));}
+body.dark-mode .recovery-month-reminder{background:rgba(146,64,14,.22);color:#fbbf24;border-color:#d97706;}
+@media(max-width:900px){.recovery-month-reminder{align-items:flex-start;flex-direction:column}.recovery-month-reminder .btn{width:100%;}.form-group[style*="grid-column:span 2"]{grid-column:span 1!important;}}
+
+/* ===== AIS Tracker V15 - Larger Alumex logo + clock locked to far right ===== */
+@media(min-width:901px){
+  .header{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:18px!important;flex-wrap:nowrap!important;}
+  .header-logo-container{flex:1 1 auto!important;min-width:0!important;}
+  .header-controls{flex:1 1 auto!important;justify-content:flex-end!important;align-items:center!important;flex-wrap:nowrap!important;min-width:0!important;}
+  .header-controls .live-clock-badge{order:99!important;margin-left:12px!important;flex:0 0 auto!important;}
+}
+.alumex-logo-frame{
+  width:124px!important;height:102px!important;min-width:124px!important;
+  border-radius:19px!important;padding:7px!important;
+  box-shadow:0 14px 32px rgba(0,0,0,.24),0 0 0 1px rgba(255,255,255,.7),0 0 28px rgba(90,255,190,.16)!important;
+}
+.alumex-logo-svg{width:100%!important;height:100%!important;object-fit:contain!important;}
+.logo-orbit{pointer-events:none!important;}
+@media(max-width:1150px) and (min-width:901px){
+  .alumex-logo-frame{width:108px!important;height:90px!important;min-width:108px!important;}
+  .header-titles h1{font-size:20px!important;}
+  .header-controls{gap:7px!important;}
+  .header-controls .btn{padding-left:9px!important;padding-right:9px!important;}
+  .live-clock-badge{width:220px!important;min-width:220px!important;}
+}
+@media(max-width:900px){
+  .alumex-logo-frame{width:92px!important;height:78px!important;min-width:92px!important;}
+}
+
+/* ===== V16 Professional 3-column command header ===== */
+.header{display:grid!important;grid-template-columns:minmax(430px,1.15fr) minmax(480px,1.55fr) 260px!important;align-items:center!important;gap:18px!important;min-height:112px!important;padding:10px 18px!important;overflow:visible!important;}
+.header-logo-container{min-width:0!important;gap:18px!important;}
+.header-titles{min-width:0!important;}
+.header-titles h1{font-size:23px!important;white-space:nowrap!important;}
+.header-controls{min-width:0!important;width:auto!important;display:flex!important;justify-content:center!important;align-items:center!important;}
+.header-actions-group{display:flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;flex-wrap:nowrap!important;width:100%!important;}
+.header-actions-group .btn{white-space:nowrap!important;}
+.header-clock-slot{display:flex!important;justify-content:flex-end!important;align-items:center!important;min-width:0!important;}
+.header-clock-slot .live-clock-badge{width:248px!important;min-width:248px!important;}
+@media(max-width:1350px) and (min-width:1001px){.header{grid-template-columns:minmax(360px,1fr) minmax(420px,1.35fr) 235px!important;gap:10px!important}.header-titles h1{font-size:19px!important}.alumex-logo-frame{width:105px!important;height:88px!important;min-width:105px!important}.header-actions-group{gap:5px!important}.header-actions-group .btn{padding:8px 9px!important;font-size:10px!important}.header-clock-slot .live-clock-badge{width:225px!important;min-width:225px!important}.clock-main-line strong{font-size:19px!important;}}
+@media(max-width:1000px){.header{display:flex!important;flex-wrap:wrap!important;justify-content:center!important}.header-logo-container,.header-controls,.header-clock-slot{width:100%!important;justify-content:center!important}.header-actions-group{flex-wrap:wrap!important}.header-clock-slot{order:3}.header-titles h1{font-size:19px!important;white-space:normal!important}.alumex-logo-frame{width:100px!important;height:84px!important;min-width:100px!important;}}
+
+/* V16 cardboard controls */
+.production-cardboard-info{margin-top:6px;padding:7px 9px;border-radius:8px;font-size:10.5px;font-weight:800;line-height:1.35;border:1px solid #cbd5e1;background:#f8fafc;color:#64748b;}
+.production-cardboard-info.ok{background:#ecfdf5;border-color:#86efac;color:#047857;}
+.production-cardboard-info.danger{background:#fff1f2;border-color:#fda4af;color:#be123c;}
+.cb-balance-pill{display:inline-block;padding:5px 9px;border-radius:999px;background:#dcfce7;color:#047857;font-weight:900;white-space:nowrap;}
+.cb-balance-pill.danger{background:#ffe4e6;color:#be123c;}
+.cb-tx{display:inline-block;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:900;}
+.cb-tx.in{background:#dcfce7;color:#047857;}.cb-tx.out{background:#ffedd5;color:#c2410c;}
+#cardboardCapacityTableBody td,#cardboardHistoryTableBody td{vertical-align:middle;}
+
+/* ===== V17 FINAL HEADER - clean, non-overlapping command layout ===== */
+@media (min-width: 1101px){
+  .header{
+    display:grid!important;
+    grid-template-columns:minmax(500px, 1fr) auto 260px!important;
+    align-items:center!important;
+    column-gap:20px!important;
+    row-gap:0!important;
+    min-height:116px!important;
+    padding:10px 18px!important;
+    overflow:visible!important;
+  }
+  .header-logo-container{
+    width:auto!important;
+    min-width:500px!important;
+    max-width:none!important;
+    display:flex!important;
+    align-items:center!important;
+    justify-content:flex-start!important;
+    gap:15px!important;
+  }
+  .alumex-logo-frame{
+    width:116px!important;
+    height:96px!important;
+    min-width:116px!important;
+    border-radius:18px!important;
+    padding:7px!important;
+  }
+  .header-titles{
+    min-width:0!important;
+    flex:1 1 auto!important;
+  }
+  .header-titles h1{
+    font-size:21px!important;
+    line-height:1.08!important;
+    letter-spacing:-.35px!important;
+    white-space:nowrap!important;
+    margin:0!important;
+  }
+  .header-titles p{
+    font-size:11px!important;
+    margin-top:6px!important;
+    white-space:nowrap!important;
+  }
+  .header-controls{
+    grid-column:2!important;
+    grid-row:1!important;
+    width:auto!important;
+    min-width:0!important;
+    display:flex!important;
+    justify-content:center!important;
+    align-items:center!important;
+    margin:0!important;
+  }
+  .header-actions-group{
+    display:flex!important;
+    align-items:center!important;
+    justify-content:center!important;
+    gap:7px!important;
+    flex-wrap:nowrap!important;
+    width:auto!important;
+  }
+  .header-actions-group .btn{
+    height:42px!important;
+    min-height:42px!important;
+    padding:0 12px!important;
+    display:inline-flex!important;
+    align-items:center!important;
+    justify-content:center!important;
+    white-space:nowrap!important;
+    font-size:11px!important;
+    line-height:1!important;
+    margin:0!important;
+  }
+  #headerDailyPlanBtn{
+    width:44px!important;
+    min-width:44px!important;
+    max-width:44px!important;
+    height:42px!important;
+    padding:0!important;
+    border-radius:11px!important;
+    font-size:16px!important;
+    position:relative!important;
+    box-shadow:0 5px 14px rgba(245,158,11,.24)!important;
+  }
+  #headerDailyPlanBtn > i{
+    font-size:16px!important;
+    margin:0!important;
+  }
+  #headerDailyPlanBtn #planNotificationBadge{
+    position:absolute!important;
+    top:-6px!important;
+    right:-6px!important;
+    min-width:16px!important;
+    height:16px!important;
+    padding:0 4px!important;
+    margin:0!important;
+    display:none;
+    align-items:center!important;
+    justify-content:center!important;
+    line-height:16px!important;
+    font-size:9px!important;
+    border-radius:999px!important;
+  }
+  #dbStatusBadge{min-width:104px!important;}
+  #systemAuditBtn{min-width:108px!important;}
+  #resetAllBtn{min-width:102px!important;}
+  .header-clock-slot{
+    grid-column:3!important;
+    grid-row:1!important;
+    width:100%!important;
+    min-width:0!important;
+    display:flex!important;
+    justify-content:flex-end!important;
+    align-items:center!important;
+  }
+  .header-clock-slot .live-clock-badge{
+    width:250px!important;
+    min-width:250px!important;
+    height:76px!important;
+    box-sizing:border-box!important;
+  }
+}
+
+@media (min-width:1101px) and (max-width:1450px){
+  .header{grid-template-columns:minmax(450px,1fr) auto 235px!important;column-gap:12px!important;}
+  .header-logo-container{min-width:450px!important;gap:12px!important;}
+  .alumex-logo-frame{width:104px!important;height:86px!important;min-width:104px!important;}
+  .header-titles h1{font-size:18px!important;}
+  .header-titles p{font-size:10px!important;}
+  .header-actions-group{gap:5px!important;}
+  .header-actions-group .btn{padding:0 8px!important;font-size:10px!important;}
+  #headerDailyPlanBtn{min-width:125px!important;font-size:10.5px!important;}
+  .header-clock-slot .live-clock-badge{width:225px!important;min-width:225px!important;}
+}
+
+@media (max-width:1100px){
+  .header{
+    display:flex!important;
+    align-items:center!important;
+    justify-content:space-between!important;
+    flex-wrap:wrap!important;
+    gap:10px!important;
+    min-height:0!important;
+  }
+  .header-logo-container{flex:1 1 480px!important;min-width:0!important;}
+  .header-controls{flex:1 1 100%!important;order:3!important;width:100%!important;justify-content:center!important;}
+  .header-clock-slot{flex:0 0 auto!important;order:2!important;}
+  .header-actions-group{flex-wrap:wrap!important;justify-content:center!important;}
+}
+
+@media (max-width:720px){
+  .header{justify-content:center!important;}
+  .header-logo-container{width:100%!important;justify-content:center!important;}
+  .header-titles h1{font-size:17px!important;white-space:normal!important;}
+  .header-titles p{font-size:9.5px!important;white-space:normal!important;}
+  .header-clock-slot{width:100%!important;justify-content:center!important;}
+  .header-clock-slot .live-clock-badge{width:235px!important;min-width:235px!important;}
+}
+
+
+/* ===== V19 FINAL UI POLISH ===== */
+@media (min-width: 1101px){
+  /* Keep the note action as a compact icon so it never collides with the title. */
+  #headerDailyPlanBtn{
+    width:42px!important; min-width:42px!important; max-width:42px!important;
+    height:40px!important; min-height:40px!important; padding:0!important;
+    border-radius:10px!important; font-size:15px!important;
+  }
+  #headerDailyPlanBtn > i{font-size:15px!important;margin:0!important;}
+  #headerDailyPlanBtn #planNotificationBadge{top:-5px!important;right:-5px!important;}
+}
+@media (min-width: 1101px) and (max-width: 1450px){
+  #headerDailyPlanBtn{width:40px!important;min-width:40px!important;max-width:40px!important;font-size:14px!important;}
+  #headerDailyPlanBtn > i{font-size:14px!important;}
+}
+
+/* Shipment month selector: always readable in both light and dark themes. */
+.pl-control-actions select{
+  min-width:145px!important; min-height:42px!important; padding:9px 34px 9px 12px!important;
+  border:1px solid #a7f3d0!important; border-radius:10px!important;
+  background:#ffffff!important; color:#12313a!important; font-weight:800!important;
+  -webkit-text-fill-color:#12313a!important; opacity:1!important;
+}
+.pl-control-actions select option{background:#ffffff!important;color:#12313a!important;font-weight:700!important;}
+body.dark-mode .pl-control-actions select{background:#16283b!important;color:#eef4f8!important;-webkit-text-fill-color:#eef4f8!important;border-color:#36566b!important;}
+body.dark-mode .pl-control-actions select option{background:#16283b!important;color:#eef4f8!important;}
+
+/* Production cardboard availability: make the selected-profile balance unmistakable. */
+.production-cardboard-info{
+  margin-top:7px!important; padding:9px 10px!important; min-height:42px!important;
+  display:flex!important; align-items:center!important; gap:6px!important;
+  font-size:11px!important; font-weight:800!important; line-height:1.35!important;
+}
+.production-cardboard-info.ok{background:linear-gradient(135deg,#ecfdf5,#f0fdfa)!important;border-color:#6ee7b7!important;color:#047857!important;}
+.production-cardboard-info.danger{background:linear-gradient(135deg,#fff1f2,#fff7ed)!important;border-color:#fda4af!important;color:#be123c!important;}
+.production-cardboard-info.neutral{background:#f8fafc!important;border-color:#cbd5e1!important;color:#64748b!important;}
+.production-cardboard-info b{font-size:12px!important;}
+
+
+/* V20 Cardboard reset + independent manual data */
+.cardboard-manual-panel{margin:0 0 20px;padding:16px;background:linear-gradient(135deg,#eff6ff,#f0fdfa);border:1px solid #93c5fd;border-radius:12px;}
+.cardboard-manual-head h4{margin:0 0 4px;color:#0f3b55;font-size:15px;}
+.cardboard-manual-head p{margin:0 0 12px;font-size:11px;color:#475569;font-weight:700;}
+#cardboardManualDataTableBody td{vertical-align:middle;}
+#resetCardboardBtn{white-space:nowrap;}
+@media(max-width:700px){#resetCardboardBtn{width:100%;}.cardboard-manual-panel{padding:12px;}}

@@ -2,9 +2,11 @@ const SUPABASE_URL = "https://rtlizqawcwzduxpnzznd.supabase.co";
 const SUPABASE_KEY = "sb_publishable_Eyo0gj7_BjN6FoQ76oJQYw_ZBOGj9BW";
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+
+
 let currentUserRole = null; let isAdminUnlocked = false; let isDarkMode = false; let isAppBusy = false;
 let masterChartInstance = null, overallPoChartInstance = null, overallPlChartInstance = null, plChartInstance = null, monthlyShiftChartInstance = null, poChartInstances = [], rejectDashChart = null, rejectProfileChartInstance = null;
-let cardboardStockList = [], dailyInstructionsList = [], masterData = [], historyLogs = [], poList = [], shipmentList = [], packingLists = [], rejectLogs = [], recoverLogs = []; 
+let cardboardStockList = [], cardboardManualData = [], dailyInstructionsList = [], masterData = [], historyLogs = [], poList = [], shipmentList = [], packingLists = [], rejectLogs = [], recoverLogs = [], recoveryCutLogs = [], recoveryWrapLogs = []; 
 let globalManualCrates = {};
 let stockResetInProgress = false;
 let shipmentStates = {};
@@ -39,7 +41,7 @@ function enterAISApplication(role){
   updateRoleUI();
   const dashBtn=document.querySelector('#mainNavTabs .tab-btn');
   if(typeof switchTab==='function') switchTab('dashboardTab',dashBtn);
-  setTimeout(()=>{ try{ loadDataFromSupabase(true); }catch(e){ console.error(e); showToast('Application started, but data sync needs attention.','warning'); } },50);
+  setTimeout(()=>{ try{ loadDataFromSupabase(true); }catch(e){ console.error(e); setDbStatus(false,e?.message||'Startup sync failed.'); showToast('Application started, but data sync needs attention.','warning'); } },100);
 }
 function selectRole(role) {
   if(role==='Local'){ enterAISApplication('Local'); showToast('Local User logged in successfully.','success'); return; }
@@ -65,9 +67,9 @@ function logoutUser() { currentUserRole = null; isAdminUnlocked = false; documen
 
 function updateRoleUI() {
   const roleBadge = document.getElementById('userRoleBadge'); if (roleBadge) { roleBadge.textContent = currentUserRole + " Mode"; roleBadge.style.background = currentUserRole === 'Admin' ? '#e11d48' : (currentUserRole === 'Planner' ? '#0369a1' : '#059669'); }
-  const elements = { adminEntryTab: document.getElementById('tabBtn-adminEntry'), poTab: document.getElementById('tabBtn-po'), shipmentTab: document.getElementById('tabBtn-shipment'), historyTab: document.getElementById('tabBtn-history'), planInputArea: document.getElementById('planInputArea'), cbAdminArea: document.getElementById('cbAdminArea'), plAdminArea1: document.getElementById('plAdminArea1'), plAdminArea2: document.getElementById('plAdminArea2'), resetBtn: document.getElementById('resetAllBtn'), addProfileBtn: document.getElementById('addProfileBtn'), rejectTabBtn: document.getElementById('tabBtn-rejectTracker'), plDeadlineSetter: document.getElementById('plDeadlineSetterContainer'), systemAuditBtn: document.getElementById('systemAuditBtn') };
+  const elements = { adminEntryTab: document.getElementById('tabBtn-adminEntry'), poTab: document.getElementById('tabBtn-po'), shipmentTab: document.getElementById('tabBtn-shipment'), historyTab: document.getElementById('tabBtn-history'), planInputArea: document.getElementById('planInputArea'), cbAdminArea: document.getElementById('cbAdminArea'), cbManualDataArea: document.getElementById('cbManualDataArea'), plAdminArea1: document.getElementById('plAdminArea1'), plAdminArea2: document.getElementById('plAdminArea2'), resetBtn: document.getElementById('resetAllBtn'), addProfileBtn: document.getElementById('addProfileBtn'), rejectTabBtn: document.getElementById('tabBtn-rejectTracker'), plDeadlineSetter: document.getElementById('plDeadlineSetterContainer'), systemAuditBtn: document.getElementById('systemAuditBtn') };
   if (currentUserRole === 'Admin') { Object.values(elements).forEach(el => { if(el) el.style.display = ''; }); if (document.getElementById('cbTxType')) document.getElementById('cbTxType').disabled = false; } 
-  else if (currentUserRole === 'Planner') { [elements.adminEntryTab, elements.poTab, elements.shipmentTab, elements.historyTab, elements.planInputArea, elements.cbAdminArea, elements.rejectTabBtn].forEach(el => { if(el) el.style.display = ''; }); [elements.plAdminArea1, elements.plAdminArea2, elements.resetBtn, elements.addProfileBtn, elements.plDeadlineSetter, elements.systemAuditBtn].forEach(el => { if(el) el.style.display = 'none'; }); if (document.getElementById('cbTxType')) { document.getElementById('cbTxType').value = 'IN'; document.getElementById('cbTxType').disabled = true; } } 
+  else if (currentUserRole === 'Planner') { [elements.adminEntryTab, elements.poTab, elements.shipmentTab, elements.historyTab, elements.planInputArea, elements.cbAdminArea, elements.cbManualDataArea, elements.rejectTabBtn].forEach(el => { if(el) el.style.display = ''; }); [elements.plAdminArea1, elements.plAdminArea2, elements.resetBtn, elements.addProfileBtn, elements.plDeadlineSetter, elements.systemAuditBtn].forEach(el => { if(el) el.style.display = 'none'; }); if (document.getElementById('cbTxType')) { document.getElementById('cbTxType').value = 'IN'; document.getElementById('cbTxType').disabled = true; } } 
   else if (currentUserRole === 'Local') { Object.values(elements).forEach(el => { if(el) el.style.display = 'none'; }); }
   
   setTimeout(() => {
@@ -76,10 +78,21 @@ function updateRoleUI() {
 }
 
 function saveMasterExtrasLocally() { const extras = masterData.map(m => ({ p: m.profile, l: m.length, i: m.itemCode, ex: m.exLength, cap: m.boxCapacity, mat: m.material })); localStorage.setItem('alumex_master_extras', JSON.stringify(extras)); }
+function saveCardboardLocally() { try { localStorage.setItem('alumex_cardboard_local', JSON.stringify(cardboardStockList || [])); } catch(e) { console.warn('Cardboard local save skipped:', e); } }
+function saveCardboardManualLocally() { try { localStorage.setItem('alumex_cardboard_manual_local', JSON.stringify(cardboardManualData || [])); } catch(e) { console.warn('Cardboard manual local save skipped:', e); } }
 function getAvailableCardboard(profile, itemCode, length) { let cIn = 0, cOut = 0; const dummyItem = { profile, itemCode, length }; cardboardStockList.forEach(c => { if (normalizeCardboardMatch(c.type, dummyItem)) { cIn += (c.incoming || 0); cOut += (c.used || 0); } }); return cIn - cOut; }
 function formatExcelDate(val) { if (!val) return new Date().toISOString().split('T')[0]; if (typeof val === 'number') { const date = new Date(Math.round((val - 25569) * 86400 * 1000)); return date.toISOString().split('T')[0]; } const d = new Date(val); if (!isNaN(d.getTime())) { const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0'); return `${y}-${m}-${day}`; } return new Date().toISOString().split('T')[0]; }
-function showToast(message, type = 'success') { const container = document.getElementById('toastContainer'); if (!container) { console[type === 'error' ? 'error' : 'log'](message); return; } const toast = document.createElement('div'); toast.className = `custom-toast toast-${type}`; toast.innerHTML = `<i class="fa-solid ${type === 'success' ? 'fa-circle-check' : (type === 'error' ? 'fa-circle-xmark' : 'fa-triangle-exclamation')}"></i> <span>${message}</span>`; container.appendChild(toast); setTimeout(() => { toast.style.animation = 'slideOutRight 0.3s forwards'; setTimeout(() => toast.remove(), 300); }, 3500); }
+function formatBalanceInt(val) {
+    const n = Number(val);
+    return Number.isFinite(n) ? Math.round(n).toLocaleString('en-US') : '0';
+}
+function formatBalanceLength(val) {
+    const n = Number.parseFloat(val);
+    if (!Number.isFinite(n)) return String(val ?? '-');
+    return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
 
+function showToast(message, type = 'success') { const container = document.getElementById('toastContainer'); if (!container) { console[type === 'error' ? 'error' : 'log'](message); return; } const toast = document.createElement('div'); toast.className = `custom-toast toast-${type}`; toast.innerHTML = `<i class="fa-solid ${type === 'success' ? 'fa-circle-check' : (type === 'error' ? 'fa-circle-xmark' : 'fa-triangle-exclamation')}"></i> <span>${message}</span>`; container.appendChild(toast); setTimeout(() => { toast.style.animation = 'slideOutRight 0.3s forwards'; setTimeout(() => toast.remove(), 300); }, 3500); }
 let confirmCallback = null; function showConfirm(message, callback) { document.getElementById('confirmMessage').innerHTML = message; document.getElementById('confirmModal').style.display = 'flex'; confirmCallback = callback; } function closeConfirmModal() { document.getElementById('confirmModal').style.display = 'none'; confirmCallback = null; } function executeConfirm() { if(confirmCallback) confirmCallback(); closeConfirmModal(); }
 function toggleTheme() { isDarkMode = !isDarkMode; if(isDarkMode) { document.body.classList.add('dark-mode'); showToast("Dark Mode", "success"); } else { document.body.classList.remove('dark-mode'); showToast("Light Mode", "success"); } renderDashboard(); }
 function toggleOverdueDetails(button) {
@@ -127,6 +140,68 @@ function exportTableToExcel(dataArray, filename, sheetName) {
     const ws = XLSX.utils.json_to_sheet(dataArray); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, sheetName); XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
+
+/* --- PDF EXPORT FUNCTIONS (AIS Tracker v2.0) --- */
+function exportDataToPdf(dataArray, filename, title, subtitle='') {
+    if(!dataArray || dataArray.length === 0) { showToast('No data to export!', 'warning'); return; }
+    if(!window.jspdf || !window.jspdf.jsPDF) { showToast('PDF library not loaded. Please check internet connection.', 'error'); return; }
+    if(typeof window.jspdf.jsPDF !== 'function') { showToast('PDF engine unavailable.', 'error'); return; }
+    const doc = new window.jspdf.jsPDF({orientation:'landscape', unit:'mm', format:'a4'});
+    doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text(String(title||'AIS Tracker Report'), 14, 14);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+    const generated = new Date().toLocaleString('en-GB');
+    doc.text(`${subtitle ? subtitle+' • ' : ''}Generated: ${generated}`, 14, 20);
+    const columns = Object.keys(dataArray[0]);
+    const body = dataArray.map(row => columns.map(k => row[k] === null || row[k] === undefined ? '' : String(row[k])));
+    if(typeof doc.autoTable !== 'function') { showToast('PDF table plugin not loaded. Please check internet connection.', 'error'); return; }
+    doc.autoTable({
+        head:[columns], body, startY:25, theme:'grid',
+        styles:{font:'helvetica',fontSize:7,cellPadding:2,overflow:'linebreak'},
+        headStyles:{fillColor:[6,78,59],textColor:255,fontStyle:'bold'},
+        alternateRowStyles:{fillColor:[240,253,244]},
+        margin:{left:10,right:10},
+        didDrawPage:function(data){
+            const page=doc.internal.getNumberOfPages();
+            doc.setFontSize(7); doc.setTextColor(100);
+            doc.text(`AIS Tracker • Page ${page}`, doc.internal.pageSize.getWidth()-45, doc.internal.pageSize.getHeight()-7);
+        }
+    });
+    doc.save(`${filename}.pdf`);
+}
+
+window.exportDashboardPdf=function(){
+    const data=masterData.map(item=>({'Profile':item.profile,'Item Code':item.itemCode,'Length (mm)':item.length,'Unit Wt':item.unitWeight,'Cut Qty':item.cutQty,'Punch Qty':item.punchQty,'Wrap Qty':item.wrapQty,'Box Qty':item.boxQty,'Crate Qty':item.crateQty,'Total Stock (Pcs)':(item.cutQty||0)+(item.punchQty||0)+(item.wrapQty||0)+(item.boxQty||0)+(item.crateQty||0)}));
+    exportDataToPdf(data,'AIS_Dashboard_Stock','AIS Tracker - Dashboard Stock','Alumex PLC • AIS');
+};
+window.exportStockPdf=window.exportDashboardPdf;
+window.exportPoPdf=function(){
+    const data=poList.map(po=>({'PO Date':po.date,'PO Number':po.poNumber,'Profile':po.profile,'Length (mm)':po.length,'Required Qty':po.orderQty}));
+    exportDataToPdf(data,'AIS_Production_Orders','AIS Tracker - Production Orders','Production Orders');
+};
+window.exportCardboardPdf=function(){
+    const data=cardboardStockList.map(c=>({'Date':c.date,'Transaction Type':c.type,'Incoming':c.incoming,'Consumed':c.used}));
+    exportDataToPdf(data,'AIS_Cardboard_History','AIS Tracker - Cardboard History','Cardboard Stock');
+};
+window.exportShipmentsPdf=function(){
+    const data=shipmentList.map(s=>({'Shipment Date':s.date,'PO Number':s.poNumber,'Profile':s.profile,'Length (mm)':s.length,'Container No':s.container,'Shipped Qty':s.shippedQty,'Remaining':s.remainingBalance}));
+    exportDataToPdf(data,'AIS_Shipment_History','AIS Tracker - Shipment History','Shipment History');
+};
+window.exportHistoryPdf=function(){
+    const data=historyLogs.map(h=>({'Date':h.date,'Time':h.timestamp,'Shift':h.shift,'Profile':h.profile,'Length (mm)':h.length,'Cut Qty':h.cutQty,'Punch Qty':h.punchQty,'Wrap Qty':h.wrapQty,'Box Qty':h.boxQty,'Crate Qty':h.crateQty}));
+    exportDataToPdf(data,'AIS_Production_History','AIS Tracker - Production History','History Logs');
+};
+window.exportRejectPdf=function(){
+    const data=rejectLogs.map(r=>({'Date':r.reject_date,'Shift':r.shift,'Location':r.location,'Stage':r.stage,'Profile':r.profile,'Item Code':r.item_code,'Length (mm)':r.length,'Reject Qty':r.pcs,'Weight (kg)':r.weight}));
+    exportDataToPdf(data,'AIS_Reject_History','AIS Tracker - Reject History','Reject Logs');
+};
+window.exportRecoverPdf=function(){
+    const cutData=recoveryCutLogs.map(r=>({'Date':r.cut_date,'Source Profile':r.source_profile,'Source Item Code':r.source_item_code,'Original Length':r.original_length,'New Profile':r.new_profile,'New Item Code':r.new_item_code,'New Length':r.new_length,'Cut Qty':r.cut_pcs,'Cut Weight (kg)':r.cut_weight}));
+    const wrapData=recoveryWrapLogs.map(r=>({'Date':r.wrap_date,'Profile':r.profile,'Item Code':r.item_code,'Length':r.length,'Available Recover Cut Pcs':r.available_cut_pcs,'Wrapping Pcs':r.wrap_pcs,'Recovery Weight (kg)':r.wrap_weight}));
+    if(cutData.length) exportDataToPdf(cutData,'AIS_Recovery_Cut_History','AIS Tracker - Recovery Cut History','Reject → Cut / Conversion');
+    if(wrapData.length) exportDataToPdf(wrapData,'AIS_Recovery_Wrapping_History','AIS Tracker - Recovery Wrapping History','Recovered Cut → Wrapping');
+    if(!cutData.length && !wrapData.length) showToast('No recovery records to export!','warning');
+};
+
 window.exportDashboardExcel = function() { const data = masterData.map(item => ({ "Profile": item.profile, "Item Code": item.itemCode, "Length (mm)": item.length, "Unit Wt": item.unitWeight, "Cut Qty": item.cutQty, "Punch Qty": item.punchQty, "Wrap Qty": item.wrapQty, "Box Qty": item.boxQty, "Crate Qty": item.crateQty, "Total Stock (Pcs)": (item.cutQty||0) + (item.punchQty||0) + (item.wrapQty||0) + (item.boxQty||0) + (item.crateQty||0) })); exportTableToExcel(data, "AIS_Dashboard_Stock", "Stock Summary"); };
 window.exportStockExcel = window.exportDashboardExcel;
 window.exportPoExcel = function() { const data = poList.map(po => ({ "PO Date": po.date, "PO Number": po.poNumber, "Profile": po.profile, "Length (mm)": po.length, "Required Qty": po.orderQty })); exportTableToExcel(data, "AIS_Production_Orders", "Orders"); };
@@ -134,7 +209,13 @@ window.exportCardboardExcel = function() { const data = cardboardStockList.map(c
 window.exportShipmentsExcel = function() { const data = shipmentList.map(s => ({ "Shipment Date": s.date, "PO Number": s.poNumber, "Profile": s.profile, "Length (mm)": s.length, "Container No": s.container, "Shipped Qty": s.shippedQty, "Remaining": s.remainingBalance })); exportTableToExcel(data, "AIS_Shipment_History", "Shipments"); };
 window.exportHistoryExcel = function() { const data = historyLogs.map(h => ({ "Date": h.date, "Time": h.timestamp, "Shift": h.shift, "Profile": h.profile, "Length (mm)": h.length, "Cut Qty": h.cutQty, "Punch Qty": h.punchQty, "Wrap Qty": h.wrapQty, "Box Qty": h.boxQty, "Crate Qty": h.crateQty })); exportTableToExcel(data, "AIS_Production_History", "History"); };
 window.exportRejectExcel = function() { const data = rejectLogs.map(r => ({ "Date": r.reject_date, "Shift": r.shift, "Location": r.location, "Stage": r.stage, "Profile": r.profile, "Item Code": r.item_code, "Length (mm)": r.length, "Reject Qty": r.pcs, "Weight (kg)": r.weight })); exportTableToExcel(data, "AIS_Reject_History", "Rejects"); };
-window.exportRecoverExcel = function() { const data = recoverLogs.map(r => ({ "Date": r.recover_date, "Profile": r.profile, "Item Code": r.item_code, "Orig Length": r.original_length, "New Length": r.new_length, "Recover Qty": r.pcs, "Weight (kg)": r.recovered_weight })); exportTableToExcel(data, "AIS_Recover_History", "Recovery"); };
+window.exportRecoverExcel = function() {
+  const cutData=recoveryCutLogs.map(r=>({"Date":r.cut_date,"Source Profile":r.source_profile,"Source Item Code":r.source_item_code,"Original Length":r.original_length,"New Profile":r.new_profile,"New Item Code":r.new_item_code,"New Length":r.new_length,"Cut Qty":r.cut_pcs,"Cut Weight (kg)":r.cut_weight}));
+  const wrapData=recoveryWrapLogs.map(r=>({"Date":r.wrap_date,"Profile":r.profile,"Item Code":r.item_code,"Length":r.length,"Available Recover Cut Pcs":r.available_cut_pcs,"Wrapping Pcs":r.wrap_pcs,"Recovery Weight (kg)":r.wrap_weight}));
+  if(cutData.length) exportTableToExcel(cutData,"AIS_Recovery_Cut_History","Recovery Cut");
+  if(wrapData.length) exportTableToExcel(wrapData,"AIS_Recovery_Wrapping_History","Recovery Wrap");
+  if(!cutData.length && !wrapData.length) showToast('No recovery records to export!','warning');
+};
 
 function injectGenericEditModal() {
     if(document.getElementById('genericEditModal')) return;
@@ -265,8 +346,8 @@ window.saveShipmentDeadline = async function() {
     } else {
         let newRec = { target_date: new Date().toISOString().split('T')[0], target_user: 'SYS_SHIPMENT_DEADLINE', priority: 'Normal', message: isoStr, status: 'Completed', action_taken: 'System Data' };
         try { 
-            let {data} = await supabaseClient.from('daily_instructions').insert([newRec]).select(); 
-            if(data && data.length > 0) dailyInstructionsList.push(data[0]);
+            const {error}=await supabaseClient.from('daily_instructions').insert([newRec]);
+            if(error) throw error; dailyInstructionsList.push({...newRec,id:-Date.now()});
         } catch(e){}
     }
     shipmentDeadline = new Date(isoStr);
@@ -292,7 +373,7 @@ window.onload = function() {
   injectGenericEditModal();
   injectCountdownUI();
   startLiveClock(); const today = new Date().toISOString().split('T')[0];
-  ['entryDate', 'poDate', 'shipmentDate', 'plDate', 'historyDateSelect', 'cbDate', 'planDate', 'recDate'].forEach(id => { if(document.getElementById(id)) document.getElementById(id).value = today; });
+  ['entryDate', 'poDate', 'shipmentDate', 'plDate', 'historyDateSelect', 'cbDate', 'cbManualDate', 'planDate', 'recDate', 'rwDate'].forEach(id => { if(document.getElementById(id)) document.getElementById(id).value = today; });
   if(document.getElementById('rejDate')) document.getElementById('rejDate').value = today;
   loadDataFromSupabase(); setupRealtimeSubscription();
 };
@@ -335,7 +416,7 @@ async function loadDataFromSupabase(isSilent = false) {
     if(!isSilent) showToast("Connecting & Syncing Data...", "warning");
     // Production-grade reader: Supabase commonly caps a response at 1,000 rows.
     // Always page through the table so older records cannot silently disappear from reports/calculations.
-    const safeFetch = async (table, options = {}) => {
+    const safeFetch = async (table, options = {}, quiet = false) => {
       const pageSize = 1000;
       const all = [];
       try {
@@ -352,21 +433,34 @@ async function loadDataFromSupabase(isSilent = false) {
         return all;
       } catch(e) {
         console.warn(`DB Fetch error for ${table}:`, e);
-        if(!isSilent) showToast(`DB Error (${table}): ${e.message}`, 'error');
+        if(!isSilent && !quiet) showToast(`DB Error (${table}): ${e.message}`, 'error');
         throw e;
       }
     };
 
+    const safeFetchOptional = async (table, options={}) => { try { return await safeFetch(table, options, true); } catch(e) { console.warn(`Optional DB table unavailable: ${table}`, e); return []; } };
     const results = await Promise.all([
-        safeFetch('master_catalog'), safeFetch('production_orders', { order: {col: 'id', asc: false} }), safeFetch('shipments', { order: {col: 'id', asc: false} }), 
-        safeFetch('packing_list', { order: {col: 'id', asc: false} }), safeFetch('history_logs', { order: {col: 'id', asc: false} }), safeFetch('reject_logs', { order: {col: 'id', asc: false} }),
-        safeFetch('recover_logs', { order: {col: 'id', asc: false} }), safeFetch('cardboard_stock', { order: {col: 'id', asc: false} }), safeFetch('daily_instructions', { order: {col: 'id', asc: false} })
+        safeFetch('master_catalog'),
+        safeFetchOptional('production_orders', { order: {col: 'id', asc: false} }),
+        safeFetchOptional('shipments', { order: {col: 'id', asc: false} }),
+        safeFetchOptional('packing_list', { order: {col: 'id', asc: false} }),
+        safeFetchOptional('history_logs', { order: {col: 'id', asc: false} }),
+        safeFetchOptional('reject_logs', { order: {col: 'id', asc: false} }),
+        safeFetchOptional('recover_logs', { order: {col: 'id', asc: false} }),
+        safeFetchOptional('cardboard_stock', { order: {col: 'id', asc: false} }),
+        safeFetchOptional('daily_instructions', { order: {col: 'id', asc: false} }),
+        safeFetchOptional('recovery_cut_logs', { order: {col: 'id', asc: false} }),
+        safeFetchOptional('recovery_wrap_logs', { order: {col: 'id', asc: false} })
     ]);
 
     let catDataRaw = results[0];
-    if (catDataRaw.length === 0) { try { const { data: seeded } = await supabaseClient.from('master_catalog').insert(INITIAL_CATALOG.map(i => ({ profile: i.profile, length: i.length, unit_weight: i.unit_weight || 0, item_code: i.item_code || '', material: i.material || '', cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0, box_capacity: 100, ex_length: '' }))).select(); catDataRaw = seeded || []; } catch(e) {} }
+    if (catDataRaw.length === 0) {
+      const seedRows=INITIAL_CATALOG.map(i => ({ profile: i.profile, length: i.length, unit_weight: i.unit_weight || 0, item_code: i.item_code || '', material: i.material || '', cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0, box_capacity: 100, ex_length: '' }));
+      try { const r=await supabaseClient.from('master_catalog').insert(seedRows); if(r.error) throw r.error; catDataRaw=seedRows.map((r,i)=>({...r,id:-100000-i})); } catch(e) { console.warn('Initial master catalog seed skipped:',e); catDataRaw=seedRows.map((r,i)=>({...r,id:-100000-i})); }
+    }
 
-    const poData = results[1], shipData = results[2], plData = results[3], logData = results[4], rjData = results[5], rcData = results[6], cbData = results[7], instData = results[8];
+    setDbStatus(true,'Supabase data sync completed.');
+    const poData = results[1], shipData = results[2], plData = results[3], logData = results[4], rjData = results[5], rcData = results[6], cbData = results[7], instData = results[8], rCutData = results[9], rWrapData = results[10];
     
     let syncRow = instData.find(i => i.target_user === 'SYS_CRATES_SYNC');
     if (syncRow && syncRow.message) {
@@ -428,7 +522,16 @@ async function loadDataFromSupabase(isSilent = false) {
     packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate 1`, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date }));
     historyLogs = logData.map(item => ({ id: item.id, date: item.log_date, shift: item.shift, profile: item.profile, length: cleanLen(item.length), cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, timestamp: item.log_time || item.created_at || new Date().toISOString() }));
     rejectLogs = rjData; recoverLogs = rcData; dailyInstructionsList = instData;
+    recoveryCutLogs = (rCutData || []).map(r => ({id:r.id,cut_date:r.cut_date,source_profile:r.source_profile,source_item_code:r.source_item_code,original_length:cleanLen(r.original_length),new_profile:r.new_profile,new_item_code:r.new_item_code,new_length:cleanLen(r.new_length),cut_pcs:Number(r.cut_pcs)||0,cut_weight:Number(r.cut_weight)||0}));
+    recoveryWrapLogs = (rWrapData || []).map(r => ({id:r.id,wrap_date:r.wrap_date,profile:r.profile,item_code:r.item_code,length:cleanLen(r.length),available_cut_pcs:Number(r.available_cut_pcs)||0,wrap_pcs:Number(r.wrap_pcs)||0,wrap_weight:Number(r.wrap_weight)||0}));
+    // Version 1 recovery rows represented CUT conversion, not actual wrapping recovery.
+    // Keep them visible as legacy cut records, but never count their old recovered_weight as monthly recovery.
+    if (recoveryCutLogs.length === 0 && recoverLogs.length) {
+      recoveryCutLogs = recoverLogs.map(r => ({id:`legacy-${r.id}`,cut_date:r.recover_date,source_profile:r.profile,source_item_code:r.item_code,original_length:cleanLen(r.original_length),new_profile:r.profile,new_item_code:r.item_code,new_length:cleanLen(r.new_length),cut_pcs:Number(r.pcs)||0,cut_weight:Number(r.recovered_weight)||0,legacy:true}));
+    }
     if (cbData && cbData.length > 0) { cardboardStockList = cbData.map(c => ({ id: c.id, db_id: c.id, date: c.cb_date, type: c.cb_type, incoming: c.incoming || 0, used: c.used || 0, timestamp: c.created_at || new Date().toISOString() })); saveCardboardLocally(); } else { const localCb = localStorage.getItem('alumex_cardboard_local'); if(localCb) cardboardStockList = JSON.parse(localCb); }
+    const manualRow = (instData || []).find(r => r.target_user === 'SYS_CARDBOARD_MANUAL');
+    if (manualRow && manualRow.message) { try { cardboardManualData = JSON.parse(manualRow.message) || []; } catch(e) { cardboardManualData=[]; } saveCardboardManualLocally(); } else { const localManual = localStorage.getItem('alumex_cardboard_manual_local'); if(localManual) { try { cardboardManualData = JSON.parse(localManual) || []; } catch(e) { cardboardManualData=[]; } } }
 
     const profileLookup = new Map();
     masterData.forEach(m => profileLookup.set(`${String(m.profile).trim()}_${cleanLen(m.length)}`, m));
@@ -440,7 +543,7 @@ async function loadDataFromSupabase(isSilent = false) {
     // and must never rebuild current stock after an Admin reset. This prevents reset quantities
     // from reappearing on the next sync/reload.
     if(!isSilent && masterData.length > 0) showToast(`Database Sync Complete!`, "success");
-  } catch (err) { console.error(err); } finally { 
+  } catch (err) { console.error('Supabase data sync error:', err); setDbStatus(false, err?.message || 'Supabase data sync failed.'); if(!isSilent) showToast(`Database sync failed: ${err?.message || 'Unknown error'}`, 'error'); } finally { 
       isFetchingData = false;
       populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateShipmentPoDropdown(); populatePlPoDropdown(); populateCbProfileDropdown(); populateRejProfile(); populateRecProfile();
       if(currentUserRole) { 
@@ -463,9 +566,9 @@ window.saveManualCratesToDB = async function() {
         existing.message=jsonStr;
       } else {
         const newRec={target_date:new Date().toISOString().split('T')[0],target_user:'SYS_CRATES_SYNC',priority:'Normal',message:jsonStr,status:'Completed',action_taken:'System Data'};
-        const {data,error}=await supabaseClient.from('daily_instructions').insert([newRec]).select();
+        const {error}=await supabaseClient.from('daily_instructions').insert([newRec]);
         if(error) throw new Error(error.message);
-        if(data?.length) dailyInstructionsList.push(data[0]);
+        dailyInstructionsList.push({...newRec,id:-Date.now()});
       }
       localStorage.setItem('manual_crates',jsonStr);
       return true;
@@ -505,7 +608,7 @@ async function savePackingShipmentStates() {
     let existing=dailyInstructionsList.find(i=>i.target_user==='SYS_PL_SHIPMENT_STATE');
     try {
         if(existing) { existing.message=jsonStr; await supabaseClient.from('daily_instructions').update({message:jsonStr}).eq('id',existing.id); }
-        else { const {data}=await supabaseClient.from('daily_instructions').insert([{target_date:new Date().toISOString().split('T')[0],target_user:'SYS_PL_SHIPMENT_STATE',priority:'Normal',message:jsonStr,status:'Completed',action_taken:'System Data'}]).select(); if(data?.length) dailyInstructionsList.push(data[0]); }
+        else { const newRec={target_date:new Date().toISOString().split('T')[0],target_user:'SYS_PL_SHIPMENT_STATE',priority:'Normal',message:jsonStr,status:'Completed',action_taken:'System Data'}; const {error}=await supabaseClient.from('daily_instructions').insert([newRec]); if(error) throw error; dailyInstructionsList.push({...newRec,id:-Date.now()}); }
     } catch(e) { showToast('Shipment status could not be synced.','warning'); }
 }
 function ensurePackingSelection() {
@@ -643,13 +746,20 @@ async function saveRejectEntry() {
     const nextCut=Math.max(0,(matched.cutQty||0)-(punchStage?pcs:0));
     const nextPunch=Math.max(0,(matched.punchQty||0)-(wrapStage?pcs:0));
     const entry={reject_date:d,shift:sh,team:tm,location:loc,stage:stg,profile:p,item_code:ic,length:l,pcs,weight:wt};
-    const {data,error}=await supabaseClient.from('reject_logs').insert([entry]).select();
-    if(error) throw new Error(`Reject save failed: ${error.message}`);
-    if(matched.db_id && (punchStage||wrapStage)){
-      const {error:stockError}=await supabaseClient.from('master_catalog').update({cut_qty:nextCut,punch_qty:nextPunch}).eq('id',matched.db_id);
-      if(stockError){ if(data?.[0]?.id) await supabaseClient.from('reject_logs').delete().eq('id', data[0].id); throw new Error(`Reject stock update failed: ${stockError.message}`); }
+    let stockChanged=false;
+    try {
+      if(matched.db_id && (punchStage||wrapStage)){
+        const {error:stockError}=await supabaseClient.from('master_catalog').update({cut_qty:nextCut,punch_qty:nextPunch}).eq('id',matched.db_id);
+        if(stockError) throw new Error(`Reject stock update failed: ${stockError.message}`);
+        stockChanged=true;
+      }
+      const {error:insertError}=await supabaseClient.from('reject_logs').insert([entry]);
+      if(insertError) throw new Error(`Reject save failed: ${insertError.message}`);
+    } catch(err){
+      if(stockChanged && matched.db_id){ try{ await supabaseClient.from('master_catalog').update({cut_qty:matched.cutQty,punch_qty:matched.punchQty}).eq('id',matched.db_id); }catch(rb){ console.error('Reject stock rollback failed:',rb); } }
+      throw err;
     }
-    matched.cutQty=nextCut; matched.punchQty=nextPunch; rejectLogs.unshift({...entry,id:data?.[0]?.id||Date.now()});
+    matched.cutQty=nextCut; matched.punchQty=nextPunch; rejectLogs.unshift({...entry,id:-Date.now()});
     renderRejectTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable();
     showToast('Reject saved successfully.','success'); document.getElementById('rejectEntryForm').reset(); document.getElementById('rejDate').value=d;
   } catch(e){ console.error(e); showToast(e.message||'Reject save failed.','error'); } finally { isAppBusy=false; }
@@ -683,276 +793,388 @@ function getRecoveryMasterRows(profile, itemCode){
     .map(m => ({...m, _lengthNum: parseFloat(cleanLen(m.length))}))
     .filter(m => Number.isFinite(m._lengthNum));
 }
+function getAllRecoveryTargets(originalLength){
+  const l=parseFloat(cleanLen(originalLength)||0);
+  return masterData.map(m=>({...m,_lengthNum:parseFloat(cleanLen(m.length))})).filter(m=>Number.isFinite(m._lengthNum)&&m._lengthNum<l);
+}
+function getLegacyCutBalance(profile,itemCode,length){
+  let total=0;
+  recoverLogs.forEach(r=>{ if(recKey(r.profile)===recKey(profile)&&recKey(r.item_code)===recKey(itemCode)&&cleanLen(r.original_length)===cleanLen(length)) total+=Number(r.pcs)||0; });
+  return total;
+}
 function getRejectBalance(profile, itemCode, originalLength){
-  const p = recKey(profile), ic = recKey(itemCode), l = cleanLen(originalLength);
-  let rejected = 0, recovered = 0;
-  rejectLogs.forEach(r => { if(recKey(r.profile)===p && recKey(r.item_code)===ic && cleanLen(r.length)===l) rejected += Number(r.pcs)||0; });
-  recoverLogs.forEach(r => { if(recKey(r.profile)===p && recKey(r.item_code)===ic && cleanLen(r.original_length)===l) recovered += Number(r.pcs)||0; });
-  return Math.max(0, rejected - recovered);
+  const p=recKey(profile), ic=recKey(itemCode), l=cleanLen(originalLength);
+  let rejected=0, converted=0;
+  rejectLogs.forEach(r=>{if(recKey(r.profile)===p&&recKey(r.item_code)===ic&&cleanLen(r.length)===l) rejected+=Number(r.pcs)||0;});
+  recoveryCutLogs.forEach(r=>{if(recKey(r.source_profile)===p&&recKey(r.source_item_code)===ic&&cleanLen(r.original_length)===l) converted+=Number(r.cut_pcs)||0;});
+  // Legacy v1 rows are only used when they are not already represented by the new table.
+  if(recoveryCutLogs.length===0) converted += getLegacyCutBalance(profile,itemCode,originalLength);
+  return Math.max(0,rejected-converted);
 }
-function populateRecProfile() {
-  const sel = document.getElementById('recProfile'); if(!sel) return;
-  sel.innerHTML = '<option value="">-- Choose Profile --</option>';
-  const profiles = [...new Set(rejectLogs.map(r=>String(r.profile||'').trim()).filter(Boolean))];
-  profiles.forEach(profile => {
-    const hasBalance = rejectLogs.some(r => recKey(r.profile)===recKey(profile) && getRejectBalance(profile, r.item_code, r.length) > 0);
-    if(hasBalance) sel.appendChild(new Option(profile, profile));
-  });
-  // If only one profile currently has recoverable rejects, select it automatically.
-  if(sel.options.length === 2){ sel.selectedIndex = 1; onRecProfileSelect(); }
+function getRecoveryCutStock(profile,itemCode,length){
+  const p=recKey(profile),ic=recKey(itemCode),l=cleanLen(length);
+  let cut=0,wrapped=0;
+  recoveryCutLogs.forEach(r=>{if(recKey(r.new_profile)===p&&recKey(r.new_item_code)===ic&&cleanLen(r.new_length)===l) cut+=Number(r.cut_pcs)||0;});
+  // Legacy recovery rows created virtual cut stock in v1.
+  if(recoveryCutLogs.length===0) cut += recoverLogs.reduce((a,r)=>a+(recKey(r.profile)===p&&recKey(r.item_code)===ic&&cleanLen(r.new_length)===l?(Number(r.pcs)||0):0),0);
+  recoveryWrapLogs.forEach(r=>{if(recKey(r.profile)===p&&recKey(r.item_code)===ic&&cleanLen(r.length)===l) wrapped+=Number(r.wrap_pcs)||0;});
+  return Math.max(0,cut-wrapped);
 }
-function onRecProfileSelect() {
-  const p = document.getElementById('recProfile').value;
-  const sel = document.getElementById('recItemCode');
-  sel.innerHTML = '<option value="">-- Choose Item Code --</option>';
-  document.getElementById('recOrigLength').innerHTML = '<option value="">-- Original Reject Length --</option>';
-  document.getElementById('recNewLength').innerHTML = '<option value="">-- Select New Cut Length --</option>';
-  document.getElementById('recAvailableDisplay').textContent = '0 Pcs / 0.00 kg';
-  document.getElementById('recAvailableDisplay').dataset.max = 0;
-  document.getElementById('recWeight').value = '';
-  if(!p) return;
-  const itemCodes = [...new Set(rejectLogs.filter(r=>recKey(r.profile)===recKey(p)).map(r=>String(r.item_code||'').trim()).filter(Boolean))];
-  itemCodes.forEach(ic => {
-    const hasBalance = rejectLogs.some(r => recKey(r.profile)===recKey(p) && recKey(r.item_code)===recKey(ic) && getRejectBalance(p, ic, r.length)>0);
-    if(hasBalance) sel.appendChild(new Option(ic, ic));
-  });
-  if(sel.options.length === 2){ sel.selectedIndex = 1; onRecItemCodeSelect(); }
-}
-function onRecItemCodeSelect() {
-  const p = document.getElementById('recProfile').value;
-  const ic = document.getElementById('recItemCode').value;
-  const sel = document.getElementById('recOrigLength');
-  sel.innerHTML = '<option value="">-- Original Reject Length --</option>';
-  document.getElementById('recNewLength').innerHTML = '<option value="">-- Select New Cut Length --</option>';
-  document.getElementById('recAvailableDisplay').textContent = '0 Pcs / 0.00 kg';
-  document.getElementById('recAvailableDisplay').dataset.max = 0;
-  document.getElementById('recWeight').value = '';
-  if(!p||!ic) return;
-  const lengths = [...new Set(rejectLogs.filter(r=>recKey(r.profile)===recKey(p) && recKey(r.item_code)===recKey(ic)).map(r=>cleanLen(r.length)).filter(Boolean))];
-  lengths.sort((a,b)=>(parseFloat(a)||0)-(parseFloat(b)||0));
-  lengths.forEach(l => { const balance=getRejectBalance(p,ic,l); if(balance>0) sel.appendChild(new Option(`${l} mm  •  ${balance} Pcs available`, l)); });
-  if(sel.options.length === 2){ sel.selectedIndex = 1; showRecAvailable(); }
-}
-function showRecAvailable() {
-  const p = document.getElementById('recProfile').value;
-  const ic = document.getElementById('recItemCode').value;
-  const l = cleanLen(document.getElementById('recOrigLength').value);
-  const newSel = document.getElementById('recNewLength');
-  const maxEl = document.getElementById('recAvailableDisplay');
-  const weightEl = document.getElementById('recWeight');
-  if(!newSel) return;
-  newSel.innerHTML = '<option value="">-- Select New Cut Length --</option>';
-  weightEl.value = '';
-  if(!p||!ic||!l) { maxEl.textContent = '0 Pcs / 0.00 kg'; maxEl.dataset.max = 0; return; }
+function getRecoveryUnitWeight(profile,itemCode,length){
+  const p=recKey(profile), ic=recKey(itemCode), l=cleanLen(length);
+  const direct=masterData.find(m=>recKey(m.profile)===p&&recKey(m.itemCode)===ic&&cleanLen(m.length)===l);
+  if(direct && Number(direct.unitWeight)>0) return Number(direct.unitWeight);
 
-  const balPcs = getRejectBalance(p,ic,l);
-  const original = getRecoveryMasterRows(p,ic).find(m => cleanLen(m.length)===l);
-  const originalWt = original ? (Number(original.unitWeight)||0) : 0;
-  const originalBalanceWt = balPcs * originalWt;
-  maxEl.innerHTML = `<strong>${balPcs} Pcs</strong> <span style="opacity:.8">/ ${originalBalanceWt.toFixed(2)} kg recoverable from ${l} mm</span>`;
-  maxEl.dataset.max = balPcs;
+  // Recovery-cut stock can exist even when the corresponding Master Catalog row
+  // was later removed/changed. In that case use the unit weight captured when
+  // the recovery cut was created.
+  let cutPcs=0, cutWeight=0;
+  recoveryCutLogs.forEach(r=>{
+    if(recKey(r.new_profile)===p&&recKey(r.new_item_code)===ic&&cleanLen(r.new_length)===l){
+      const pcs=Number(r.cut_pcs)||0; const wt=Number(r.cut_weight)||0;
+      if(pcs>0 && wt>0){ cutPcs+=pcs; cutWeight+=wt; }
+    }
+  });
+  if(cutPcs>0 && cutWeight>0) return cutWeight/cutPcs;
 
-  // IMPORTANT: recovery choices come ONLY from Master Catalog and MUST be shorter than the reject length.
-  const shorter = getRecoveryMasterRows(p,ic)
-    .filter(m => m._lengthNum < (parseFloat(l)||0))
-    .sort((a,b) => (recKey(a.itemCode)===recKey(ic)?0:1) - (recKey(b.itemCode)===recKey(ic)?0:1) || a._lengthNum-b._lengthNum);
-  if(shorter.length===0){
-    const o=document.createElement('option'); o.value=''; o.textContent='No shorter Master Catalog length available'; o.disabled=true; newSel.appendChild(o);
-    return;
+  // Last fallback: estimate weight/pc from the original reject profile by
+  // length ratio. This keeps legacy recovery records usable when the target
+  // Master Catalog row is missing.
+  let estimate=0;
+  recoveryCutLogs.forEach(r=>{
+    if(recKey(r.new_profile)===p&&recKey(r.new_item_code)===ic&&cleanLen(r.new_length)===l){
+      const src=masterData.find(m=>recKey(m.profile)===recKey(r.source_profile)&&recKey(m.itemCode)===recKey(r.source_item_code)&&cleanLen(m.length)===cleanLen(r.original_length));
+      const srcUw=Number(src?.unitWeight)||0;
+      const ol=parseFloat(cleanLen(r.original_length)), nl=parseFloat(l);
+      if(srcUw>0 && ol>0 && nl>0) estimate=srcUw*(nl/ol);
+    }
+  });
+  return estimate;
+}
+function getRecoveryCutWeight(profile,itemCode,length){
+  return getRecoveryCutStock(profile,itemCode,length)*getRecoveryUnitWeight(profile,itemCode,length);
+}
+function populateRecProfile(){
+  const sel=document.getElementById('recProfile'); if(!sel)return;
+  sel.innerHTML='<option value="">-- Choose Profile --</option>';
+  const profiles=[...new Set(rejectLogs.map(r=>String(r.profile||'').trim()).filter(Boolean))];
+  profiles.forEach(profile=>{
+    const ok=rejectLogs.some(r=>recKey(r.profile)===recKey(profile)&&getRejectBalance(profile,r.item_code,r.length)>0);
+    if(ok)sel.appendChild(new Option(profile,profile));
+  });
+  if(sel.options.length===2){sel.selectedIndex=1;onRecProfileSelect();}
+}
+function onRecProfileSelect(){
+  const p=document.getElementById('recProfile')?.value||'', sel=document.getElementById('recItemCode');
+  if(!sel)return;
+  sel.innerHTML='<option value="">-- Choose Item Code --</option>';
+  document.getElementById('recOrigLength').innerHTML='<option value="">-- Original Reject Length --</option>';
+  resetRecoveryCutTarget();
+  if(!p)return;
+  [...new Set(rejectLogs.filter(r=>recKey(r.profile)===recKey(p)).map(r=>String(r.item_code||'').trim()).filter(Boolean))].forEach(ic=>{
+    if(rejectLogs.some(r=>recKey(r.profile)===recKey(p)&&recKey(r.item_code)===recKey(ic)&&getRejectBalance(p,ic,r.length)>0)) sel.appendChild(new Option(ic,ic));
+  });
+  if(sel.options.length===2){sel.selectedIndex=1;onRecItemCodeSelect();}
+}
+function onRecItemCodeSelect(){
+  const p=document.getElementById('recProfile')?.value||'',ic=document.getElementById('recItemCode')?.value||'',sel=document.getElementById('recOrigLength');
+  sel.innerHTML='<option value="">-- Original Reject Length --</option>'; resetRecoveryCutTarget(); if(!p||!ic)return;
+  const lengths=[...new Set(rejectLogs.filter(r=>recKey(r.profile)===recKey(p)&&recKey(r.item_code)===recKey(ic)).map(r=>cleanLen(r.length)).filter(Boolean))].sort((a,b)=>(parseFloat(a)||0)-(parseFloat(b)||0));
+  lengths.forEach(l=>{const bal=getRejectBalance(p,ic,l);if(bal>0)sel.appendChild(new Option(`${l} mm • ${bal} Pcs available`,l));});
+  if(sel.options.length===2){sel.selectedIndex=1;showRecAvailable();}
+}
+function resetRecoveryCutTarget(){
+  ['recNewProfile','recNewItemCode','recNewLength'].forEach(id=>{const e=document.getElementById(id);if(e)e.innerHTML='<option value="">-- Select --</option>';});
+  ['recAvailableDisplay','recCutWeight'].forEach(id=>{const e=document.getElementById(id);if(e){e.textContent=id==='recAvailableDisplay'?'0 Pcs / 0.00 kg':'';if('value' in e)e.value='';e.dataset.max='0';}});
+  const pcs=document.getElementById('recPcs');if(pcs)pcs.value='';
+}
+function showRecAvailable(){
+  const p=document.getElementById('recProfile')?.value||'',ic=document.getElementById('recItemCode')?.value||'',l=cleanLen(document.getElementById('recOrigLength')?.value||''),maxEl=document.getElementById('recAvailableDisplay');
+  resetRecoveryCutTarget(); if(!p||!ic||!l)return;
+  const bal=getRejectBalance(p,ic,l), src=masterData.find(m=>recKey(m.profile)===recKey(p)&&recKey(m.itemCode)===recKey(ic)&&cleanLen(m.length)===l),wt=bal*(Number(src?.unitWeight)||0);
+  maxEl.innerHTML=`<strong>${bal} Pcs</strong> <span style="opacity:.8">/ ${wt.toFixed(2)} kg rejected material available</span>`;maxEl.dataset.max=bal;
+  populateRecTargetProfiles(l);
+}
+function populateRecTargetProfiles(originalLength){
+  const sel=document.getElementById('recNewProfile'); if(!sel)return;
+  sel.innerHTML='<option value="">-- Select New Cut Profile --</option>';
+  [...new Set(getAllRecoveryTargets(originalLength).map(m=>String(m.profile||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})).forEach(p=>sel.appendChild(new Option(p,p)));
+  const source=document.getElementById('recProfile')?.value||'';
+  if([...sel.options].some(o=>o.value===source)){sel.value=source;onRecNewProfileSelect();}
+}
+function onRecNewProfileSelect(){
+  const p=document.getElementById('recNewProfile')?.value||'',icSel=document.getElementById('recNewItemCode'),ol=cleanLen(document.getElementById('recOrigLength')?.value||'');
+  icSel.innerHTML='<option value="">-- Select New Item Code --</option>';document.getElementById('recNewLength').innerHTML='<option value="">-- Select New Cut Length --</option>';document.getElementById('recCutWeight').value='';
+  if(!p||!ol)return;
+  [...new Set(getAllRecoveryTargets(ol).filter(m=>recKey(m.profile)===recKey(p)).map(m=>String(m.itemCode||'').trim()).filter(Boolean))].forEach(ic=>icSel.appendChild(new Option(ic,ic)));
+  if(icSel.options.length===2){icSel.selectedIndex=1;onRecNewItemSelect();}
+}
+function onRecNewItemSelect(){
+  const p=document.getElementById('recNewProfile')?.value||'',ic=document.getElementById('recNewItemCode')?.value||'',ol=cleanLen(document.getElementById('recOrigLength')?.value||''),sel=document.getElementById('recNewLength');
+  sel.innerHTML='<option value="">-- Select New Cut Length --</option>';document.getElementById('recCutWeight').value='';if(!p||!ic||!ol)return;
+  getAllRecoveryTargets(ol).filter(m=>recKey(m.profile)===recKey(p)&&recKey(m.itemCode)===recKey(ic)).sort((a,b)=>a._lengthNum-b._lengthNum).forEach(m=>{const o=new Option(`${m.length} mm • ${Number(m.unitWeight||0).toFixed(4)} kg/pc`,cleanLen(m.length));o.dataset.unitWeight=Number(m.unitWeight||0);sel.appendChild(o);});
+  if(sel.options.length===2){sel.selectedIndex=1;calcRecCutWeight();}
+}
+function calcRecCutWeight(){
+  const p=document.getElementById('recNewProfile')?.value||'',ic=document.getElementById('recNewItemCode')?.value||'',l=cleanLen(document.getElementById('recNewLength')?.value||''),pcs=parseInt(document.getElementById('recPcs')?.value)||0,el=document.getElementById('recCutWeight');if(!el)return;
+  const max=parseInt(document.getElementById('recAvailableDisplay')?.dataset.max)||0;if(pcs<=0||pcs>max||!p||!ic||!l){el.value='';return;}const uw=getRecoveryUnitWeight(p,ic,l);el.value=(pcs*uw).toFixed(2);
+}
+async function saveRecoverEntry(){
+  if(isAppBusy)return;isAppBusy=true;
+  try{
+    if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return;
+    const d=document.getElementById('recDate').value,sp=document.getElementById('recProfile').value,sic=document.getElementById('recItemCode').value,ol=cleanLen(document.getElementById('recOrigLength').value),np=document.getElementById('recNewProfile').value,nic=document.getElementById('recNewItemCode').value,nl=cleanLen(document.getElementById('recNewLength').value),pcs=parseInt(document.getElementById('recPcs').value)||0,max=parseInt(document.getElementById('recAvailableDisplay').dataset.max)||0;
+    if(!d||!sp||!sic||!ol||!np||!nic||!nl||pcs<=0)return showToast('Please complete all Recovery Cut fields.','warning');
+    if(pcs>max)return showToast(`Recovery Cut quantity cannot exceed ${max} available reject pcs.`,'warning');
+    if(parseFloat(nl)>=parseFloat(ol))return showToast('New Cut Length must be shorter than Original Reject Length.','warning');
+    const target=masterData.find(m=>recKey(m.profile)===recKey(np)&&recKey(m.itemCode)===recKey(nic)&&cleanLen(m.length)===nl);
+    const targetUnitWeight=Number(target?.unitWeight)||getRecoveryUnitWeight(np,nic,nl);
+    if(targetUnitWeight<=0)return showToast('Cannot calculate Recovery Cut weight because the selected profile/length has no unit weight in Master Catalog.','warning');
+    const cutWeight=parseFloat((pcs*targetUnitWeight).toFixed(2));
+    const entry={cut_date:d,source_profile:sp,source_item_code:sic,original_length:ol,new_profile:np,new_item_code:nic,new_length:nl,cut_pcs:pcs,cut_weight:cutWeight};
+    const {error}=await supabaseClient.from('recovery_cut_logs').insert([entry]);if(error)throw new Error(`Recovery Cut save failed: ${error.message}`);
+    recoveryCutLogs.unshift({...entry,id:-Date.now()});renderRecoverTable();renderDashboard();showRecAvailable();renderRecoveryCutStockTable();showToast(`${pcs} pcs converted to ${np} / ${nl} mm. Cut stock was NOT added to normal production stock.`,'success');
+    document.getElementById('rejectRecoverForm').reset();document.getElementById('recDate').value=d;populateRecProfile();
+  }catch(e){console.error(e);showToast(e.message||'Recovery Cut save failed.','error');}finally{isAppBusy=false;}
+}
+function renderRecoveryCutStockTable(){
+  const tb=document.getElementById('recoveryCutStockBody');if(!tb)return;const groups=new Map();
+  recoveryCutLogs.forEach(r=>{const k=`${recKey(r.new_profile)}|${recKey(r.new_item_code)}|${cleanLen(r.new_length)}`;if(!groups.has(k))groups.set(k,{profile:r.new_profile,item_code:r.new_item_code,length:r.new_length,cut:0});groups.get(k).cut+=Number(r.cut_pcs)||0;});
+  recoveryWrapLogs.forEach(r=>{const k=`${recKey(r.profile)}|${recKey(r.item_code)}|${cleanLen(r.length)}`;if(!groups.has(k))groups.set(k,{profile:r.profile,item_code:r.item_code,length:r.length,cut:0});groups.get(k).wrapped=(groups.get(k).wrapped||0)+(Number(r.wrap_pcs)||0);});
+  if(!groups.size){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:24px;">No Recover Cut Stock Available.</td></tr>';return;}
+  let html='';[...groups.values()].forEach(g=>{const available=Math.max(0,g.cut-(g.wrapped||0)),m=masterData.find(x=>recKey(x.profile)===recKey(g.profile)&&recKey(x.itemCode)===recKey(g.item_code)&&cleanLen(x.length)===cleanLen(g.length)),uw=getRecoveryUnitWeight(g.profile,g.item_code,g.length);html+=`<tr><td><b>${g.profile}</b></td><td>${g.item_code}</td><td>${g.length} mm</td><td>${g.cut||0}</td><td>${g.wrapped||0}</td><td><b style="color:#047857">${available} Pcs</b></td><td>${(available*uw).toFixed(2)} kg</td></tr>`;});tb.innerHTML=html;
+}
+function populateRecoverWrapProfile(){
+  const sel=document.getElementById('rwProfile');if(!sel)return;sel.innerHTML='<option value="">-- Choose Recover Cut Profile --</option>';
+  const keys=new Map();recoveryCutLogs.forEach(r=>{const k=`${recKey(r.new_profile)}|${recKey(r.new_item_code)}|${cleanLen(r.new_length)}`;if(getRecoveryCutStock(r.new_profile,r.new_item_code,r.new_length)>0)keys.set(k,{p:r.new_profile,i:r.new_item_code,l:r.new_length});});
+  keys.forEach(v=>sel.appendChild(new Option(`${v.p} • ${v.i} • ${v.l} mm`,JSON.stringify(v))));if(sel.options.length===2){sel.selectedIndex=1;onRecoverWrapProfileSelect();}
+}
+function onRecoverWrapProfileSelect(){
+  const val=document.getElementById('rwProfile')?.value||'',availEl=document.getElementById('rwAvailable'),wEl=document.getElementById('rwWeight'),pcsEl=document.getElementById('rwPcs');if(wEl)wEl.value='';if(pcsEl)pcsEl.value='';
+  if(!val){if(availEl)availEl.textContent='0 Pcs / 0.00 kg';return;}const v=JSON.parse(val),available=getRecoveryCutStock(v.p,v.i,v.l),wt=getRecoveryCutWeight(v.p,v.i,v.l);if(availEl){availEl.textContent=`${available} Pcs / ${wt.toFixed(2)} kg available`;availEl.dataset.max=available;availEl.dataset.profile=v.p;availEl.dataset.item=v.i;availEl.dataset.length=v.l;}
+}
+function calcRecoverWrapWeight(){const max=parseInt(document.getElementById('rwAvailable')?.dataset.max)||0,pcs=parseInt(document.getElementById('rwPcs')?.value)||0,el=document.getElementById('rwWeight');const p=document.getElementById('rwAvailable')?.dataset.profile||'',i=document.getElementById('rwAvailable')?.dataset.item||'',l=document.getElementById('rwAvailable')?.dataset.length||'';if(!el)return;if(pcs<=0||pcs>max){el.value='';return;}const m=masterData.find(x=>recKey(x.profile)===recKey(p)&&recKey(x.itemCode)===recKey(i)&&cleanLen(x.length)===cleanLen(l));el.value=(pcs*(Number(m?.unitWeight)||0)).toFixed(2);}
+async function saveRecoverWrapEntry(){
+  if(isAppBusy)return;
+  isAppBusy=true;
+  try{
+    if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return;
+    const d=document.getElementById('rwDate').value,
+      avail=document.getElementById('rwAvailable'),
+      pcs=parseInt(document.getElementById('rwPcs').value)||0,
+      max=parseInt(avail.dataset.max)||0,
+      p=avail.dataset.profile||'',
+      i=avail.dataset.item||'',
+      l=cleanLen(avail.dataset.length||'');
+
+    if(!d||!p||!i||!l||pcs<=0)return showToast('Please select recover cut stock and enter wrapping pcs.','warning');
+    if(pcs>max)return showToast(`Wrapping quantity cannot exceed ${max} available recover cut pcs.`,'warning');
+
+    const m=masterData.find(x=>recKey(x.profile)===recKey(p)&&recKey(x.itemCode)===recKey(i)&&cleanLen(x.length)===l);
+    const unitWeight=getRecoveryUnitWeight(p,i,l);
+    if(unitWeight<=0)return showToast('Recovery Cut weight is unavailable. Add the matching profile/length unit weight to Master Catalog, then try again.','warning');
+
+    const wt=parseFloat((pcs*unitWeight).toFixed(2));
+    const previousWrapQty=Number(m?.wrapQty)||0;
+    const nextWrapQty=previousWrapQty+pcs;
+    const entry={wrap_date:d,profile:p,item_code:i,length:l,available_cut_pcs:max,wrap_pcs:pcs,wrap_weight:wt};
+
+    // Save the recovery transaction first. If the matching Master Catalog row
+    // exists, also add the quantity to Wrapping Stage stock. If the row is
+    // missing, recovery is still recorded because recover-cut stock is a
+    // separate virtual stock stream and must not be blocked by catalog drift.
+    let stockChanged=false;
+    try{
+      if(m?.db_id){
+        const {error:stockError}=await supabaseClient.from('master_catalog').update({wrap_qty:nextWrapQty}).eq('id',m.db_id);
+        if(stockError)throw new Error(`Wrapping Stage Stock update failed: ${stockError.message}`);
+        stockChanged=true;
+      }
+      const {error:insertError}=await supabaseClient.from('recovery_wrap_logs').insert([entry]);
+      if(insertError)throw new Error(`Recovery Wrapping save failed: ${insertError.message}`);
+      if(m) m.wrapQty=nextWrapQty;
+    }catch(saveErr){
+      if(stockChanged && m?.db_id){ try{ await supabaseClient.from('master_catalog').update({wrap_qty:previousWrapQty}).eq('id',m.db_id); }catch(rb){ console.error('Recovery wrapping stock rollback failed:',rb); } }
+      throw saveErr;
+    }
+
+    recoveryWrapLogs.unshift({...entry,id:-Date.now()});
+    renderRecoverTable();
+    renderRecoveryCutStockTable();
+    populateRecoverWrapProfile();
+    renderProfileSummaryTable();
+    renderDashboard();
+    renderBalanceWorkTable();
+    showToast(`${pcs} pcs wrapped from recover cut stock. ${wt.toFixed(2)} kg counted as Recovery Weight and ${pcs} pcs added to ${p} / ${l} mm Wrapping Stage Stock.`,'success');
+    document.getElementById('recoverWrapForm').reset();
+    document.getElementById('rwDate').value=d;
+  }catch(e){
+    console.error(e);
+    showToast(e.message||'Recovery Wrapping save failed.','error');
+  }finally{
+    isAppBusy=false;
   }
-  shorter.forEach(m => {
-    const codeLabel = recKey(m.itemCode) && recKey(m.itemCode)!==recKey(ic) ? ` • ${m.itemCode}` : '';
-    const opt = new Option(`${m.length} mm${codeLabel}  •  ${Number(m.unitWeight||0).toFixed(4)} kg/pc`, cleanLen(m.length));
-    opt.dataset.unitWeight = Number(m.unitWeight||0);
-    newSel.appendChild(opt);
+}
+async function deleteRecoveryCutItem(id){if(currentUserRole!=='Admin')return;const row=recoveryCutLogs.find(r=>String(r.id)===String(id));if(!row)return;showConfirm('Delete this Recovery Cut record?',async()=>{try{const {error}=await supabaseClient.from('recovery_cut_logs').delete().eq('id',id);if(error)throw new Error(error.message);recoveryCutLogs=recoveryCutLogs.filter(r=>String(r.id)!==String(id));renderRecoverTable();renderRecoveryCutStockTable();populateRecProfile();populateRecoverWrapProfile();renderDashboard();showToast('Recovery Cut record deleted.','success');}catch(e){showToast(e.message||'Delete failed.','error');}});}
+async function deleteRecoveryWrapItem(id){
+  if(currentUserRole!=='Admin')return;
+  const row=recoveryWrapLogs.find(r=>String(r.id)===String(id));
+  if(!row)return;
+  showConfirm('Delete this Recovery Wrapping record?',async()=>{
+    try{
+      const m=masterData.find(x=>recKey(x.profile)===recKey(row.profile)&&recKey(x.itemCode)===recKey(row.item_code)&&cleanLen(x.length)===cleanLen(row.length));
+      const currentWrapQty=Number(m?.wrapQty)||0;
+      const removeQty=Number(row.wrap_pcs)||0;
+      const nextWrapQty=Math.max(0,currentWrapQty-removeQty);
+
+      if(m?.db_id){
+        const {error:stockError}=await supabaseClient.from('master_catalog').update({wrap_qty:nextWrapQty}).eq('id',m.db_id);
+        if(stockError)throw new Error(`Wrapping Stage Stock reversal failed: ${stockError.message}`);
+        m.wrapQty=nextWrapQty;
+      }
+
+      const {error}=await supabaseClient.from('recovery_wrap_logs').delete().eq('id',id);
+      if(error){
+        if(m?.db_id)await supabaseClient.from('master_catalog').update({wrap_qty:currentWrapQty}).eq('id',m.db_id);
+        throw new Error(error.message);
+      }
+
+      recoveryWrapLogs=recoveryWrapLogs.filter(r=>String(r.id)!==String(id));
+      renderRecoverTable();
+      renderRecoveryCutStockTable();
+      populateRecoverWrapProfile();
+      renderProfileSummaryTable();
+      renderDashboard();
+      renderBalanceWorkTable();
+      showToast('Recovery Wrapping record deleted. Wrapping Stage Stock reversed and recover cut stock balance restored.','success');
+    }catch(e){showToast(e.message||'Delete failed.','error');}
   });
 }
-function calcRecWeight() {
-  const p = document.getElementById('recProfile').value;
-  const ic = document.getElementById('recItemCode').value;
-  const ol = cleanLen(document.getElementById('recOrigLength').value);
-  const nl = cleanLen(document.getElementById('recNewLength').value);
-  const pcs = parseInt(document.getElementById('recPcs').value)||0;
-  const weightEl = document.getElementById('recWeight');
-  if(weightEl) weightEl.value = '';
-  if(!p||!ic||!ol||!nl||pcs<=0) return;
-  const maxPcs = parseInt(document.getElementById('recAvailableDisplay').dataset.max)||0;
-  if(pcs > maxPcs){ if(weightEl) weightEl.value=''; return; }
-  const originalNum=parseFloat(ol), newNum=parseFloat(nl);
-  if(!Number.isFinite(originalNum)||!Number.isFinite(newNum)||newNum>=originalNum) return;
-  const matched = getRecoveryMasterRows(p,ic).find(m=>cleanLen(m.length)===nl);
-  if(matched && weightEl) weightEl.value = (pcs * (Number(matched.unitWeight)||0)).toFixed(2);
+function renderRecoverTable(){
+  const now=new Date(),y=now.getFullYear(),m=now.getMonth();let monthlyReject=0,monthlyRecover=0;rejectLogs.forEach(r=>{const d=new Date(r.reject_date);if(d.getFullYear()===y&&d.getMonth()===m)monthlyReject+=Number(r.weight)||0;});recoveryWrapLogs.forEach(r=>{const d=new Date(r.wrap_date);if(d.getFullYear()===y&&d.getMonth()===m)monthlyRecover+=Number(r.wrap_weight)||0;});const net=Math.max(0,monthlyReject-monthlyRecover),rate=monthlyReject>0?Math.min(100,monthlyRecover/monthlyReject*100):0;const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('recMonthlyReject',`${monthlyReject.toFixed(2)} kg`);set('recMonthlyRecover',`${monthlyRecover.toFixed(2)} kg`);set('recMonthlyNet',`${net.toFixed(2)} kg`);set('recMonthlyRate',`${rate.toFixed(1)}%`);set('recMonthlyRateBadge',`${rate.toFixed(1)}% of reject recovered`);const bar=document.getElementById('recMonthlyRecoverBar');if(bar)bar.style.width=`${rate.toFixed(1)}%`;set('recoverySummaryMonth',now.toLocaleDateString('en-US',{month:'long',year:'numeric'}));
+  const cutTb=document.getElementById('recoveryCutTableBody');if(cutTb){if(!recoveryCutLogs.length)cutTb.innerHTML='<tr><td colspan="10" style="text-align:center;padding:24px;">No Recovery Cut Records Found.</td></tr>';else cutTb.innerHTML=recoveryCutLogs.slice(0,100).map(r=>`<tr><td>${r.cut_date}</td><td><b>${r.source_profile}</b></td><td>${r.source_item_code}</td><td>${r.original_length} mm</td><td><b>${r.new_profile}</b></td><td>${r.new_item_code}</td><td>${r.new_length} mm</td><td>${r.cut_pcs} Pcs</td><td>${Number(r.cut_weight||0).toFixed(2)} kg</td><td>${currentUserRole==='Admin'&&!r.legacy?`<button class="btn btn-danger" onclick="deleteRecoveryCutItem(${r.id})"><i class="fa-solid fa-trash"></i></button>`:'<i class="fa-solid fa-lock"></i>'}</td></tr>`).join('');}
+  const wrapTb=document.getElementById('recoveryWrapTableBody');if(wrapTb){if(!recoveryWrapLogs.length)wrapTb.innerHTML='<tr><td colspan="8" style="text-align:center;padding:24px;">No Recovery Wrapping Records Found.</td></tr>';else wrapTb.innerHTML=recoveryWrapLogs.slice(0,100).map(r=>`<tr><td>${r.wrap_date}</td><td><b>${r.profile}</b></td><td>${r.item_code}</td><td>${r.length} mm</td><td>${r.available_cut_pcs} Pcs</td><td><b>${r.wrap_pcs} Pcs</b></td><td><b style="color:#047857">${Number(r.wrap_weight||0).toFixed(2)} kg</b></td><td>${currentUserRole==='Admin'?`<button class="btn btn-danger" onclick="deleteRecoveryWrapItem(${r.id})"><i class="fa-solid fa-trash"></i></button>`:'<i class="fa-solid fa-lock"></i>'}</td></tr>`).join('');}
+  renderRecoveryCutStockTable();populateRecoverWrapProfile();
 }
-async function saveRecoverEntry() {
-  if(isAppBusy) return; isAppBusy=true;
-  try {
-    if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return;
-    const d=document.getElementById('recDate').value,p=document.getElementById('recProfile').value,ic=document.getElementById('recItemCode').value,ol=cleanLen(document.getElementById('recOrigLength').value),nl=cleanLen(document.getElementById('recNewLength').value),pcs=parseInt(document.getElementById('recPcs').value)||0,maxPcs=parseInt(document.getElementById('recAvailableDisplay').dataset.max)||0;
-    if(!d||!p||!ic||!ol||!nl||pcs<=0) return showToast('Please complete all Recovery fields.','warning');
-    if(pcs>maxPcs) return showToast(`Recovery quantity cannot exceed ${maxPcs} available pcs.`,'warning');
-    const originalNum=parseFloat(ol),newNum=parseFloat(nl);
-    if(!Number.isFinite(originalNum)||!Number.isFinite(newNum)||newNum>=originalNum) return showToast('New Cut Length must be shorter than Original Reject Length.','warning');
-    const recoveryRows=getRecoveryMasterRows(p,ic).filter(m=>cleanLen(m.length)===nl);
-    const matched=recoveryRows.find(m=>recKey(m.itemCode)===recKey(ic))||recoveryRows[0];
-    if(!matched) return showToast('Selected New Cut Length is not available in Master Catalog.','warning');
-    const wt=parseFloat((pcs*(Number(matched.unitWeight)||0)).toFixed(2));
-    const entry={recover_date:d,profile:p,item_code:ic,original_length:ol,new_length:nl,pcs,recovered_weight:wt};
-    const {data,error}=await supabaseClient.from('recover_logs').insert([entry]).select();
-    if(error) throw new Error(`Recovery save failed: ${error.message}`);
-
-    // Recovery creates usable NEW-CUT stock at the selected shorter length.
-    // Only the exact profile + item code + new length row receives the recovered pcs.
-    if(!matched.db_id) {
-      if(data?.[0]?.id) await supabaseClient.from('recover_logs').delete().eq('id', data[0].id);
-      throw new Error('Recovery saved row has no Master Catalog stock reference. Recovery was rolled back.');
-    }
-    const nextCutQty = (Number(matched.cutQty)||0) + pcs;
-    const {error:stockError}=await supabaseClient.from('master_catalog').update({cut_qty:nextCutQty}).eq('id',matched.db_id);
-    if(stockError) {
-      if(data?.[0]?.id) await supabaseClient.from('recover_logs').delete().eq('id', data[0].id);
-      throw new Error(`Recovery stock update failed: ${stockError.message}`);
-    }
-    matched.cutQty = nextCutQty;
-    recoverLogs.unshift({...entry,id:data?.[0]?.id||Date.now()});
-    renderRecoverTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable(); showRecAvailable();
-    showToast(`${pcs} Pcs recovered and added to Cut Stock at ${nl} mm.`, 'success');
-    document.getElementById('rejectRecoverForm').reset();
-  } catch(e){ console.error(e); showToast(e.message||'Recovery save failed.','error'); } finally { isAppBusy=false; }
-}
-function renderRecoverTable() {
-  const tb = document.getElementById('recoverTableBody'); if(!tb) return;
-  const now = new Date(); const y = now.getFullYear(); const m = now.getMonth();
-  let monthlyReject = 0, monthlyRecover = 0;
-  rejectLogs.forEach(r => { const d = new Date(r.reject_date); if(d.getFullYear()===y && d.getMonth()===m) monthlyReject += Number(r.weight)||0; });
-  recoverLogs.forEach(r => { const d = new Date(r.recover_date); if(d.getFullYear()===y && d.getMonth()===m) monthlyRecover += Number(r.recovered_weight)||0; });
-  const monthlyNet = Math.max(0, monthlyReject - monthlyRecover);
-  const recoveryRate = monthlyReject > 0 ? Math.min(100, (monthlyRecover / monthlyReject) * 100) : 0;
-  const mr=document.getElementById('recMonthlyReject'), mc=document.getElementById('recMonthlyRecover'), mn=document.getElementById('recMonthlyNet'), mrate=document.getElementById('recMonthlyRate'), mm=document.getElementById('recoverySummaryMonth'), rbar=document.getElementById('recMonthlyRecoverBar'), rbadge=document.getElementById('recMonthlyRateBadge');
-  if(mr) mr.textContent = `${monthlyReject.toFixed(2)} kg`;
-  if(mc) mc.textContent = `${monthlyRecover.toFixed(2)} kg`;
-  if(mn) mn.textContent = `${monthlyNet.toFixed(2)} kg`;
-  if(mrate) mrate.textContent = `${recoveryRate.toFixed(1)}%`;
-  if(rbar) rbar.style.width = `${recoveryRate.toFixed(1)}%`;
-  if(rbadge) rbadge.textContent = `${recoveryRate.toFixed(1)}% of reject recovered`;
-  if(mm) mm.textContent = now.toLocaleDateString('en-US',{month:'long',year:'numeric'});
-  let html = '';
-  if(recoverLogs.length===0) html = `<tr><td colspan="8" style="text-align:center;padding:24px;">No Recovery Records Found.</td></tr>`;
-  else recoverLogs.slice(0,50).forEach(r => {
-    html += `<tr><td>${r.recover_date}</td><td><b>${r.profile}</b></td><td>${r.item_code}</td><td>${r.original_length} mm</td><td><span class="stock-badge" style="background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;">${r.new_length} mm</span></td><td><b>${r.pcs}</b> Pcs</td><td><b style="color:#047857;">${Number(r.recovered_weight||0).toFixed(2)} kg</b></td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-danger" onclick="deleteRecoverItem(${r.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock"></i>`}</td></tr>`;
-  });
-  tb.innerHTML = html;
-}
-window.deleteRecoverItem = function(id) { if(currentUserRole !== 'Admin') return; showConfirm("Delete Recovery Record?", async () => {
-  const row = recoverLogs.find(r => Number(r.id)===Number(id));
-  if(!row) return;
-  try {
-    const matched = masterData.find(m => recKey(m.profile)===recKey(row.profile) && recKey(m.itemCode)===recKey(row.item_code) && cleanLen(m.length)===cleanLen(row.new_length));
-    if(!matched || !matched.db_id) throw new Error('Matching Master Catalog stock row was not found. Delete cancelled.');
-    const nextCut = Math.max(0,(Number(matched.cutQty)||0) - (Number(row.pcs)||0));
-    const {error:stockError}=await supabaseClient.from('master_catalog').update({cut_qty:nextCut}).eq('id',matched.db_id);
-    if(stockError) throw new Error(`Stock reversal failed: ${stockError.message}`);
-    const {error:deleteError}=await supabaseClient.from('recover_logs').delete().eq('id', id);
-    if(deleteError) {
-      await supabaseClient.from('master_catalog').update({cut_qty:matched.cutQty||0}).eq('id',matched.db_id);
-      throw new Error(`Recovery delete failed: ${deleteError.message}`);
-    }
-    matched.cutQty=nextCut; recoverLogs=recoverLogs.filter(r=>Number(r.id)!==Number(id));
-    renderRecoverTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable(); showRecAvailable(); showToast('Recovery deleted and Cut Stock reversed successfully.','success');
-  } catch(e){ console.error(e); showToast(e.message||'Recovery delete failed.','error'); }
-}); }
-
-function renderCardboardStock() { 
-    const capTbody = document.getElementById('cardboardCapacityTableBody'); const histTbody = document.getElementById('cardboardHistoryTableBody'); const totalDisplay = document.getElementById('totalCardboardStockDisplay'); 
-    if(!capTbody || !histTbody) return; let globalIncoming = 0; let globalUsed = 0; let htmlCap = '';
-    masterData.forEach((item, index) => { 
-        let cIn = 0, cOut = 0; cardboardStockList.forEach(c => { if(normalizeCardboardMatch(c.type, item)) { cIn += (c.incoming || 0); cOut += (c.used || 0); } }); 
-        globalIncoming += cIn; globalUsed += cOut; let cBal = cIn - cOut; 
-        htmlCap += `<tr><td><span style="color:#8b5cf6; font-weight:800;">${item.material || '-'}</span></td><td><b>${item.profile}</b></td><td><span style="color:var(--info-color); font-weight:600;">${item.itemCode || '-'}</span></td><td>${item.length} mm</td><td><span class="stock-badge bg-box">${item.boxCapacity || 100} Pcs / Box</span></td><td>+${cIn}</td><td>-${cOut}</td><td><span class="stock-badge" style="background:var(--primary-dark); color:white;">${cBal} Boxes</span></td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-accent" onclick="openCbCapacityModal(${index})"><i class="fa-solid fa-box"></i></button> <button class="btn" style="background:#0369a1; color:#fff;" onclick="openCbAdjustModal('${item.profile}', '${item.itemCode || ''}', '${item.length}')"><i class="fa-solid fa-scale-unbalanced"></i></button>` : `-`}</td></tr>`; 
-    }); capTbody.innerHTML = htmlCap;
-    let htmlHist = ''; cardboardStockList.forEach(c => { const isOut = (c.used || 0) > 0; htmlHist += `<tr><td><b>${c.date}</b></td><td><span class="stock-badge" style="${isOut ? 'background:#fee2e2; color:#e11d48;' : 'background:#dcfce7; color:#059669;'}">${isOut ? 'Consumed' : 'Incoming'}</span></td><td>${c.type}</td><td>${(c.incoming || 0) > 0 ? `+${c.incoming}` : '-'}</td><td>${(c.used || 0) > 0 ? `-${c.used}` : '-'}</td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-danger" onclick="deleteCardboardHistory(${c.id})"><i class="fa-solid fa-trash"></i></button>` : `-`}</td></tr>`; }); histTbody.innerHTML = htmlHist;
-    if(totalDisplay) totalDisplay.textContent = `${(globalIncoming - globalUsed).toLocaleString()} Total Boxes`; 
-}
-window.populateCbProfileDropdown = function() { const select = document.getElementById('cbSelectProfile'); if(!select) return; select.innerHTML = '<option value="">-- Choose Profile --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); const matSelect = document.getElementById('cbMaterialList'); if(!matSelect) return; matSelect.innerHTML = ''; const mats = [...new Set(masterData.filter(m => m.material && m.material !== '-').map(i => String(i.material).trim()))]; mats.forEach(mat => { const option = document.createElement('option'); option.value = mat; matSelect.appendChild(option); }); };
-window.onCbMaterialSelect = function() { const matInput = document.getElementById('cbMaterialInput'); if(!matInput) return; const mat = matInput.value.trim(); if(!mat) return; const matched = masterData.find(m => String(m.material).trim().toLowerCase() === mat.toLowerCase()); if(matched) { document.getElementById('cbSelectProfile').value = matched.profile; onCbProfileSelect(); setTimeout(() => { document.getElementById('cbSelectItemCode').value = matched.itemCode; onCbItemCodeSelect(); setTimeout(() => { document.getElementById('cbSelectLength').value = matched.length; }, 50); }, 50); } };
-window.onCbProfileSelect = function() { const profile = document.getElementById('cbSelectProfile').value; const itemSelect = document.getElementById('cbSelectItemCode'); itemSelect.innerHTML = '<option value="">-- Choose Item Code --</option>'; document.getElementById('cbSelectLength').innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile) return; const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => itemSelect.appendChild(new Option(ic, ic))); };
-window.onCbItemCodeSelect = function() { const profile = document.getElementById('cbSelectProfile').value; const itemCode = document.getElementById('cbSelectItemCode').value; const lengthSelect = document.getElementById('cbSelectLength'); lengthSelect.innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile || !itemCode) return; const matches = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode === itemCode); matches.forEach(m => lengthSelect.appendChild(new Option(`${m.length} mm`, m.length))); if(matches.length === 1) lengthSelect.value = matches[0].length; };
-window.saveCardboardLocally = function() { localStorage.setItem('alumex_cardboard_local', JSON.stringify(cardboardStockList)); };
-window.processCardboardTransaction = async function() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return; let txType = document.getElementById('cbTxType') ? document.getElementById('cbTxType').value : 'IN'; if (currentUserRole === 'Planner') txType = 'IN'; const dateVal = document.getElementById('cbDate').value; const profile = document.getElementById('cbSelectProfile').value; const itemCode = document.getElementById('cbSelectItemCode').value; const length = document.getElementById('cbSelectLength').value; const qty = parseInt(document.getElementById('cbQty').value) || 0; if(!dateVal || !profile || !itemCode || !length || qty <= 0) return; const typeStr = `Pr: ${String(profile).trim()} | Item: ${String(itemCode || '-').trim()} | L: ${String(length).trim()}`; const incoming = txType === 'IN' ? qty : 0; const used = txType === 'OUT' ? qty : 0; const newEntry = { cb_date: dateVal, cb_type: typeStr, incoming: incoming, used: used }; const localItem = { id: Date.now(), date: dateVal, type: typeStr, incoming: incoming, used: used }; cardboardStockList.unshift(localItem); saveCardboardLocally(); try { const { data } = await supabaseClient.from('cardboard_stock').insert([newEntry]).select(); if (data) localItem.id = data[0].id; saveCardboardLocally(); } catch(e) {} showToast("Cardboard transaction processed!", "success"); document.getElementById('cardboardEntryForm').reset(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } };
-window.openCbInOutModal = function(profile, itemCode, length, currentIn, currentOut) { if (currentUserRole !== 'Admin') return; document.getElementById('inOutCbProfile').value = profile; document.getElementById('inOutCbItemCode').value = itemCode || ''; document.getElementById('inOutCbLength').value = length; document.getElementById('currentCbIn').value = currentIn; document.getElementById('currentCbOut').value = currentOut; document.getElementById('newCbInVal').value = currentIn; document.getElementById('newCbOutVal').value = currentOut; document.getElementById('cbInOutEditModal').style.display = 'flex'; };
-window.closeCbInOutModal = function() { document.getElementById('cbInOutEditModal').style.display = 'none'; };
-window.saveCbInOut = async function() { const profile = document.getElementById('inOutCbProfile').value, itemCode = document.getElementById('inOutCbItemCode').value, length = document.getElementById('inOutCbLength').value, currentIn = parseInt(document.getElementById('currentCbIn').value)||0, currentOut = parseInt(document.getElementById('currentCbOut').value)||0, newIn = parseInt(document.getElementById('newCbInVal').value)||0, newOut = parseInt(document.getElementById('newCbOutVal').value)||0, diffIn = newIn - currentIn, diffOut = newOut - currentOut; if (diffIn === 0 && diffOut === 0) { closeCbInOutModal(); return; } const typeStr = `Pr: ${profile} | Item: ${itemCode || '-'} | L: ${length}`; const dateVal = new Date().toISOString().split('T')[0]; let transactionsToSave = []; if (diffIn !== 0) transactionsToSave.push({ cb_date: dateVal, cb_type: typeStr, incoming: diffIn, used: 0 }); if (diffOut !== 0) transactionsToSave.push({ cb_date: dateVal, cb_type: typeStr, incoming: 0, used: diffOut }); transactionsToSave.forEach(entry => { cardboardStockList.unshift({ id: Date.now()+Math.random(), date: entry.cb_date, type: entry.cb_type, incoming: entry.incoming, used: entry.used }); }); saveCardboardLocally(); try { await supabaseClient.from('cardboard_stock').insert(transactionsToSave); } catch(e) {} closeCbInOutModal(); showToast("Total IN/OUT updated!", "success"); renderCardboardStock(); renderBalanceWorkTable(); };
-window.deleteCardboardHistory = function(id) { if(currentUserRole !== 'Admin') return; showConfirm("Delete?", async () => { await supabaseClient.from('cardboard_stock').delete().eq('id', id); cardboardStockList = cardboardStockList.filter(c => c.id !== id); saveCardboardLocally(); renderCardboardStock(); showToast("Deleted", "success"); }); };
-window.openCbCapacityModal = function(index) { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editCbCatalogId').value = index; document.getElementById('editCbCapacityVal').value = item.boxCapacity || 100; document.getElementById('cbCapacityEditModal').style.display = 'flex'; };
-window.closeCbCapacityModal = function() { document.getElementById('cbCapacityEditModal').style.display = 'none'; };
-window.saveCbCapacityEdit = async function() { const index = parseInt(document.getElementById('editCbCatalogId').value); const newCap = parseInt(document.getElementById('editCbCapacityVal').value) || 100; const item = masterData[index]; if(!item) return; item.boxCapacity = newCap; if (item.db_id) { try { await supabaseClient.from('master_catalog').update({ box_capacity: newCap }).eq('id', item.db_id); } catch(e) {} } saveMasterExtrasLocally(); closeCbCapacityModal(); showToast("Box capacity updated!", "success"); renderCardboardStock(); renderMasterCatalog(); renderBalanceWorkTable(); };
-window.openCbAdjustModal = function(profile, itemCode, length) { if (currentUserRole !== 'Admin') return; document.getElementById('adjustCbProfile').value = profile; document.getElementById('adjustCbItemCode').value = itemCode || ''; document.getElementById('adjustCbLength').value = length; let cIn = 0, cOut = 0; const dummyItem = { profile, itemCode, length }; cardboardStockList.forEach(c => { if(normalizeCardboardMatch(c.type, dummyItem)) { cIn += (c.incoming || 0); cOut += (c.used || 0); } }); document.getElementById('newCbBalanceVal').value = cIn - cOut; document.getElementById('cbAdjustModal').style.display = 'flex'; };
-window.closeCbAdjustModal = function() { document.getElementById('cbAdjustModal').style.display = 'none'; };
-window.saveCbAdjust = async function() { const profile = document.getElementById('adjustCbProfile').value, itemCode = document.getElementById('adjustCbItemCode').value, length = document.getElementById('adjustCbLength').value, newBal = parseInt(document.getElementById('newCbBalanceVal').value) || 0; let cIn = 0, cOut = 0; const dummyItem = { profile, itemCode, length }; cardboardStockList.forEach(c => { if(normalizeCardboardMatch(c.type, dummyItem)) { cIn += (c.incoming || 0); cOut += (c.used || 0); } }); const diff = newBal - (cIn - cOut); if (diff === 0) { closeCbAdjustModal(); return; } const typeStr = `Pr: ${profile} | Item: ${itemCode || '-'} | L: ${length}`; const dateVal = new Date().toISOString().split('T')[0]; const incoming = diff > 0 ? diff : 0; const used = diff < 0 ? Math.abs(diff) : 0; const newEntry = { cb_date: dateVal, cb_type: typeStr, incoming: incoming, used: used }; cardboardStockList.unshift({ id: Date.now(), date: dateVal, type: typeStr, incoming: incoming, used: used }); saveCardboardLocally(); try { await supabaseClient.from('cardboard_stock').insert([newEntry]); } catch(e) {} closeCbAdjustModal(); showToast("Cardboard Balance adjusted!", "success"); renderCardboardStock(); renderBalanceWorkTable(); };
-
-async function saveDailyInstruction() { if(isAppBusy) return; isAppBusy=true; try{ if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return; const date = document.getElementById('planDate').value, user = document.getElementById('planUser').value, priority = document.getElementById('planPriority').value, msg = document.getElementById('planMessage').value.trim(); if(!date || !msg) return; const newInst = { target_date: date, target_user: user, priority: priority, message: msg, status: 'Pending', action_taken: '' }; try { const { data } = await supabaseClient.from('daily_instructions').insert([newInst]).select(); if(data && data.length > 0) dailyInstructionsList.unshift(data[0]); } catch (e) { newInst.id = Date.now(); dailyInstructionsList.unshift(newInst); } document.getElementById('planMessage').value = ''; showToast("Instruction pinned!", "success"); renderDailyInstructions(); } finally { isAppBusy=false; } }
-async function markInstructionDone(id) { if (currentUserRole !== 'Local' && currentUserRole !== 'Admin') return; const actionTxt = document.getElementById('action_txt_' + id) ? document.getElementById('action_txt_' + id).value.trim() : ''; try { await supabaseClient.from('daily_instructions').update({ status: 'Completed', action_taken: actionTxt }).eq('id', id); const inst = dailyInstructionsList.find(i => i.id === id); if(inst) { inst.status = 'Completed'; inst.action_taken = actionTxt; } showToast("Task marked completed!", "success"); renderDailyInstructions(); } catch(e) {} }
-async function deleteInstruction(id) { if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return; showConfirm("Delete this instruction?", async () => { await supabaseClient.from('daily_instructions').delete().eq('id', id); dailyInstructionsList = dailyInstructionsList.filter(i => i.id !== id); renderDailyInstructions(); showToast("Removed.", "success"); }); }
-function renderDailyInstructions() { const container = document.getElementById('instructionBoardContainer'); if(!container) return; let html = ''; const badge = document.getElementById('planNotificationBadge'), headerBtn = document.getElementById('headerDailyPlanBtn'); 
-let displayList = dailyInstructionsList.filter(i => i.target_user !== 'SYS_CRATES_SYNC' && i.target_user !== 'SYS_SHIPMENT_DEADLINE');
-let pendingCount = displayList.filter(i => i.status === 'Pending').length; if(pendingCount > 0) { badge.style.display = 'inline-block'; badge.textContent = pendingCount; headerBtn.style.animation = 'pulseNotepadBtn 2s infinite'; } else { badge.style.display = 'none'; headerBtn.style.animation = 'none'; } if (displayList.length === 0) { container.innerHTML = `<div style="text-align: center; color: #b45309; padding: 20px; font-weight:800; font-size:16px;">Board is clear!</div>`; return; } displayList.forEach(inst => { const isDone = inst.status === 'Completed'; const statusClass = isDone ? 'status-badge-completed' : 'status-badge-pending'; let actionHtml = isDone ? `<div style="width: 100%; margin-top: 10px; padding: 8px; background: rgba(16, 185, 129, 0.1); border-radius: 6px; font-size: 13px;"><b>Action:</b> ${inst.action_taken || 'Completed.'}</div>` : (currentUserRole === 'Local' || currentUserRole === 'Admin' ? `<div style="width: 100%; margin-top: 10px; display: flex; gap: 8px;"><input type="text" id="action_txt_${inst.id}" placeholder="Type action..." style="flex: 1; padding: 8px; border-radius: 6px; font-size: 13px;"><button class="btn btn-accent" onclick="markInstructionDone(${inst.id})"><i class="fa-solid fa-check"></i> Done</button></div>` : ''); let adminActions = (currentUserRole === 'Admin' || currentUserRole === 'Planner') ? `<button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteInstruction(${inst.id})"><i class="fa-solid fa-trash"></i></button>` : ''; html += `<div class="instruction-card ${inst.priority === 'High' ? 'inst-high' : 'inst-normal'}"><div class="inst-header"><span>Date: <b>${inst.target_date}</b></span><span>To: <b>${inst.target_user}</b></span>${inst.priority === 'High' ? `<span style="color: #ef4444;"><i class="fa-solid fa-thumbtack"></i> High</span>` : ''}</div><div class="inst-body">${inst.message}</div><div class="inst-footer"><span class="${statusClass}">${inst.status}</span>${adminActions}</div>${actionHtml}</div>`; }); container.innerHTML = html; }
-
-function dashboardMonthLabelFromDate(value) {
-  if (!value) return null;
-  const d = new Date(value);
-  if (!Number.isFinite(d.getTime())) return null;
-  return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
-}
-function dashboardDataPeriodFromMonthFields(values, fallbackLabel = 'Current month') {
-  const labels = [...new Set((values || []).map(v => {
-    const raw = String(v || '').trim();
-    if (!raw) return null;
-    const d = new Date(raw);
-    if (Number.isFinite(d.getTime())) return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
-    const monthMatch = raw.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)$/i);
-    return monthMatch ? `${monthMatch[1].slice(0,3)} ${new Date().getFullYear()}` : raw;
-  }).filter(Boolean))];
-  if (labels.length === 1) return labels[0];
-  if (labels.length > 1) return 'Multiple months';
-  return fallbackLabel;
-}
-function dashboardDataPeriod(values, fallbackLabel = 'Current month') {
-  const labels = [...new Set((values || []).map(dashboardMonthLabelFromDate).filter(Boolean))];
-  if (labels.length === 1) return labels[0];
-  if (labels.length > 1) return 'Multiple months';
-  return fallbackLabel;
-}
-function setDashboardPeriodBadge(id, text, blue = false) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.textContent = text;
-  el.classList.toggle('chart-period-blue', !!blue);
-}
+window.renderRecoverTable=renderRecoverTable;
+function recoveryMonthReminder(){
+  const now=new Date(),lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate(),daysLeft=lastDay-now.getDate(),box=document.getElementById('recoveryMonthReminder');if(!box)return; if(daysLeft===2){box.style.display='flex';box.innerHTML=`<div><i class="fa-solid fa-bell"></i><strong> Monthly Reject Recovery Reminder</strong><span>Only 2 days remain until month-end. Please complete pending Reject → Recover Cut → Recovery Wrapping entries.</span></div><button class="btn" onclick="switchTab('rejectTrackerTab',document.getElementById('tabBtn-rejectTracker'))"><i class="fa-solid fa-recycle"></i> Open Recovery</button>`;if(!sessionStorage.getItem('ais_recovery_reminder_shown')){showToast('Reminder: 2 days left to complete monthly Reject Recovery.','warning');sessionStorage.setItem('ais_recovery_reminder_shown','1');}}else{box.style.display='none';}}
 function dashboardChartOptions(textColor, showLegend = true) {
   return {
     responsive: true,
-    animation: { duration: 1200, easing: 'easeOutQuart', animateRotate: true, animateScale: true },
-    hover: { mode: 'nearest', intersect: true },
+    maintainAspectRatio: true,
+    animation: { duration: 450 },
     plugins: {
-      legend: { display: showLegend, labels: { color: textColor, usePointStyle: true, padding: 14, font: { size: 11, weight: '700' } } },
+      legend: {
+        display: showLegend,
+        position: 'bottom',
+        labels: { color: textColor, usePointStyle: true, padding: 12, font: { size: 11, weight: '700' } }
+      },
       tooltip: {
-        backgroundColor: 'rgba(8,63,70,.96)',
-        titleFont: { size: 12, weight: '800' },
-        bodyFont: { size: 11, weight: '600' },
-        padding: 11,
-        cornerRadius: 10,
-        displayColors: true,
+        enabled: true,
         callbacks: {
-          label: function(ctx) {
-            const data = ctx.dataset.data || [];
-            const total = data.reduce((a,b) => Number(a||0)+Number(b||0), 0);
-            const val = Number(ctx.raw || 0);
-            const pct = total > 0 ? ((val / total) * 100).toFixed(1) : '0.0';
-            return ` ${ctx.label}: ${val.toLocaleString(undefined,{maximumFractionDigits:2})} kg (${pct}%)`;
+          label: function(context) {
+            const value = Number(context.raw || 0);
+            return ` ${context.label || ''}: ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
           }
         }
       }
     }
   };
+}
+
+function safeChartDestroy(instance, canvasOrId = null) {
+  try { if (instance && typeof instance.destroy === 'function') instance.destroy(); } catch (e) { console.warn('Chart destroy skipped:', e); }
+  try {
+    const canvas = typeof canvasOrId === 'string' ? document.getElementById(canvasOrId) : canvasOrId;
+    if (canvas && typeof Chart !== 'undefined' && typeof Chart.getChart === 'function') {
+      const existing = Chart.getChart(canvas);
+      if (existing) existing.destroy();
+    }
+  } catch (e) { console.warn('Existing Chart cleanup skipped:', e); }
+}
+
+function dbErrorMessage(error, action) {
+  const msg = error?.message || error?.details || error?.hint || 'Unknown database error';
+  return `${action}: ${msg}`;
+}
+
+async function dbInsert(table, row, action) {
+  // Do NOT request the inserted row back here. With Supabase RLS, INSERT may be
+  // allowed while SELECT/RETURNING is not. Using .select() made a successful
+  // write look like a failed write and could trigger a rollback in production.
+  const result = await supabaseClient.from(table).insert([row]);
+  if (result.error) throw new Error(dbErrorMessage(result.error, action));
+  return { ...row, id: null };
+}
+
+async function dbUpdate(table, values, id, action) {
+  // Same RLS-safe rule: verify the UPDATE request itself, not a SELECT of the
+  // updated row. The next sync will refresh the real database values/IDs.
+  const result = await supabaseClient.from(table).update(values).eq('id', id);
+  if (result.error) throw new Error(dbErrorMessage(result.error, action));
+  return { ...values, id };
+}
+
+function setDbStatus(ok, message='') {
+  const el=document.getElementById('dbStatusBadge');
+  if(!el) return;
+  el.textContent=ok?'● DB CONNECTED':'● DB ERROR';
+  el.style.background=ok?'#dcfce7':'#fee2e2';
+  el.style.color=ok?'#047857':'#b91c1c';
+  el.title=message || (ok?'Supabase connection is working.':'Supabase/database needs attention.');
+}
+
+window.testSupabaseConnection = async function(show=true){
+  try {
+    const {error}=await supabaseClient.from('master_catalog').select('id',{count:'exact',head:true});
+    if(error) throw error;
+    setDbStatus(true,'Supabase connection and SELECT policy are working.');
+    if(show) showToast('Database connection OK.','success');
+    return {ok:true};
+  } catch(e) {
+    const msg=dbErrorMessage(e,'Database connection test failed');
+    setDbStatus(false,msg);
+    if(show) showToast(msg,'error');
+    console.error(msg,e);
+    return {ok:false,error:msg};
+  }
+};
+
+function setDashboardPeriodBadge(id, text, isBlue = false) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text || '';
+  el.style.display = text ? '' : 'none';
+  if (isBlue) {
+    el.style.color = '#0284c7';
+    el.style.borderColor = '#bae6fd';
+    el.style.background = '#f0f9ff';
+  }
+}
+
+function dashboardDataPeriod(values, fallback = 'Active data') {
+  const dates = (Array.isArray(values) ? values : []).filter(Boolean).map(v => {
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }).filter(Boolean);
+  if (!dates.length) return fallback;
+  const min = new Date(Math.min(...dates.map(d => d.getTime())));
+  const max = new Date(Math.max(...dates.map(d => d.getTime())));
+  const sameMonth = min.getFullYear() === max.getFullYear() && min.getMonth() === max.getMonth();
+  if (sameMonth) return min.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  return `${min.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })} - ${max.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+}
+
+function dashboardDataPeriodFromMonthFields(values, fallback = 'Active data') {
+  const dates = (Array.isArray(values) ? values : []).filter(Boolean).map(v => {
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }).filter(Boolean);
+  if (!dates.length) return fallback;
+  const months = [...new Set(dates.map(d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`))];
+  if (months.length === 1) return dates[0].toLocaleDateString('en-US', { month:'long', year:'numeric' });
+  return `${months.length} active months`;
 }
 
 function renderDashboard() {
@@ -1008,7 +1230,7 @@ function renderDashboard() {
           if(!profileRejMap[prof]) profileRejMap[prof] = 0; profileRejMap[prof] += wt; 
       } 
   });
-  recoverLogs.forEach(r => { let d = new Date(r.recover_date); if(d.getMonth()===cm && d.getFullYear()===cy) mRecWt += parseFloat(r.recovered_weight)||0; });
+  recoveryWrapLogs.forEach(r => { let d = new Date(r.wrap_date); if(d.getMonth()===cm && d.getFullYear()===cy) mRecWt += parseFloat(r.wrap_weight)||0; });
   
   let rejPct = mProdWrapWt > 0 ? ((mRejWt / mProdWrapWt) * 100).toFixed(1) : 0;
   if(document.getElementById('kpiRejectValue')) document.getElementById('kpiRejectValue').textContent = `${mRejWt.toFixed(2)} kg (${rejPct}%)`;
@@ -1328,10 +1550,10 @@ function renderDashboard() {
   try {
       if(typeof Chart !== 'undefined') {
           const textColor = isDarkMode ? '#f8fafc' : '#0f172a'; 
-          if(document.getElementById('masterWeightChart')) { if(masterChartInstance) masterChartInstance.destroy(); let mData = [ totalCut, totalPunch, totalWrap, totalBox, funnelCrateDisplay ]; if (mData.every(v => v === 0)) mData = [1]; masterChartInstance = new Chart(document.getElementById('masterWeightChart'), { type: 'doughnut', data: { labels: mData.length === 1 ? ['No Stock'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Crate'], datasets: [{ hoverOffset: 10, data: mData, backgroundColor: mData.length === 1 ? ['#e2e8f0'] : ['#0ea5e9', '#ea580c', '#d946ef', '#10b981', '#f59e0b'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, mData.length > 1), cutout: '65%' } }); }
+          if(document.getElementById('masterWeightChart')) { safeChartDestroy(masterChartInstance, 'masterWeightChart'); let mData = [ totalCut, totalPunch, totalWrap, totalBox, funnelCrateDisplay ]; if (mData.every(v => v === 0)) mData = [1]; masterChartInstance = new Chart(document.getElementById('masterWeightChart'), { type: 'doughnut', data: { labels: mData.length === 1 ? ['No Stock'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Crate'], datasets: [{ hoverOffset: 10, data: mData, backgroundColor: mData.length === 1 ? ['#e2e8f0'] : ['#0ea5e9', '#ea580c', '#d946ef', '#10b981', '#f59e0b'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, mData.length > 1), cutout: '65%' } }); }
           
           if(document.getElementById('overallPoChart')) { 
-              if(overallPoChartInstance) overallPoChartInstance.destroy(); 
+              safeChartDestroy(overallPoChartInstance, 'overallPoChart'); 
               let remainingPendingPo = Math.max(0, grandPoOrderWt - (grandPoShippedWt+grandPoReadyWt));
               let poDataArr = [ shipContainerWeights['1st Container'], shipContainerWeights['2nd Container'], shipContainerWeights['3rd Container'], grandPoReadyWt, remainingPendingPo ]; 
               if (poDataArr.every(v => v === 0)) poDataArr = [1]; 
@@ -1339,7 +1561,7 @@ function renderDashboard() {
           }
           
           if(document.getElementById('overallPlChart')) { 
-              if(overallPlChartInstance) overallPlChartInstance.destroy(); 
+              safeChartDestroy(overallPlChartInstance, 'overallPlChart'); 
               let cData = [ Number(chartCutWt.toFixed(2))||0, Number(chartPunchWt.toFixed(2))||0, Number(chartWrapWt.toFixed(2))||0, Number(chartBoxWt.toFixed(2))||0, Number(chartManualWt.toFixed(2))||0, Number(chartPendingWt.toFixed(2))||0 ]; 
               if(cData.every(v => v===0)) cData = [1]; 
               overallPlChartInstance = new Chart(document.getElementById('overallPlChart'), { type: 'doughnut', data: { labels: cData.length===1 ? ['No PLs'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Completed', 'Pending'], datasets: [{ hoverOffset: 10, data: cData, backgroundColor: cData.length===1 ? ['#e2e8f0'] : ['#0284c7', '#ea580c', '#d946ef', '#10b981', '#059669', '#e11d48'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, false), cutout: '65%' } }); 
@@ -1375,7 +1597,7 @@ function renderDashboard() {
               
               const ctx = document.getElementById('rejectDashboardChart'); 
               if(ctx) { 
-                  if(rejectDashChart) rejectDashChart.destroy(); 
+                  safeChartDestroy(rejectDashChart, 'rejectDashboardChart'); 
                   let rData = [Number(mRejWt.toFixed(2)), Number(mRecWt.toFixed(2)), Number(netRej.toFixed(2))]; 
                   if(rData.every(v=>v===0)) rData = [0,0,0]; 
                   rejectDashChart = new Chart(ctx, { type: 'bar', data: { labels: ['Reject', 'Recover', 'Net Rej'], datasets: [{ data: rData, backgroundColor: ['#e11d48', '#10b981', '#9f1239'], borderRadius: 6 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { ticks: {color: textColor} }, x: { ticks: {color: textColor} } } } }); 
@@ -1383,7 +1605,7 @@ function renderDashboard() {
               
               const ctxProf = document.getElementById('rejectProfileChart'); 
               if(ctxProf) { 
-                  if(rejectProfileChartInstance) rejectProfileChartInstance.destroy(); 
+                  safeChartDestroy(rejectProfileChartInstance, 'rejectProfileChart'); 
                   let profLabels = Object.keys(profileRejMap); 
                   let profData = Object.values(profileRejMap).map(v => Number(v.toFixed(2))); 
                   const bgColors = ['#f43f5e', '#ec4899', '#d946ef', '#a855f7', '#8b5cf6', '#6366f1', '#3b82f6', '#0ea5e9', '#06b6d4', '#14b8a6', '#10b981', '#22c55e', '#84cc16', '#eab308', '#f59e0b', '#f97316']; 
@@ -1392,13 +1614,14 @@ function renderDashboard() {
               }
           }
       }
-  } catch(err) { console.error('Dashboard render error:', err); }
-  renderMonthlyShiftChart();
+  } catch(err) { console.error('Dashboard render error:', err); showToast('Dashboard script error: ' + (err?.message || err), 'error'); }
+  try { renderMonthlyShiftChart(); } catch (err) { console.error('Monthly dashboard chart error:', err); showToast('Dashboard chart error: ' + (err?.message || 'Unable to render monthly chart.'), 'error'); }
+  recoveryMonthReminder();
 }
 
 function renderMonthlyShiftChart() {
     const ctx = document.getElementById('monthlyShiftChart'); if(!ctx || typeof Chart === 'undefined') return;
-    if (monthlyShiftChartInstance) { monthlyShiftChartInstance.destroy(); }
+    safeChartDestroy(monthlyShiftChartInstance, 'monthlyShiftChart');
     const now = new Date(); const currentYear = now.getFullYear(); const currentMonth = now.getMonth();
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const labels = [], dayWrapData = [], nightWrapData = [], dayRejectData = [], nightRejectData = [], dayNetRejectData = [], nightNetRejectData = [];
@@ -1431,9 +1654,9 @@ function renderMonthlyShiftChart() {
             const wt=Number(r.weight)||0;
             if(String(r.shift||'').toLowerCase().includes('night')) nightReject += wt; else dayReject += wt;
         });
-        recoverLogs.filter(r => r.recover_date === dateKey).forEach(r => {
-            const wt=Number(r.recovered_weight)||0;
-            if(String(r.shift||'').toLowerCase().includes('night')) nightRecover += wt; else dayRecover += wt;
+        recoveryWrapLogs.filter(r => r.wrap_date === dateKey).forEach(r => {
+            const wt=Number(r.wrap_weight)||0;
+            dayRecover += wt;
         });
 
         const dayNet=Math.max(0,dayReject-dayRecover), nightNet=Math.max(0,nightReject-nightRecover);
@@ -1550,7 +1773,7 @@ function renderBalanceWorkTable() {
                 const wipPcs = (item.cutQty || 0) + (item.punchQty || 0) + (item.wrapQty || 0); const unboxedAndPendingPcs = maxPending + wipPcs; 
                 const reqBoxes = Math.ceil(unboxedAndPendingPcs / (item.boxCapacity || 100)); const availCardboard = getAvailableCardboard(item.profile, item.itemCode, item.length); const cbBalance = availCardboard - reqBoxes; 
                 const cbStatusHtml = cbBalance >= 0 ? `<span style="color:var(--success-color); font-weight:800;">OK (+${cbBalance})</span>` : `<span style="color:var(--warning-color); font-weight:800;"><i class="fa-solid fa-arrow-down"></i> Short ${Math.abs(cbBalance)}</span>`; 
-                html += `<tr><td><b>${item.profile}</b></td><td><span style="color:var(--info-color); font-weight:600;">${item.itemCode || '-'}</span></td><td>${item.length} mm</td><td>${item.exLength || '-'} mm</td><td><span class="stock-badge bg-wrap">${pcsPerEx}</span></td><td><span class="stock-badge bg-total">${currentStockTotal} Pcs</span></td><td><span class="stock-badge bg-crate">${crateQty} Pcs</span></td><td><span class="stock-badge" style="background:#e0f2fe; color:#0369a1;">${unshippedPoTotal} Pcs</span></td><td><span class="stock-badge" style="background:${poPendingQty > 0 ? '#fee2e2' : '#dcfce7'}; color:${poPendingQty > 0 ? '#e11d48' : '#059669'}; font-weight:800;">${poPendingQty} Pcs</span></td><td><span class="stock-badge" style="background:${plPendingQty > 0 ? '#ffedd5' : '#dcfce7'}; color:${plPendingQty > 0 ? '#c2410c' : '#059669'}; font-weight:800;">${plPendingQty} Pcs</span></td><td><span class="stock-badge" style="background:var(--primary-dark); color:#fff; font-weight:800;">${reqEx} Ex</span></td><td><span class="stock-badge" style="background:#0369a1; color:#fff; font-weight:800;">${unboxedAndPendingPcs} Pcs</span></td><td><span class="stock-badge" style="background:#b45309; color:#fff; font-weight:800;">${reqBoxes} Boxes</span></td><td style="background:${cbBalance < 0 ? 'rgba(225, 29, 72, 0.05)' : 'rgba(16, 185, 129, 0.05)'};">${cbStatusHtml}</td></tr>`; 
+                html += `<tr class="balance-work-row"><td class="bw-profile"><b>${item.profile}</b></td><td class="bw-item"><span>${item.itemCode || '-'}</span></td><td class="bw-length">${formatBalanceLength(item.length)} mm</td><td class="bw-length">${item.exLength ? formatBalanceLength(item.exLength) : '-'} mm</td><td><span class="bw-badge bw-ex">${formatBalanceInt(pcsPerEx)}</span></td><td><span class="bw-badge bw-stock">${formatBalanceInt(currentStockTotal)} <small>Pcs</small></span></td><td><span class="bw-badge bw-crate">${formatBalanceInt(crateQty)} <small>Pcs</small></span></td><td><span class="bw-badge bw-po">${formatBalanceInt(unshippedPoTotal)} <small>Pcs</small></span></td><td><span class="bw-badge ${poPendingQty > 0 ? 'bw-pending-po' : 'bw-ok'}">${formatBalanceInt(poPendingQty)} <small>Pcs</small></span></td><td><span class="bw-badge ${plPendingQty > 0 ? 'bw-pending-pl' : 'bw-ok'}">${formatBalanceInt(plPendingQty)} <small>Pcs</small></span></td><td><span class="bw-badge bw-exreq">${reqEx === '-' ? '-' : formatBalanceInt(reqEx)} <small>Ex</small></span></td><td><span class="bw-badge bw-unboxed">${formatBalanceInt(unboxedAndPendingPcs)} <small>Pcs</small></span></td><td><span class="bw-badge bw-boxes">${formatBalanceInt(reqBoxes)} <small>Boxes</small></span></td><td class="bw-cardboard ${cbBalance < 0 ? 'short' : 'ok'}">${cbStatusHtml}</td></tr>`; 
             }); 
         }
         tbody.innerHTML = html;
@@ -1569,78 +1792,203 @@ function exportBalanceWorkExcel() {
     });
     exportTableToExcel(exportData, "AIS_Balance_Work", "Balance Work");
 }
+window.exportBalanceWorkPdf=function(){
+    const rows=[]; document.querySelectorAll('#balanceWorkTableBody tr').forEach(tr=>{const cells=[...tr.querySelectorAll('td')].map(td=>td.innerText.trim()); if(cells.length) rows.push(cells);});
+    if(!rows.length) return showToast('No Balance Work data to export!','warning');
+    const headers=['Profile','Item Code','Cut L (mm)','Ex L (mm)','Pcs / Ex','WIP+Box Stock','Crate Qty','Unshipped PO','PO Pending (Bal)','PL Pending (Bal)','Req. Extrusions','Unboxed Pcs','Req. Boxes','Cardboard Bal'];
+    const data=rows.map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]||''])));
+    exportDataToPdf(data,'AIS_Balance_Work','AIS Tracker - Balance Work','Balance Work');
+};
+
 
 function populateProfileDropdown() { const select = document.getElementById('selectProfile'); if(!select) return; select.innerHTML = '<option value="">-- Choose Profile --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }
 function onProfileSelect() { const profile = document.getElementById('selectProfile').value; const itemSelect = document.getElementById('selectItemCode'); itemSelect.innerHTML = '<option value="">-- Choose Item Code --</option>'; document.getElementById('selectLength').innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile) { onLengthSelect(); return; } const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => itemSelect.appendChild(new Option(ic, ic))); onLengthSelect(); }
 function onItemCodeSelect() { const profile = document.getElementById('selectProfile').value; const itemCode = document.getElementById('selectItemCode').value; const lengthSelect = document.getElementById('selectLength'); lengthSelect.innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile || !itemCode) { onLengthSelect(); return; } const matches = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode === itemCode); matches.forEach(m => lengthSelect.appendChild(new Option(`${m.length} mm`, m.length))); if(matches.length === 1) { lengthSelect.value = matches[0].length; } onLengthSelect(); }
-function onLengthSelect() { const profile = document.getElementById('selectProfile').value; const itemCode = document.getElementById('selectItemCode').value; const length = document.getElementById('selectLength').value; const punchGroup = document.getElementById('punchGroup'); if(!profile || !itemCode || !length) return; const matchedCat = masterData.find(m => String(m.profile).trim() === profile && m.itemCode === itemCode && cleanLen(m.length) === cleanLen(length)); if (matchedCat && isPunchBypassed(matchedCat.profile, matchedCat.length)) { punchGroup.style.display = 'none'; document.getElementById('punchQty').value = 0; } else { punchGroup.style.display = 'flex'; } }
+function onLengthSelect() { const profile = document.getElementById('selectProfile').value; const itemCode = document.getElementById('selectItemCode').value; const length = document.getElementById('selectLength').value; const punchGroup = document.getElementById('punchGroup'); if(!profile || !itemCode || !length) { if(typeof updateProductionCardboardAvailability==='function') updateProductionCardboardAvailability(); return; } const matchedCat = masterData.find(m => String(m.profile).trim() === profile && m.itemCode === itemCode && cleanLen(m.length) === cleanLen(length)); if (matchedCat && isPunchBypassed(matchedCat.profile, matchedCat.length)) { punchGroup.style.display = 'none'; document.getElementById('punchQty').value = 0; } else { punchGroup.style.display = 'flex'; } if(typeof updateProductionCardboardAvailability==='function') updateProductionCardboardAvailability(); }
 function checkDateStatus() { const dateVal = document.getElementById('entryDate').value; const shiftVal = document.getElementById('shift').value; const banner = document.getElementById('entryStatusBanner'); if (!banner) return; if (!dateVal) { banner.style.display = 'none'; return; } const existing = historyLogs.filter(h => h.date === dateVal && h.shift === shiftVal); if (existing.length > 0) { banner.className = "status-banner status-red"; banner.style.display = "flex"; banner.innerHTML = `<div class="status-banner-content"><div class="status-banner-icon"><i class="fa-solid fa-triangle-exclamation"></i></div><div><div style="font-weight: 800; font-size: 15px;">Entries exist for ${dateVal}</div></div></div>`; } else { banner.className = "status-banner status-green"; banner.style.display = "flex"; banner.innerHTML = `<div class="status-banner-content"><div class="status-banner-icon"><i class="fa-solid fa-circle-check"></i></div><div><div style="font-weight: 800; font-size: 15px;">Ready for New Operations Entry</div></div></div>`; } }
-async function deductCardboardBoxesForProduction(profile, itemCode, length, boxesNeeded) { if(boxesNeeded <= 0) return; const typeStr = `Pr: ${String(profile).trim()} | Item: ${String(itemCode || '-').trim()} | L: ${String(length).trim()}`; const newEntry = { cb_date: new Date().toISOString().split('T')[0], cb_type: typeStr, incoming: 0, used: boxesNeeded }; const localItem = { id: Date.now(), date: newEntry.cb_date, type: typeStr, incoming: 0, used: boxesNeeded, timestamp: new Date().toLocaleTimeString() }; cardboardStockList.unshift(localItem); saveCardboardLocally(); try { const { data } = await supabaseClient.from('cardboard_stock').insert([newEntry]).select(); if(data && data.length > 0) { localItem.id = data[0].id; localItem.db_id = data[0].id; saveCardboardLocally(); } } catch(e) {} renderCardboardStock(); }
+async function deductCardboardBoxesForProduction(profile, itemCode, length, boxesNeeded) {
+  if(boxesNeeded <= 0) return null;
+  const available=getAvailableCardboard(profile,itemCode,length);
+  if(boxesNeeded>available) throw new Error(`Not enough cardboard boxes for ${profile} / ${itemCode} / ${length} mm. Available: ${available} boxes; required: ${boxesNeeded} boxes.`);
+  const txToken=`TX-${Date.now()}-${Math.random().toString(36).slice(2,8)}`; const newEntry={cb_date:new Date().toISOString().split('T')[0],cb_type:cardboardType(profile,itemCode,length)+` | ${txToken}`,incoming:0,used:boxesNeeded};
+  const result=await supabaseClient.from('cardboard_stock').insert([newEntry]);
+  if(result.error) throw new Error(dbErrorMessage(result.error,'Cardboard stock deduction failed'));
+  const localItem={id:-Date.now(),db_id:null,date:newEntry.cb_date,type:newEntry.cb_type,incoming:0,used:boxesNeeded,timestamp:new Date().toLocaleTimeString()};
+  cardboardStockList.unshift(localItem); saveCardboardLocally(); renderCardboardStock();
+  return localItem;
+}
 
-async function submitDailyEntry() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return; const dateVal = document.getElementById('entryDate').value; const shiftVal = document.getElementById('shift').value; const profileVal = document.getElementById('selectProfile').value; const itemCodeVal = document.getElementById('selectItemCode').value; const lengthVal = document.getElementById('selectLength').value; const cutQty = parseInt(document.getElementById('cutQty').value) || 0; const punchQty = parseInt(document.getElementById('punchQty').value) || 0; const wrapQty = parseInt(document.getElementById('wrapQty').value) || 0; const enteredBoxes = parseInt(document.getElementById('boxQty').value) || 0; const crateQty = parseInt(document.getElementById('crateQty').value) || 0; if (!dateVal || !profileVal || !itemCodeVal || !lengthVal) { showToast("Please select correctly.", "warning"); return; } const item = masterData.find(m => String(m.profile).trim() === profileVal && m.itemCode === itemCodeVal && cleanLen(m.length) === cleanLen(lengthVal)); if (!item) return; const boxPcs = enteredBoxes * (item.boxCapacity || 100); item.cutQty = (item.cutQty || 0) + cutQty; if (punchQty > 0) { item.cutQty = Math.max(0, item.cutQty - punchQty); item.punchQty = (item.punchQty || 0) + punchQty; } if (wrapQty > 0) { if (isPunchBypassed(profileVal, lengthVal) || (item.punchQty || 0) <= 0) { item.cutQty = Math.max(0, item.cutQty - wrapQty); } else if (item.punchQty >= wrapQty) { item.punchQty -= wrapQty; } else { const rem = wrapQty - item.punchQty; item.punchQty = 0; item.cutQty = Math.max(0, item.cutQty - rem); } item.wrapQty = (item.wrapQty || 0) + wrapQty; } if (boxPcs > 0) { item.wrapQty = Math.max(0, item.wrapQty - boxPcs); item.boxQty = (item.boxQty || 0) + boxPcs; await deductCardboardBoxesForProduction(profileVal, itemCodeVal, lengthVal, enteredBoxes); } if (crateQty > 0) { item.boxQty = Math.max(0, item.boxQty - crateQty); item.crateQty = (item.crateQty || 0) + crateQty; } if (item.db_id) { try { await supabaseClient.from('master_catalog').update({ cut_qty: item.cutQty, punch_qty: item.punchQty, wrap_qty: item.wrapQty, box_qty: item.boxQty, crate_qty: item.crateQty }).eq('id', item.db_id); } catch (e) {} } const newLog = { log_date: dateVal, shift: shiftVal, profile: profileVal, length: cleanLen(lengthVal), cut_qty: cutQty, punch_qty: punchQty, wrap_qty: wrapQty, box_qty: boxPcs, crate_qty: crateQty, log_time: new Date().toLocaleTimeString() }; const localLog = { id: Date.now(), date: dateVal, shift: shiftVal, profile: profileVal, length: cleanLen(lengthVal), cutQty: cutQty, punchQty: punchQty, wrapQty: wrapQty, boxQty: boxPcs, crateQty: crateQty, timestamp: newLog.log_time }; historyLogs.unshift(localLog); try { const { data } = await supabaseClient.from('history_logs').insert([newLog]).select(); if (data) { localLog.id = data[0].id; localLog.timestamp = data[0].log_time || data[0].created_at; } } catch (e) {} showToast("Movement saved!", "success"); renderDashboard(); renderProfileSummaryTable(); renderHistoryData(); checkDateStatus(); renderCardboardStock(); renderBalanceWorkTable(); ['cutQty', 'punchQty', 'wrapQty', 'boxQty', 'crateQty'].forEach(id => { const el = document.getElementById(id); if(el) el.value = 0; }); } finally { isAppBusy=false; } }
+
+function parseCardboardType(type){
+  const str=String(type||'');
+  const p=(str.match(/Pr:\s*([^|]+)/i)||[])[1]||'';
+  const item=(str.match(/Item:\s*([^|]+)/i)||[])[1]||'';
+  const len=(str.match(/L:\s*([^|]+)/i)||[])[1]||'';
+  return {profile:p.trim(),itemCode:item.trim(),length:len.trim()};
+}
+function cardboardType(profile,itemCode,length){ return `Pr: ${String(profile||'').trim()} | Item: ${String(itemCode||'-').trim()} | L: ${String(length||'').trim()}`; }
+function cardboardRowsFor(profile,itemCode,length){ return cardboardStockList.filter(c=>normalizeCardboardMatch(c.type,{profile,itemCode,length})); }
+function getCardboardTransactionsBalance(profile,itemCode,length){ const rows=cardboardRowsFor(profile,itemCode,length); return {incoming:rows.reduce((a,c)=>a+(Number(c.incoming)||0),0),used:rows.reduce((a,c)=>a+(Number(c.used)||0),0)}; }
+function renderCardboardStock(){
+  const totalEl=document.getElementById('totalCardboardStockDisplay');
+  const groups={};
+  masterData.forEach(m=>{const key=`${String(m.profile).trim()}|${String(m.itemCode||'').trim()}|${cleanLen(m.length)}`; if(!groups[key]) groups[key]={profile:String(m.profile).trim(),itemCode:m.itemCode||'-',length:m.length,material:m.material||'-',capacity:Number(m.boxCapacity)||100};});
+  cardboardStockList.forEach(c=>{const x=parseCardboardType(c.type); const key=`${x.profile}|${x.itemCode}|${cleanLen(x.length)}`; if(!groups[key]) groups[key]={profile:x.profile,itemCode:x.itemCode||'-',length:x.length,material:'-',capacity:100};});
+  let total=0; Object.values(groups).forEach(g=>{const b=getCardboardTransactionsBalance(g.profile,g.itemCode,g.length); total += Math.max(0,b.incoming-b.used);});
+  if(totalEl) totalEl.textContent=`${total.toLocaleString()} Boxes`;
+  const body=document.getElementById('cardboardCapacityTableBody');
+  if(body){ const rows=Object.values(groups).sort((a,b)=>String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true})||String(a.itemCode).localeCompare(String(b.itemCode))); body.innerHTML=rows.length?rows.map(g=>{const b=getCardboardTransactionsBalance(g.profile,g.itemCode,g.length);const bal=b.incoming-b.used;const safe=encodeURIComponent(JSON.stringify(g));return `<tr><td>${g.material||'-'}</td><td><b>${g.profile}</b></td><td>${g.itemCode}</td><td>${g.length} mm</td><td>${g.capacity}</td><td>${b.incoming}</td><td>${b.used}</td><td><span class="cb-balance-pill ${bal<0?'danger':''}">${bal} Boxes</span></td><td><button class="btn" style="padding:6px 9px;background:#0f766e;color:#fff;" onclick="openCbAdjustModal('${safe}')"><i class="fa-solid fa-sliders"></i></button> <button class="btn" style="padding:6px 9px;background:#0369a1;color:#fff;" onclick="openCbInOutModal('${safe}',${b.incoming},${b.used})"><i class="fa-solid fa-pen"></i></button> <button class="btn" style="padding:6px 9px;background:#64748b;color:#fff;" onclick="openCbCapacityModal('${safe}')"><i class="fa-solid fa-box"></i></button></td></tr>`;}).join(''):`<tr><td colspan="9" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No cardboard stock records.</td></tr>`; }
+  const hist=document.getElementById('cardboardHistoryTableBody');
+  if(hist){hist.innerHTML=cardboardStockList.length?cardboardStockList.map(c=>{const x=parseCardboardType(c.type); const id=Number(c.db_id||c.id); return `<tr><td>${c.date||'-'}<br><small>${c.timestamp||''}</small></td><td><span class="cb-tx ${Number(c.incoming)>0?'in':'out'}">${Number(c.incoming)>0?'INCOMING':'CONSUMED'}</span></td><td><b>${x.profile||'-'}</b> • ${x.itemCode||'-'} • ${x.length||'-'} mm</td><td>${c.incoming||0}</td><td>${c.used||0}</td><td>${id>0?`<button class="btn" style="padding:5px 8px;background:#64748b;color:#fff;" onclick="editCardboardTransaction(${id})"><i class="fa-solid fa-pen"></i></button>`:'Auto'}</td></tr>`;}).join(''):`<tr><td colspan="6" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No transactions yet.</td></tr>`;}  const manualBody=document.getElementById('cardboardManualDataTableBody');
+  if(manualBody){manualBody.innerHTML=cardboardManualData.length?cardboardManualData.map(r=>`<tr><td>${r.date||'-'}</td><td>${r.material||'-'}</td><td>${r.profile||'-'}</td><td>${r.itemCode||'-'}</td><td>${r.length||'-'}</td><td><b>${Number(r.quantity)||0}</b></td><td>${r.note||'-'}</td><td><button class="btn" style="padding:5px 8px;background:#0369a1;color:#fff;" onclick="editCardboardManualData(${Number(r.db_id||r.id)})"><i class="fa-solid fa-pen"></i></button> <button class="btn" style="padding:5px 8px;background:#dc2626;color:#fff;" onclick="deleteCardboardManualData(${Number(r.db_id||r.id)})"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):`<tr><td colspan="8" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No manual cardboard data.</td></tr>`;}
+}
+function onCbMaterialSelect(){ const val=(document.getElementById('cbMaterialInput')?.value||'').trim(); const matches=masterData.filter(m=>String(m.material||'').trim()===val); const p=document.getElementById('cbSelectProfile'); if(p){p.innerHTML='<option value="">-- Choose Profile --</option>'; [...new Set(matches.map(m=>String(m.profile).trim()))].forEach(x=>p.appendChild(new Option(x,x)));} onCbProfileSelect(); }
+function onCbProfileSelect(){ const p=document.getElementById('cbSelectProfile'); const i=document.getElementById('cbSelectItemCode'); if(!p||!i)return; const profile=p.value; i.innerHTML='<option value="">-- Choose Item Code --</option>'; const mat=(document.getElementById('cbMaterialInput')?.value||'').trim(); masterData.filter(m=>String(m.profile).trim()===profile && (!mat||String(m.material||'').trim()===mat)).forEach(m=>{if(m.itemCode&&!Array.from(i.options).some(o=>o.value===m.itemCode))i.appendChild(new Option(m.itemCode,m.itemCode));}); onCbItemCodeSelect();}
+function onCbItemCodeSelect(){ const p=document.getElementById('cbSelectProfile'),i=document.getElementById('cbSelectItemCode'),l=document.getElementById('cbSelectLength'); if(!p||!i||!l)return; l.innerHTML='<option value="">-- Choose Length --</option>'; masterData.filter(m=>String(m.profile).trim()===p.value&&m.itemCode===i.value).forEach(m=>l.appendChild(new Option(`${m.length} mm`,m.length))); if(l.options.length===2)l.selectedIndex=1; }
+async function processCardboardTransaction(){ if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return; const date=document.getElementById('cbDate').value||new Date().toISOString().split('T')[0], type=document.getElementById('cbTxType').value, profile=document.getElementById('cbSelectProfile').value,item=document.getElementById('cbSelectItemCode').value,length=document.getElementById('cbSelectLength').value,qty=parseInt(document.getElementById('cbQty').value)||0; if(!profile||!item||!length||qty<=0)return showToast('Select profile, item, length and quantity.','warning'); const bal=getAvailableCardboard(profile,item,length); if(type==='OUT'&&qty>bal)return showToast(`Insufficient cardboard stock. Available: ${bal} boxes.`,'error'); const rec={cb_date:date,cb_type:cardboardType(profile,item,length),incoming:type==='IN'?qty:0,used:type==='OUT'?qty:0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date, type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();renderCardboardStock();document.getElementById('cardboardEntryForm')?.reset();showToast('Cardboard transaction saved.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard save failed'),'error');}}
+function openCbAdjustModal(g){ if(typeof g==='string') g=JSON.parse(decodeURIComponent(g));document.getElementById('adjustCbProfile').value=g.profile;document.getElementById('adjustCbItemCode').value=g.itemCode;document.getElementById('adjustCbLength').value=g.length;document.getElementById('cbAdjustTarget').innerHTML=`${g.profile} • ${g.itemCode} • ${g.length} mm`;document.getElementById('newCbBalanceVal').value=Math.max(0,getAvailableCardboard(g.profile,g.itemCode,g.length));document.getElementById('cbAdjustModal').style.display='flex';}
+function closeCbAdjustModal(){document.getElementById('cbAdjustModal').style.display='none';}
+async function saveCbAdjust(){const p=document.getElementById('adjustCbProfile').value,i=document.getElementById('adjustCbItemCode').value,l=document.getElementById('adjustCbLength').value,n=Math.max(0,parseInt(document.getElementById('newCbBalanceVal').value)||0),cur=getAvailableCardboard(p,i,l),diff=n-cur;if(!diff){closeCbAdjustModal();return showToast('No balance change required.','info');} const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:`Pr: ${p} | Item: ${i} | L: ${l} | MANUAL ADJUSTMENT`,incoming:diff>0?diff:0,used:diff<0?Math.abs(diff):0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();closeCbAdjustModal();renderCardboardStock();showToast('Cardboard balance adjusted.','success');}catch(e){showToast(dbErrorMessage(e,'Balance adjustment failed'),'error');}}
+function openCbInOutModal(g,inc,out){ if(typeof g==='string') g=JSON.parse(decodeURIComponent(g));document.getElementById('inOutCbProfile').value=g.profile;document.getElementById('inOutCbItemCode').value=g.itemCode;document.getElementById('inOutCbLength').value=g.length;document.getElementById('currentCbIn').value=inc;document.getElementById('currentCbOut').value=out;document.getElementById('cbInOutTarget').innerHTML=`${g.profile} • ${g.itemCode} • ${g.length} mm`;document.getElementById('newCbInVal').value=inc;document.getElementById('newCbOutVal').value=out;document.getElementById('cbInOutEditModal').style.display='flex';}
+function closeCbInOutModal(){document.getElementById('cbInOutEditModal').style.display='none';}
+async function saveCbInOut(){const p=document.getElementById('inOutCbProfile').value,i=document.getElementById('inOutCbItemCode').value,l=document.getElementById('inOutCbLength').value,oldIn=Number(document.getElementById('currentCbIn').value)||0,oldOut=Number(document.getElementById('currentCbOut').value)||0,newIn=Math.max(0,parseInt(document.getElementById('newCbInVal').value)||0),newOut=Math.max(0,parseInt(document.getElementById('newCbOutVal').value)||0); const dIn=newIn-oldIn,dOut=newOut-oldOut; if(newOut>newIn)return showToast('Total OUT cannot exceed Total IN.','error'); const base=`Pr: ${p} | Item: ${i} | L: ${l}`; try{if(dIn||dOut){const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:base+' | MANUAL EDIT',incoming:dIn>0?dIn:0,used:dOut>0?dOut:0}; if(dIn<0) rec.used+=Math.abs(dIn); if(dOut<0) rec.incoming+=Math.abs(dOut); const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();} closeCbInOutModal();renderCardboardStock();showToast('Cardboard totals updated.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard edit failed'),'error');}}
+function openCbCapacityModal(g){ if(typeof g==='string') g=JSON.parse(decodeURIComponent(g));document.getElementById('editCbCatalogId').value=masterData.find(m=>String(m.profile).trim()===String(g.profile).trim()&&m.itemCode===g.itemCode&&cleanLen(m.length)===cleanLen(g.length))?.db_id||'';document.getElementById('cbEditTarget').innerHTML=`${g.profile} • ${g.itemCode} • ${g.length} mm`;document.getElementById('editCbCapacityVal').value=g.capacity||100;document.getElementById('cbCapacityEditModal').style.display='flex';}
+function closeCbCapacityModal(){document.getElementById('cbCapacityEditModal').style.display='none';}
+async function saveCbCapacityEdit(){const id=document.getElementById('editCbCatalogId').value,cap=Math.max(1,parseInt(document.getElementById('editCbCapacityVal').value)||100);if(!id)return showToast('Matching Master Catalog item not found.','error');try{const r=await supabaseClient.from('master_catalog').update({box_capacity:cap}).eq('id',id);if(r.error)throw r.error;const m=masterData.find(x=>String(x.db_id)===String(id));if(m)m.boxCapacity=cap;closeCbCapacityModal();renderCardboardStock();renderBalanceWorkTable();showToast('Pcs per Box updated.','success');}catch(e){showToast(dbErrorMessage(e,'Capacity update failed'),'error');}}
+function editCardboardTransaction(id){const row=cardboardStockList.find(c=>Number(c.db_id||c.id)===Number(id));if(!row||!row.db_id)return showToast('This automatic/local record cannot be edited here. Use Manual Cardboard Data for independent reference information.','info');showToast('Stock transaction quantities are protected. Use Manual Cardboard Data to edit reference information without changing Current Cardboard Stock.','info');}
+
+async function persistCardboardManualData(){
+  const message=JSON.stringify(cardboardManualData||[]);
+  let row=(dailyInstructionsList||[]).find(r=>r.target_user==='SYS_CARDBOARD_MANUAL');
+  const base={target_date:new Date().toISOString().split('T')[0],target_user:'SYS_CARDBOARD_MANUAL',priority:'Normal',message,status:'Completed',action_taken:'Cardboard Manual Data'};
+  if(row){ const {error}=await supabaseClient.from('daily_instructions').update({message}).eq('id',row.id); if(error)throw error; row.message=message; }
+  else { const {error}=await supabaseClient.from('daily_instructions').insert([base]); if(error)throw error; dailyInstructionsList.push({...base,id:-Date.now()}); }
+}
+async function saveCardboardManualData(event){
+  event?.preventDefault();
+  if(currentUserRole!=='Admin'&&currentUserRole!=='Planner') return;
+  const id=document.getElementById('cbManualId').value.trim();
+  const row={manual_id:id||`CBM-${Date.now()}`,date:document.getElementById('cbManualDate').value||new Date().toISOString().split('T')[0],material:document.getElementById('cbManualMaterial').value.trim(),profile:document.getElementById('cbManualProfile').value.trim(),itemCode:document.getElementById('cbManualItemCode').value.trim(),length:document.getElementById('cbManualLength').value.trim(),quantity:Math.max(0,parseInt(document.getElementById('cbManualQty').value)||0),note:document.getElementById('cbManualNote').value.trim()};
+  if(!row.profile&&!row.itemCode&&!row.material) return showToast('Enter at least Material, Profile or Item Code.','warning');
+  try{
+    if(id){ const idx=cardboardManualData.findIndex(x=>String(x.manual_id||x.id)===String(id)); if(idx<0)return showToast('Manual record not found.','error'); cardboardManualData[idx]=row; showToast('Manual cardboard data updated. Current stock unchanged.','success'); }
+    else { cardboardManualData.unshift(row); showToast('Manual cardboard data saved. Current stock unchanged.','success'); }
+    await persistCardboardManualData(); saveCardboardManualLocally(); cancelCardboardManualEdit(); renderCardboardStock();
+  }catch(e){showToast(dbErrorMessage(e,'Manual cardboard data save failed'),'error');}
+}
+function editCardboardManualData(id){
+  const r=cardboardManualData.find(x=>String(x.manual_id||x.id)===String(id));
+  if(!r)return showToast('Manual record not found.','error');
+  document.getElementById('cbManualId').value=r.manual_id||r.id; document.getElementById('cbManualDate').value=r.date||''; document.getElementById('cbManualMaterial').value=r.material||''; document.getElementById('cbManualProfile').value=r.profile||''; document.getElementById('cbManualItemCode').value=r.itemCode||''; document.getElementById('cbManualLength').value=r.length||''; document.getElementById('cbManualQty').value=Number(r.quantity)||0; document.getElementById('cbManualNote').value=r.note||'';
+  document.getElementById('cbManualSaveBtn').innerHTML='<i class="fa-solid fa-check"></i> Update Manual Data'; document.getElementById('cbManualCancelBtn').style.display='inline-flex'; document.getElementById('cbManualDataArea')?.scrollIntoView({behavior:'smooth',block:'center'});
+}
+function cancelCardboardManualEdit(){
+  const f=document.getElementById('cardboardManualForm'); if(f)f.reset(); const id=document.getElementById('cbManualId'); if(id)id.value=''; const d=document.getElementById('cbManualDate'); if(d)d.value=new Date().toISOString().split('T')[0]; const b=document.getElementById('cbManualSaveBtn'); if(b)b.innerHTML='<i class="fa-solid fa-save"></i> Save Manual Data'; const c=document.getElementById('cbManualCancelBtn'); if(c)c.style.display='none';
+}
+async function deleteCardboardManualData(id){
+  if(currentUserRole!=='Admin'&&currentUserRole!=='Planner') return;
+  const idx=cardboardManualData.findIndex(x=>String(x.manual_id||x.id)===String(id)); if(idx<0)return;
+  showConfirm('<b>DELETE MANUAL DATA</b><br><br>Delete this manual cardboard record?<br><br><span style="color:#047857;font-weight:700">Current Cardboard Stock will NOT change.</span>',async()=>{
+    try{cardboardManualData.splice(idx,1);await persistCardboardManualData();saveCardboardManualLocally();renderCardboardStock();showToast('Manual cardboard data deleted. Current stock unchanged.','success');}catch(e){showToast(dbErrorMessage(e,'Manual cardboard data delete failed'),'error');}
+  });
+}
+async function resetCardboardStock(){
+  if(currentUserRole!=='Admin') return showToast('Only Admin can reset cardboard stock.','error');
+  const count=cardboardStockList.length;
+  showConfirm(`<b style="color:#b91c1c">RESET ALL CARDBOARD STOCK</b><br><br>This will permanently delete <b>${count}</b> cardboard stock transaction(s) from the database.<br><br><span style="color:#047857;font-weight:700">Manual Cardboard Data will NOT be deleted. Current aluminium production stock will NOT be changed.</span><br><br><span style="color:#b91c1c;font-weight:700">This cannot be undone.</span>`,async()=>{
+    if(stockResetInProgress)return; stockResetInProgress=true; isAppBusy=true; const btn=document.getElementById('resetCardboardBtn'); const old=btn?.innerHTML;
+    try{
+      if(btn){btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Resetting...';}
+      const {error}=await supabaseClient.from('cardboard_stock').delete().gte('id',0); if(error)throw error;
+      cardboardStockList=[]; saveCardboardLocally(); renderCardboardStock();
+      showToast(`Cardboard stock reset successfully. ${count} transaction(s) deleted. Manual data and Current Stock are unchanged.`,'success');
+    }catch(e){showToast(dbErrorMessage(e,'Cardboard stock reset failed'),'error');}
+    finally{if(btn){btn.disabled=false;btn.innerHTML=old||'<i class="fa-solid fa-trash-can"></i> Reset Cardboard Stock';}stockResetInProgress=false;isAppBusy=false;}
+  });
+}
+
+async function submitDailyEntry() {
+  if(isAppBusy) return; isAppBusy=true;
+  try {
+    if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return;
+    const dateVal=document.getElementById('entryDate').value, shiftVal=document.getElementById('shift').value,
+      profileVal=document.getElementById('selectProfile').value, itemCodeVal=document.getElementById('selectItemCode').value,
+      lengthVal=document.getElementById('selectLength').value, cutQty=parseInt(document.getElementById('cutQty').value)||0,
+      punchQty=parseInt(document.getElementById('punchQty').value)||0, wrapQty=parseInt(document.getElementById('wrapQty').value)||0,
+      enteredBoxes=parseInt(document.getElementById('boxQty').value)||0, crateQty=parseInt(document.getElementById('crateQty').value)||0;
+    if(!dateVal||!profileVal||!itemCodeVal||!lengthVal) return showToast('Please select correctly.','warning');
+    const item=masterData.find(m=>String(m.profile).trim()===profileVal&&m.itemCode===itemCodeVal&&cleanLen(m.length)===cleanLen(lengthVal));
+    if(!item) return showToast('Selected catalog item was not found.','error');
+
+    const previous={cutQty:Number(item.cutQty)||0,punchQty:Number(item.punchQty)||0,wrapQty:Number(item.wrapQty)||0,boxQty:Number(item.boxQty)||0,crateQty:Number(item.crateQty)||0};
+    let next={...previous};
+    const boxPcs=enteredBoxes*(item.boxCapacity||100);
+    next.cutQty+=cutQty;
+    if(punchQty>0){ next.cutQty=Math.max(0,next.cutQty-punchQty); next.punchQty+=punchQty; }
+    if(wrapQty>0){
+      if(isPunchBypassed(profileVal,lengthVal)||next.punchQty<=0) next.cutQty=Math.max(0,next.cutQty-wrapQty);
+      else if(next.punchQty>=wrapQty) next.punchQty-=wrapQty;
+      else { const rem=wrapQty-next.punchQty; next.punchQty=0; next.cutQty=Math.max(0,next.cutQty-rem); }
+      next.wrapQty+=wrapQty;
+    }
+    if(boxPcs>0){ next.wrapQty=Math.max(0,next.wrapQty-boxPcs); next.boxQty+=boxPcs; }
+    if(crateQty>0){ next.boxQty=Math.max(0,next.boxQty-crateQty); next.crateQty+=crateQty; }
+
+    const newLog={log_date:dateVal,shift:shiftVal,profile:profileVal,length:cleanLen(lengthVal),cut_qty:cutQty,punch_qty:punchQty,wrap_qty:wrapQty,box_qty:boxPcs,crate_qty:crateQty,log_time:new Date().toLocaleTimeString()};
+    let stockUpdated=false, insertedLog=null, cardboardDeducted=null;
+    try {
+      // Validate and reserve cardboard BEFORE committing production movement.
+      if(enteredBoxes>0) cardboardDeducted=await deductCardboardBoxesForProduction(profileVal,itemCodeVal,lengthVal,enteredBoxes);
+      if(item.db_id){
+        await dbUpdate('master_catalog',{cut_qty:next.cutQty,punch_qty:next.punchQty,wrap_qty:next.wrapQty,box_qty:next.boxQty,crate_qty:next.crateQty},item.db_id,'Production stock save failed');
+        stockUpdated=true;
+      } else throw new Error('Production stock save failed: this catalog item has no database ID. Refresh data and try again.');
+      insertedLog=await dbInsert('history_logs',newLog,'Production history save failed');
+    } catch(err) {
+      if(stockUpdated&&item.db_id){ try{ await dbUpdate('master_catalog',previousToDb(previous),item.db_id,'Production rollback failed'); }catch(rb){ console.error(rb); } }
+      // If later production save failed, reverse the cardboard transaction we just made.
+      if(cardboardDeducted){
+        try {
+          // The insert helper intentionally does not request SELECT/RETURNING; remove the most recent matching local transaction if possible.
+          const idx=cardboardStockList.indexOf(cardboardDeducted); if(idx>=0){cardboardStockList.splice(idx,1);saveCardboardLocally();}
+          const q=await supabaseClient.from('cardboard_stock').delete().eq('cb_date',cardboardDeducted.date).eq('cb_type',cardboardDeducted.type).eq('used',enteredBoxes);
+          if(q.error) console.warn('Cardboard rollback warning:',q.error);
+        } catch(rb){ console.warn('Cardboard rollback failed:',rb); }
+      }
+      throw err;
+    }
+    Object.assign(item,{cutQty:next.cutQty,punchQty:next.punchQty,wrapQty:next.wrapQty,boxQty:next.boxQty,crateQty:next.crateQty});
+    historyLogs.unshift({id:insertedLog.id || -Date.now(),date:dateVal,shift:shiftVal,profile:profileVal,length:cleanLen(lengthVal),cutQty,punchQty,wrapQty,boxQty:boxPcs,crateQty,timestamp:insertedLog.log_time||insertedLog.created_at});
+    showToast('Movement saved to Supabase successfully.','success');
+    renderDashboard(); renderProfileSummaryTable(); renderHistoryData(); checkDateStatus(); renderCardboardStock(); renderBalanceWorkTable();
+    ['cutQty','punchQty','wrapQty','boxQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
+  } catch(e){ console.error('Production save error:',e); await loadDataFromSupabase(true).catch(()=>{}); showToast(e.message||'Movement save failed.','error'); }
+  finally{isAppBusy=false;}
+}
+function previousToDb(p){return {cut_qty:p.cutQty,punch_qty:p.punchQty,wrap_qty:p.wrapQty,box_qty:p.boxQty,crate_qty:p.crateQty};}
+
 function openStockEditModal(index, preferredStage = 'cutQty') { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editItemIndex').value = index; document.getElementById('editItemTarget').innerHTML = `Profile: <b>${item.profile}</b> | Item: <b>${item.itemCode || '-'}</b> | Length: <b>${item.length} mm</b>`; document.getElementById('editStageSelect').value = preferredStage; document.getElementById('editStageValue').value = item[preferredStage] || 0; document.getElementById('boxCapacityHelperText').dataset.capacity = item.boxCapacity || 100; document.getElementById('boxCapacityHelperText').innerText = `Master Capacity: ${item.boxCapacity || 100} Pcs per Box`; toggleBoxCountInput(); document.getElementById('stockEditModal').style.display = 'flex'; }
 function toggleBoxCountInput() { const stage = document.getElementById('editStageSelect').value; const boxGroup = document.getElementById('editBoxCountGroup'); if (stage === 'boxQty') { boxGroup.style.display = 'flex'; syncBoxCount(); } else { boxGroup.style.display = 'none'; } }
 function syncBoxCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const pcs = parseInt(document.getElementById('editStageValue').value) || 0; const capacity = parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity) || 100; const boxes = capacity > 0 ? (pcs / capacity) : 0; document.getElementById('editBoxCountValue').value = boxes % 1 === 0 ? boxes : parseFloat(boxes.toFixed(2)); }
 function syncPcsCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const boxes = parseFloat(document.getElementById('editBoxCountValue').value) || 0; const capacity = parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity) || 100; document.getElementById('editStageValue').value = Math.round(boxes * capacity); }
 function closeStockEditModal() { document.getElementById('stockEditModal').style.display = 'none'; }
-async function saveSingleStageEdit() { const index = parseInt(document.getElementById('editItemIndex').value); const stage = document.getElementById('editStageSelect').value; const newQty = parseInt(document.getElementById('editStageValue').value) || 0; const item = masterData[index]; item[stage] = Math.max(0, newQty); if (item.db_id) { const updateObj = {}; updateObj[stage.replace('Qty', '_qty')] = item[stage]; try { await supabaseClient.from('master_catalog').update(updateObj).eq('id', item.db_id); } catch(e){} } closeStockEditModal(); showToast("Stock edit saved successfully", "success"); renderProfileSummaryTable(); renderDashboard(); renderBalanceWorkTable(); }
+async function saveSingleStageEdit() { try { const index=parseInt(document.getElementById('editItemIndex').value); const stage=document.getElementById('editStageSelect').value; const newQty=Math.max(0,parseInt(document.getElementById('editStageValue').value)||0); const item=masterData[index]; if(!item?.db_id) throw new Error('Stock edit failed: catalog record is not linked to Supabase.'); const field=stage.replace('Qty','_qty'); const updated={}; updated[field]=newQty; await dbUpdate('master_catalog',updated,item.db_id,'Stock edit failed'); item[stage]=newQty; closeStockEditModal(); showToast('Stock edit saved successfully.','success'); renderProfileSummaryTable(); renderDashboard(); renderBalanceWorkTable(); } catch(e){console.error(e);await loadDataFromSupabase(true).catch(()=>{});showToast(e.message||'Stock edit failed.','error');} }
 
 function populatePoProfileDropdown() { const select = document.getElementById('poSelectProfile'); if(!select) return; select.innerHTML = '<option value="">-- Choose Profile --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }
 function onPoProfileSelect() { const profile = document.getElementById('poSelectProfile').value; const itemSelect = document.getElementById('poSelectItemCode'); itemSelect.innerHTML = '<option value="">-- Choose Item Code --</option>'; document.getElementById('poSelectLength').innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile) return; const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => itemSelect.appendChild(new Option(ic, ic))); }
 function onPoItemCodeSelect() { const profile = document.getElementById('poSelectProfile').value; const itemCode = document.getElementById('poSelectItemCode').value; const lengthSelect = document.getElementById('poSelectLength'); lengthSelect.innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile || !itemCode) return; const matches = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode === itemCode); matches.forEach(m => lengthSelect.appendChild(new Option(`${m.length} mm`, m.length))); if(matches.length === 1) lengthSelect.value = matches[0].length; }
-async function saveNewPO() { if(isAppBusy) return; isAppBusy=true; try { const dateVal = document.getElementById('poDate').value; const poNum = document.getElementById('poNumber').value.trim(); const profileVal = document.getElementById('poSelectProfile').value; const itemCodeVal = document.getElementById('poSelectItemCode').value; const lengthVal = document.getElementById('poSelectLength').value; const orderQtyVal = parseInt(document.getElementById('poOrderQty').value) || 0; if (!dateVal || !poNum || !profileVal || !itemCodeVal || !lengthVal || orderQtyVal <= 0) { showToast("Fill all valid values", "warning"); return; } const newPo = { po_date: dateVal, po_number: poNum, profile: profileVal, length: cleanLen(lengthVal), order_qty: orderQtyVal }; const { data: inserted } = await supabaseClient.from('production_orders').insert([newPo]).select(); if (inserted && inserted.length > 0) poList.unshift({ id: inserted[0].id, date: dateVal, poNumber: poNum, profile: profileVal, length: cleanLen(lengthVal), orderQty: orderQtyVal }); showToast("PO saved!", "success"); document.getElementById('poEntryForm').reset(); updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); renderDashboard(); populateShipmentPoDropdown(); populatePlPoDropdown(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
-async function processExcelUpload() { const fileInput = document.getElementById('excelUpload'); if (!fileInput.files || fileInput.files.length === 0) return; if (currentUserRole !== 'Admin') return; const uploadBtn = document.getElementById('poUploadBtn'); const originalBtnText = uploadBtn.innerHTML; uploadBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Uploading...`; uploadBtn.disabled = true; const file = fileInput.files[0]; const reader = new FileReader(); reader.onload = async function(e) { try { const data = new Uint8Array(e.target.result); const workbook = XLSX.read(data, { type: 'array' }); const sheetName = workbook.SheetNames[0]; const worksheet = workbook.Sheets[sheetName]; const rawJson = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }); if (!rawJson || rawJson.length === 0) return; let headerRowIndex = -1; let headers = []; for (let i = 0; i < Math.min(15, rawJson.length); i++) { const rowStr = rawJson[i].map(String).join('').toLowerCase().replace(/[\s_\-\(\)\.]/g, ''); let matchCount = 0; if (rowStr.includes('po') || rowStr.includes('order')) matchCount++; if (rowStr.includes('profile') || rowStr.includes('extrusion')) matchCount++; if (rowStr.includes('item') || rowStr.includes('code') || rowStr.includes('desc')) matchCount++; if (rowStr.includes('qty') || rowStr.includes('quantity') || rowStr.includes('pcs')) matchCount++; if (matchCount >= 2) { headerRowIndex = i; headers = rawJson[i].map(h => String(h).toLowerCase().replace(/[\s_\-\(\)\.]/g, '')); break; } } if (headerRowIndex === -1) return; const rowsToInsert = []; let currentPO = ''; for (let i = headerRowIndex + 1; i < rawJson.length; i++) { const rowArr = rawJson[i]; if (rowArr.join('').trim() === '') continue; const norm = {}; headers.forEach((h, idx) => { if (h) norm[h] = rowArr[idx]; }); const exactVal = (keys) => { for(let k of keys) { if(norm[k] !== undefined && norm[k] !== '') return norm[k]; } return undefined; }; let rawPo = exactVal(['ponumber', 'po', 'order', 'orderno', 'purchaseorder']); if (rawPo !== undefined) currentPO = String(rawPo).replace('.0', '').trim(); const poNum = currentPO; const dateVal = formatExcelDate(exactVal(['date', 'podate'])); let profileVal = String(exactVal(['profile', 'profileno', 'profilecode', 'extrusion']) || '').trim(); if (profileVal.toUpperCase().startsWith('AL-')) profileVal = profileVal.substring(3); const itemCodeVal = String(exactVal(['itemcode', 'item', 'code', 'partno']) || '').trim(); let lengthVal = cleanLen(String(exactVal(['length', 'lengthmm']) || '').trim()); const qtyVal = parseInt(exactVal(['orderqty', 'qty', 'quantity', 'totalpcs', 'pcs'])) || 0; if (profileVal && itemCodeVal) { const matchedCat = masterData.find(m => String(m.profile).trim() === String(profileVal).trim() && m.itemCode.toLowerCase() === itemCodeVal.toLowerCase()); if (matchedCat) lengthVal = cleanLen(matchedCat.length); } if (poNum && profileVal && lengthVal && qtyVal > 0) { rowsToInsert.push({ po_date: dateVal, po_number: poNum, profile: profileVal, length: lengthVal, order_qty: qtyVal }); } } if (rowsToInsert.length === 0) return; await supabaseClient.from('production_orders').insert(rowsToInsert); let { data: poData } = await supabaseClient.from('production_orders').select('*'); if (poData) { poList = poData.sort((a, b) => b.id - a.id).map(item => ({ id: item.id, date: item.po_date, poNumber: item.po_number, profile: item.profile, length: cleanLen(item.length), orderQty: item.order_qty })); } fileInput.value = ''; showToast(`Imported POs!`, "success"); updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); renderDashboard(); populateShipmentPoDropdown(); populatePlPoDropdown(); renderBalanceWorkTable(); } catch (err) {} finally { uploadBtn.innerHTML = originalBtnText; uploadBtn.disabled = false; } }; reader.readAsArrayBuffer(file); }
-function updatePoFilters() { const filterPo = document.getElementById('filterPoNumber'); const filterProf = document.getElementById('filterPoProfile'); const filterItem = document.getElementById('filterPoItemCode'); if(!filterPo || !filterProf || !filterItem) return; filterPo.innerHTML = '<option value="">-- All PO Numbers --</option>'; filterProf.innerHTML = '<option value="">-- All Profiles --</option>'; filterItem.innerHTML = '<option value="">-- All Item Codes --</option>'; [...new Set(poList.map(p => String(p.poNumber).trim()))].forEach(po => filterPo.appendChild(new Option(po, po))); [...new Set(poList.map(p => String(p.profile).trim()))].forEach(p => filterProf.appendChild(new Option(`${p}`, p))); }
-function onPoFilterProfileChange() { const profile = document.getElementById('filterPoProfile').value; const filterItem = document.getElementById('filterPoItemCode'); filterItem.innerHTML = '<option value="">-- All Item Codes --</option>'; if(profile) { const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => filterItem.appendChild(new Option(ic, ic))); } renderPoDetailsTable(); }
-function renderPoDetailsTable() { 
-    const poFilter = document.getElementById('filterPoNumber').value; 
-    const profFilter = document.getElementById('filterPoProfile').value; 
-    const itemFilter = document.getElementById('filterPoItemCode').value; 
-    
-    const thead = document.querySelector('#poDetailsTableBody')?.parentElement.querySelector('thead tr');
-    if (thead && !thead.innerHTML.includes('Shipped Qty')) {
-        thead.innerHTML = `<th>PO Date</th><th>PO Number</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Unit Wt</th><th>Req Qty</th><th style="background:#0284c7;color:white;">Shipped Qty</th><th style="background:#e11d48;color:white;">Balance Qty</th><th>Action</th>`;
-    }
-
-    const tbody = document.getElementById('poDetailsTableBody'); 
-    if(!tbody) return;
-    tbody.innerHTML = ''; 
-    let filtered = poList; 
-    if (poFilter) filtered = filtered.filter(p => String(p.poNumber).trim() === String(poFilter).trim()); 
-    if (profFilter) filtered = filtered.filter(p => String(p.profile).trim() === String(profFilter).trim()); 
-    if (itemFilter) filtered = filtered.filter(p => { 
-        const matchedCat = masterData.find(m => String(m.profile) === String(p.profile) && cleanLen(m.length) === cleanLen(p.length)); 
-        return matchedCat && matchedCat.itemCode === itemFilter; 
-    }); 
-    
-    if (filtered.length === 0) { tbody.innerHTML = `<tr><td colspan="10" style="color:#888; text-align:center;">No POs found.</td></tr>`; return; } 
-    
-    let html = ''; 
-    filtered.forEach(po => { 
-        const matched = masterData.find(m => String(m.profile).trim() === String(po.profile).trim() && cleanLen(m.length) === cleanLen(po.length)); 
-        
-        let shippedSoFar = 0;
-        shipmentList.filter(s => String(s.poNumber).trim() === String(po.poNumber).trim() && String(s.profile).trim() === String(po.profile).trim() && cleanLen(s.length) === cleanLen(po.length)).forEach(s => shippedSoFar += s.shippedQty);
-        let balanceQty = Math.max(0, po.orderQty - shippedSoFar);
-        
-        if (balanceQty === 0) return;
-
-        html += `<tr>
-            <td>${po.date}</td>
-            <td><b>${po.poNumber}</b></td>
-            <td>${po.profile}</td>
-            <td>${matched?matched.itemCode:'-'}</td>
-            <td>${po.length} mm</td>
-            <td>${matched?matched.unitWeight:0} kg</td>
-            <td><span class="stock-badge" style="background:#064e3b; color:#fff;">${po.orderQty} Pcs</span></td>
-            <td><span class="stock-badge" style="background:#e0f2fe; color:#0284c7; border:1px solid #bae6fd;">${shippedSoFar} Pcs</span></td>
-            <td><span class="stock-badge" style="background:#ffe4e6; color:#e11d48; border:1px solid #fecdd3;">${balanceQty} Pcs</span></td>
-            <td>${currentUserRole === 'Admin' ? `<button class="btn btn-accent" style="padding:4px 8px;" onclick="openGenericEdit('production_orders', ${po.id}, {order_qty: '${po.orderQty}'})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:4px 8px;" onclick="deletePoItem(${po.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td>
-        </tr>`; 
-    }); 
-    if(html === '') html = `<tr><td colspan="10" style="color:#888; text-align:center;">All filtered PO items are fully shipped!</td></tr>`;
-    tbody.innerHTML = html; 
+async function saveNewPO() {
+  if(isAppBusy)return; isAppBusy=true;
+  try{
+    const dateVal=document.getElementById('poDate').value, poNum=document.getElementById('poNumber').value.trim(), profileVal=document.getElementById('poSelectProfile').value, itemCodeVal=document.getElementById('poSelectItemCode').value, lengthVal=document.getElementById('poSelectLength').value, orderQtyVal=parseInt(document.getElementById('poOrderQty').value)||0;
+    if(!dateVal||!poNum||!profileVal||!itemCodeVal||!lengthVal||orderQtyVal<=0)return showToast('Fill all valid values','warning');
+    const newPo={po_date:dateVal,po_number:poNum,profile:profileVal,length:cleanLen(lengthVal),order_qty:orderQtyVal};
+    const inserted=await dbInsert('production_orders',newPo,'PO save failed');
+    poList.unshift({id:inserted.id || -Date.now(),date:dateVal,poNumber:poNum,profile:profileVal,length:cleanLen(lengthVal),orderQty:orderQtyVal});
+    showToast('PO saved to Supabase successfully!','success'); document.getElementById('poEntryForm').reset(); updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); renderDashboard(); populateShipmentPoDropdown(); populatePlPoDropdown(); renderBalanceWorkTable();
+  }catch(e){console.error('PO save error:',e);showToast(e.message||'PO save failed.','error');}finally{isAppBusy=false;}
 }
+
 function deletePoItem(id) { if (currentUserRole !== 'Admin') return; showConfirm("Delete Production Order?", async () => { await supabaseClient.from('production_orders').delete().eq('id', id); poList = poList.filter(p => p.id !== id); updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); renderDashboard(); populateShipmentPoDropdown(); populatePlPoDropdown(); renderBalanceWorkTable(); showToast("Deleted", "success"); }); }
 
 function populateShipmentPoDropdown() { const poSelect = document.getElementById('shipSelectPo'); if(!poSelect) return; poSelect.innerHTML = '<option value="">-- Choose PO Number --</option>'; [...new Set(poList.map(p => String(p.poNumber).trim()))].forEach(po => poSelect.appendChild(new Option(po, po))); }
@@ -1664,12 +2012,13 @@ async function saveShipmentEntry(){
   if((cat.crateQty||0)<qtyToShip)return showToast(`Insufficient Crate Stock. Available: ${cat.crateQty||0} Pcs.`,'error');
   const newRemaining=remainingBefore-qtyToShip;
   const newShipment={shipment_date:shipDate,shipment_month:month,po_number:poNum,profile,length,container,shipped_qty:qtyToShip,remaining_balance:newRemaining};
-  const {data:inserted,error:shipError}=await supabaseClient.from('shipments').insert([newShipment]).select();
+  const {error:shipError}=await supabaseClient.from('shipments').insert([newShipment]);
   if(shipError)throw new Error(`Shipment save failed: ${shipError.message}`);
+  const shipmentLocalId=-Date.now();
   const nextCrate=cat.crateQty-qtyToShip;
   const {error:stockError}=await supabaseClient.from('master_catalog').update({crate_qty:nextCrate}).eq('id',cat.db_id);
-  if(stockError){if(inserted?.[0]?.id)await supabaseClient.from('shipments').delete().eq('id',inserted[0].id);throw new Error(`Shipment stock update failed: ${stockError.message}`);}
-  cat.crateQty=nextCrate; shipmentList.unshift({id:inserted[0].id,date:shipDate,month,poNumber:poNum,profile,length,container,shippedQty:qtyToShip,remainingBalance:newRemaining});
+  if(stockError){throw new Error(`Shipment stock update failed: ${stockError.message}`);}
+  cat.crateQty=nextCrate; shipmentList.unshift({id:shipmentLocalId,date:shipDate,month,poNumber:poNum,profile,length,container,shippedQty:qtyToShip,remainingBalance:newRemaining});
   showToast('Shipment saved successfully.','success'); document.getElementById('shipmentEntryForm').reset(); window.renderShipmentHistoryTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable(); updatePoFilters(); renderPoDetailsTable();
  }catch(e){console.error(e);showToast(e.message||'Shipment save failed.','error');}finally{isAppBusy=false;}
 }
@@ -1685,35 +2034,207 @@ window.downloadPackingTemplate = function(){
     exportTableToExcel(rows,'AIS_Packing_List_Template','Packing List');
 };
 
-window.exportPlReadyCrates = function() {
-    let readyCratesExportData = []; 
-    let availableStock = masterData.map(m => ({ ...m })); 
-    let sortedPls = [...packingLists].sort(sortCrates);
-
-    sortedPls.forEach(item => {
-        const matched = availableStock.find(m => String(m.profile).trim() == String(item.profile).trim() && String(m.itemCode).trim() == String(item.itemCode).trim() && cleanLen(m.length) == cleanLen(item.length));
-        let allocatedCrate = 0, allocatedBox = 0;
-        if (matched) {
-            let combinedBoxStock = matched.boxQty + matched.crateQty;
-            allocatedBox = Math.min(item.pcsQty, combinedBoxStock);
-            if (allocatedBox > matched.crateQty) {
-                matched.boxQty -= (allocatedBox - matched.crateQty);
-                matched.crateQty = 0;
-            } else {
-                matched.crateQty -= allocatedBox;
-            }
-        }
-        
-        let isManualComplete = isManualCrateComplete(item.crateNo, activePackingContainer) ? true : false;
-        
-        let status = '';
-        if (isManualComplete) { status = "Manual Packed"; }
-        else if (allocatedBox === item.pcsQty) { status = "Ready to Pack"; } 
-        else { status = "Partially Ready"; }
-        
-        readyCratesExportData.push({ "Crate ID": item.crateNo, "Profile": item.profile, "Item Code": item.itemCode, "Length": item.length, "Req Qty": item.pcsQty, "Box Available": allocatedBox, "Status": status });
+function getReadyCrateRows(records) {
+    // Crate-level readiness/status. A crate is Ready only when EVERY
+    // profile/item/length line assigned to that crate has its full required
+    // quantity in Box Stage. For non-ready crates, show the earliest missing
+    // stage so the operator knows why the crate is pending.
+    const rows=[];
+    const stockMap=new Map();
+    masterData.forEach(m=>{
+        const key=`${String(m.profile||'').trim()}|${String(m.itemCode||'').trim()}|${cleanLen(m.length)}`;
+        stockMap.set(key, {
+            cut:Math.max(0, Number(m.cutQty)||0),
+            punch:Math.max(0, Number(m.punchQty)||0),
+            wrap:Math.max(0, Number(m.wrapQty)||0),
+            box:Math.max(0, Number(m.boxQty)||0),
+            crate:Math.max(0, Number(m.crateQty)||0)
+        });
     });
-    exportTableToExcel(readyCratesExportData, "AIS_Ready_Crates", "Ready Crates");
+
+    const crateGroups=new Map();
+    [...records].sort(sortCrates).forEach(item=>{
+        const crateNo=String(item.crateNo||'-').trim();
+        if(!crateGroups.has(crateNo)) crateGroups.set(crateNo, []);
+        crateGroups.get(crateNo).push(item);
+    });
+
+    function lineStatus(required, st){
+        const req=Math.max(0, Number(required)||0);
+        if(req<=0) return {status:'Ready to Pack',availableBox:0,reason:'Ready'};
+        const box=st?.box||0, wrap=st?.wrap||0, punch=st?.punch||0, cut=st?.cut||0;
+        if(box>=req) return {status:'Ready to Pack',availableBox:req,reason:'Ready'};
+        // Stock is counted through the production flow. The first stage that
+        // cannot supply the remaining requirement determines the pending label.
+        if(box+wrap>=req) return {status:'Pending Box',availableBox:box,reason:'Pending Box'};
+        if(box+wrap+punch>=req) return {status:'Pending Wrapping',availableBox:box,reason:'Pending Wrapping'};
+        if(box+wrap+punch+cut>=req) return {status:'Pending Punch',availableBox:box,reason:'Pending Punch'};
+        return {status:'Pending Cut',availableBox:box,reason:'Pending Cut'};
+    }
+
+    crateGroups.forEach(items=>{
+        const crateNo=String(items[0]?.crateNo||'-').trim();
+        const details=[];
+        let crateReady=true;
+        let crateStatus='Ready to Pack';
+        let statusPriority=99;
+        const priority={
+            'Pending Cut':1,
+            'Pending Punch':2,
+            'Pending Wrapping':3,
+            'Pending Box':4,
+            'Ready to Pack':99,
+            'Manual Packed':100
+        };
+
+        items.forEach(item=>{
+            const key=`${String(item.profile||'').trim()}|${String(item.itemCode||'').trim()}|${cleanLen(item.length)}`;
+            const req=Math.max(0, Number(item.pcsQty)||0);
+            const st=stockMap.get(key)||{cut:0,punch:0,wrap:0,box:0,crate:0};
+            const ls=lineStatus(req,st);
+            const manual=isManualCrateComplete(crateNo,activePackingContainer,activePackingMonth);
+            const finalStatus=manual ? 'Manual Packed' : ls.status;
+            if(!manual && ls.status!=='Ready to Pack') crateReady=false;
+            if(priority[finalStatus] < statusPriority){ statusPriority=priority[finalStatus]; crateStatus=finalStatus; }
+            const exPlan=getExtrusionPlan(item.profile,item.itemCode,item.length,req);
+            details.push({
+                id:item.id, crateNo, profile:item.profile||'-', itemCode:item.itemCode||'-', length:item.length||'-',
+                exLength:exPlan.exLength, pcsPerEx:exPlan.pcsPerEx, requiredExtrusions:exPlan.requiredExtrusions,
+                pcsQty:req, availableBox:Math.min(req,st.box), status:finalStatus,
+                cut:st.cut, punch:st.punch, wrap:st.wrap, box:st.box, crate:st.crate,
+                plNumber:item.plNumber||'', poNumber:item.poNumber||'', date:item.date||''
+            });
+        });
+
+        const manual=isManualCrateComplete(crateNo,activePackingContainer,activePackingMonth);
+        if(manual) crateStatus='Manual Packed';
+        rows.push({
+            id:details[0]?.id, crateNo,
+            profile:details[0]?.profile||'-', itemCode:details[0]?.itemCode||'-', length:details[0]?.length||'-',
+            pcsQty:details.reduce((a,x)=>a+x.pcsQty,0),
+            availableBox:details.reduce((a,x)=>a+x.availableBox,0),
+            requiredExtrusions:details.reduce((a,x)=>a+(Number(x.requiredExtrusions)||0),0),
+            status:crateStatus,
+            profiles:details,
+            profileCount:details.length,
+            plNumber:details.map(x=>x.plNumber).filter(Boolean).join(', '),
+            poNumber:details.map(x=>x.poNumber).filter(Boolean).join(', ')
+        });
+    });
+    return rows;
+}
+function getFilteredReadyCrateRows(records){
+    const status=(document.getElementById('plReadyStatusFilter')?.value||'Ready to Pack').trim();
+    const search=(document.getElementById('plReadySearch')?.value||'').trim().toLowerCase();
+    return getReadyCrateRows(records).filter(r=>{
+        const statusOk=!status||r.status===status;
+        const text=[r.crateNo,r.profile,r.itemCode,r.length,r.plNumber,r.poNumber].join(' ').toLowerCase();
+        return statusOk && (!search||text.includes(search));
+    });
+}
+window.exportPlReadyCrates=function(){
+    ensurePackingSelection();
+    const rows=getFilteredReadyCrateRows(getPackingContainerRecords(activePackingMonth,activePackingContainer));
+    const data=rows.map(r=>({'Crate ID':r.crateNo,'Profile':r.profile,'Item Code':r.itemCode,'Length':r.length,'Req Qty':r.pcsQty,'Box Available':r.availableBox,'Status':r.status}));
+    exportTableToExcel(data,'AIS_Ready_Crates','Ready Crates');
+};
+window.exportPlReadyCratesPdf=async function(){
+    ensurePackingSelection();
+    const source=document.querySelector('#plReadyToPackTableBody')?.closest('.card');
+    if(!source){ showToast('Packing List crate section not found.','error'); return; }
+    if(typeof window.html2canvas!=='function' || !window.jspdf?.jsPDF){
+        showToast('PDF display engine is not loaded. Please check your internet connection and refresh.','error');
+        return;
+    }
+
+    const filterLabel=document.getElementById('plReadyStatusFilter')?.value||'All Statuses';
+    const searchValue=(document.getElementById('plReadySearch')?.value||'').trim();
+    const stamp=new Date().toLocaleString('en-GB',{hour12:false});
+    let cloneWrap=null;
+    try{
+        showToast('Preparing Packing List PDF...','info');
+        // Clone the SAME rendered crate card that the user sees on screen.
+        // This keeps the grouped-crate layout, pending reasons, profile rows,
+        // colours, spacing and status badges instead of converting it to a flat table.
+        const clone=source.cloneNode(true);
+        cloneWrap=document.createElement('div');
+        cloneWrap.style.position='fixed';
+        cloneWrap.style.left='-20000px';
+        cloneWrap.style.top='0';
+        cloneWrap.style.width=Math.max(source.getBoundingClientRect().width,1100)+'px';
+        cloneWrap.style.background='#ffffff';
+        cloneWrap.style.padding='18px';
+        cloneWrap.style.zIndex='-1';
+        cloneWrap.style.boxSizing='border-box';
+
+        // PDF should show the page exactly as the packing section, but buttons are not useful on paper.
+        clone.querySelectorAll('button').forEach(el=>el.style.display='none');
+        clone.querySelectorAll('.btn').forEach(el=>el.style.display='none');
+        const title=clone.querySelector('h3');
+        if(title){
+            title.insertAdjacentHTML('afterend',`<div style=\"font:700 11px Arial;color:#64748b;margin:4px 0 10px 0;\">Month: ${activePackingMonth} • ${activePackingContainer} • Filter: ${filterLabel}${searchValue?` • Search: ${searchValue}`:''} • Generated: ${stamp}</div>`);
+        }
+        cloneWrap.appendChild(clone);
+        document.body.appendChild(cloneWrap);
+
+        // Let the browser finish layout before capturing.
+        await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+        const canvas=await window.html2canvas(clone,{
+            scale:2,
+            useCORS:true,
+            backgroundColor:'#ffffff',
+            logging:false,
+            width:cloneWrap.scrollWidth,
+            height:cloneWrap.scrollHeight,
+            windowWidth:cloneWrap.scrollWidth,
+            windowHeight:Math.max(window.innerHeight,cloneWrap.scrollHeight)
+        });
+
+        const {jsPDF}=window.jspdf;
+        const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4',compress:true});
+        const pageW=doc.internal.pageSize.getWidth();
+        const pageH=doc.internal.pageSize.getHeight();
+        const margin=6;
+        const usableW=pageW-margin*2;
+        const pxPerMm=canvas.width/usableW;
+        const sliceHeightPx=Math.floor((pageH-margin*2)*pxPerMm);
+        let y=0; let page=0;
+
+        while(y<canvas.height){
+            const h=Math.min(sliceHeightPx,canvas.height-y);
+            const slice=document.createElement('canvas');
+            slice.width=canvas.width; slice.height=h;
+            const ctx=slice.getContext('2d');
+            ctx.fillStyle='#fff'; ctx.fillRect(0,0,slice.width,slice.height);
+            ctx.drawImage(canvas,0,y,canvas.width,h,0,0,canvas.width,h);
+            const img=slice.toDataURL('image/jpeg',0.94);
+            const imgH=h/pxPerMm;
+            if(page>0) doc.addPage();
+            doc.addImage(img,'JPEG',margin,margin,usableW,imgH,undefined,'FAST');
+            y+=h; page++;
+        }
+        doc.save(`AIS_Packing_List_${String(activePackingMonth).replace(/\s+/g,'_')}_${String(activePackingContainer).replace(/\s+/g,'_')}.pdf`);
+        showToast('Packing List PDF downloaded in the same grouped-crate layout.','success');
+    }catch(e){
+        console.error('Packing List PDF export error:',e);
+        showToast(`Packing List PDF export failed: ${e?.message||e}`,'error');
+    }finally{
+        if(cloneWrap && cloneWrap.parentNode) cloneWrap.parentNode.removeChild(cloneWrap);
+    }
+};
+window.exportPlConsolidated=function(){
+    ensurePackingSelection();
+    const records=getPackingContainerRecords(activePackingMonth,activePackingContainer); const map={};
+    records.forEach(v=>{const key=`${v.profile}_${v.itemCode}_${v.length}`; if(!map[key]) map[key]={profile:v.profile,itemCode:v.itemCode,length:v.length,qty:0}; map[key].qty+=Number(v.pcsQty)||0;});
+    const data=Object.values(map).map(v=>{const m=masterData.find(x=>String(x.profile).trim()===String(v.profile).trim()&&String(x.itemCode).trim()===String(v.itemCode).trim()&&cleanLen(x.length)===cleanLen(v.length)); const stock=m?((m.cutQty||0)+(m.punchQty||0)+(m.wrapQty||0)+(m.boxQty||0)+(m.crateQty||0)):0; const bal=stock-v.qty; return {'Profile':v.profile,'Item Code':v.itemCode,'Length':v.length,'Total Req Pcs':v.qty,'Current Stock (Pcs)':stock,'Balance Work':bal};});
+    exportTableToExcel(data,'AIS_Packing_Summary','Packing Summary');
+};
+window.exportPlConsolidatedPdf=function(){
+    ensurePackingSelection();
+    const records=getPackingContainerRecords(activePackingMonth,activePackingContainer); const map={};
+    records.forEach(v=>{const key=`${v.profile}_${v.itemCode}_${v.length}`; if(!map[key]) map[key]={profile:v.profile,itemCode:v.itemCode,length:v.length,qty:0}; map[key].qty+=Number(v.pcsQty)||0;});
+    const data=Object.values(map).map(v=>{const m=masterData.find(x=>String(x.profile).trim()===String(v.profile).trim()&&String(x.itemCode).trim()===String(v.itemCode).trim()&&cleanLen(x.length)===cleanLen(v.length)); const stock=m?((m.cutQty||0)+(m.punchQty||0)+(m.wrapQty||0)+(m.boxQty||0)+(m.crateQty||0)):0; return {'Profile':v.profile,'Item Code':v.itemCode,'Length':v.length,'Total Req Pcs':v.qty,'Current Stock (Pcs)':stock,'Balance Work':stock-v.qty};});
+    exportDataToPdf(data,'AIS_Packing_Summary','AIS Tracker - Packing List Summary',`Month: ${activePackingMonth} • ${activePackingContainer}`);
 };
 
 function renderPlAnalytics(filteredPls) {
@@ -1958,69 +2479,84 @@ function renderPackingListTable() {
         const readyHead = document.querySelector('#plReadyToPackTableBody')?.parentElement.querySelector('thead tr');
         if(readyHead && !readyHead.innerHTML.includes('Action')) readyHead.insertAdjacentHTML('beforeend', '<th style="width:120px;">Action</th>');
 
-        let readyCratesHTML = ''; 
-        let availableStock = masterData.map(m => ({ ...m })); 
-        let sortedPls = [...filtered].sort(sortCrates);
+        const readyRows=getReadyCrateRows(filtered);
+        const statusFilter=document.getElementById('plReadyStatusFilter')?.value||'Ready to Pack';
+        const searchFilter=(document.getElementById('plReadySearch')?.value||'').trim().toLowerCase();
+        const readyFiltered=readyRows.filter(r=>{
+            const statusOk=!statusFilter||r.status===statusFilter;
+            const detailText=(r.profiles||[]).map(x=>[x.profile,x.itemCode,x.length,x.plNumber,x.poNumber,x.status].join(' ')).join(' ');
+            const text=[r.crateNo,r.profile,r.itemCode,r.length,r.plNumber,r.poNumber,detailText].join(' ').toLowerCase();
+            return statusOk && (!searchFilter||text.includes(searchFilter));
+        });
 
-        for (let i = 0; i < sortedPls.length; i++) {
-            let item = sortedPls[i];
-            
-            let rowspan = 1;
-            if (i === 0 || sortedPls[i].crateNo !== sortedPls[i-1].crateNo) {
-                let j = i + 1;
-                while (j < sortedPls.length && sortedPls[j].crateNo === item.crateNo) {
-                    rowspan++;
-                    j++;
-                }
-            } else {
-                rowspan = 0;
-            }
-
-            const matched = availableStock.find(m => String(m.profile).trim() == String(item.profile).trim() && String(m.itemCode).trim() == String(item.itemCode).trim() && cleanLen(m.length) == cleanLen(item.length));
-            let allocatedCrate = 0, allocatedBox = 0;
-            if (matched) {
-                let combinedBoxStock = matched.boxQty + matched.crateQty;
-                allocatedBox = Math.min(item.pcsQty, combinedBoxStock);
-                if (allocatedBox > matched.crateQty) {
-                    matched.boxQty -= (allocatedBox - matched.crateQty);
-                    matched.crateQty = 0;
-                } else {
-                    matched.crateQty -= allocatedBox;
-                }
-            }
-
-            let isManualComplete = isManualCrateComplete(item.crateNo, activePackingContainer);
-            let status = ''; let actionBtn = '';
-
-            let manualTickHtml = `<label style="cursor:${currentUserRole === 'Admin' ? 'pointer' : 'not-allowed'}; display:inline-flex; align-items:center; gap:4px; background:${isManualComplete ? '#059669' : '#f1f5f9'}; color:${isManualComplete ? '#fff' : '#475569'}; padding:4px 8px; border-radius:6px; font-size:11px; font-weight:bold; border:1px solid ${isManualComplete ? '#059669' : '#cbd5e1'};"><input type="checkbox" onchange="window.toggleManualCrate('${item.crateNo}', this.checked)" ${isManualComplete ? 'checked' : ''} ${currentUserRole === 'Admin' ? '' : 'disabled'}> Pack</label>`;
-
-            if (isManualComplete) {
-                status = `<span style="color:#059669;font-weight:bold;background:rgba(209, 250, 229, 0.4);padding:4px 8px;border-radius:6px;"><i class="fa-solid fa-check-double"></i> Manual Packed</span>`;
-                actionBtn = manualTickHtml;
-            } else if (allocatedBox === item.pcsQty) {
-                status = `<span style="color:var(--success-color);font-weight:bold;background:rgba(209, 250, 229, 0.4);padding:4px 8px;border-radius:6px;"><i class="fa-solid fa-check"></i> Ready in Box</span>`;
-                if (currentUserRole === 'Admin') {
-                    actionBtn = `
-                        <div style="display:flex; gap:4px; align-items:center;">
-                            ${manualTickHtml}
-                            <button class="btn" style="background:#0284c7; padding:4px 8px; font-size:11px;" onclick="openGenericEdit('packing_list', ${item.id}, {pcs_qty: '${item.pcsQty}', crate_no: '${item.crateNo}'})"><i class="fa-solid fa-pen"></i></button>
-                        </div>
-                    `;
-                } else { actionBtn = `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`; }
-            } else {
-                status = `<span style="color:var(--warning-color);font-weight:bold;background:rgba(255, 228, 230, 0.4);padding:4px 8px;border-radius:6px;"><i class="fa-solid fa-triangle-exclamation"></i> Partially Ready</span>`;
-                if (currentUserRole === 'Admin') {
-                    actionBtn = `<div style="display:flex; gap:4px; align-items:center;">${manualTickHtml} <button class="btn" style="background:#0284c7; padding:4px 8px; font-size:11px;" onclick="openGenericEdit('packing_list', ${item.id}, {pcs_qty: '${item.pcsQty}', crate_no: '${item.crateNo}'})"><i class="fa-solid fa-pen"></i></button></div>`;
-                } else { actionBtn = `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`; }
-            }
-            
-            readyCratesHTML += `<tr>`;
-            if(rowspan > 0) {
-                readyCratesHTML += `<td rowspan="${rowspan}" style="vertical-align:middle; text-align:center; border-right: 2px solid var(--emerald-border); background:rgba(0,0,0,0.02);"><b>${item.crateNo}</b></td>`;
-            }
-            readyCratesHTML += `<td>${item.profile}</td><td><span style="color:var(--info-color);font-weight:600;">${item.itemCode}</span></td><td>${item.length} mm</td><td><span class="stock-badge bg-total">${item.pcsQty}</span></td><td><span class="stock-badge" style="background:#ecfdf5; color:#10b981;">${allocatedBox}</span></td><td>${status}</td><td>${actionBtn}</td></tr>`;
+        function crateStatusHtml(status){
+            const map={
+                'Ready to Pack':{c:'#059669',bg:'#ecfdf5',icon:'fa-check',label:'Ready to Pack'},
+                'Manual Packed':{c:'#059669',bg:'#d1fae5',icon:'fa-check-double',label:'Manual Packed'},
+                'Pending Box':{c:'#b45309',bg:'#fef3c7',icon:'fa-box-open',label:'Pending Box'},
+                'Pending Wrapping':{c:'#c2410c',bg:'#ffedd5',icon:'fa-arrows-rotate',label:'Pending Wrapping'},
+                'Pending Punch':{c:'#7c3aed',bg:'#f3e8ff',icon:'fa-hammer',label:'Pending Punch'},
+                'Pending Cut':{c:'#dc2626',bg:'#fee2e2',icon:'fa-scissors',label:'Pending Cut'}
+            };
+            const m=map[status]||map['Pending Cut'];
+            return `<span style="color:${m.c};font-weight:800;background:${m.bg};padding:5px 9px;border-radius:7px;display:inline-flex;align-items:center;gap:5px;"><i class="fa-solid ${m.icon}"></i> ${m.label}</span>`;
+        }
+        function lineStatusHtml(status){
+            return crateStatusHtml(status).replace('padding:5px 9px','padding:3px 7px').replace('font-size:','font-size:');
         }
 
+        let readyCratesHTML='';
+        readyFiltered.forEach(row=>{
+            const isManualComplete=row.status==='Manual Packed';
+            const crateBg=isManualComplete?'#ecfdf5':(row.status==='Ready to Pack'?'#f0fdf4':'#fffbeb');
+            const crateBorder=isManualComplete?'#86efac':(row.status==='Ready to Pack'?'#bbf7d0':'#fde68a');
+            const manualTickHtml=`<label style="cursor:${currentUserRole==='Admin'?'pointer':'not-allowed'};display:inline-flex;align-items:center;gap:5px;background:${isManualComplete?'#059669':'#fff'};color:${isManualComplete?'#fff':'#475569'};padding:7px 10px;border-radius:8px;font-size:11px;font-weight:800;border:1px solid ${isManualComplete?'#059669':'#cbd5e1'};"><input type="checkbox" onchange="window.toggleManualCrate('${row.crateNo}', this.checked)" ${isManualComplete?'checked':''} ${currentUserRole==='Admin'?'':'disabled'}> Pack</label>`;
+            const firstItem=(row.profiles||[])[0];
+            const editBtn=(currentUserRole==='Admin' && firstItem)
+                ? `<button class="btn" style="background:#0284c7;padding:7px 10px;font-size:11px;border-radius:8px;" onclick="openGenericEdit('packing_list', ${firstItem.id}, {pcs_qty: '${firstItem.pcsQty}', crate_no: '${firstItem.crateNo}'})"><i class="fa-solid fa-pen"></i></button>`
+                : '';
+            const actionBtn=`<div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;">${manualTickHtml}${editBtn}</div>`;
+
+            const profileCards=(row.profiles||[]).map(i=>{
+                const lineBg=i.status==='Ready to Pack'||i.status==='Manual Packed'?'#ffffff':'#fffaf0';
+                return `<div style="display:grid;grid-template-columns:90px minmax(145px,1.35fr) 95px 95px 85px 100px 100px minmax(115px,.9fr);gap:8px;align-items:center;padding:10px 12px;border-top:1px solid #dbe5ea;background:${lineBg};font-size:12px;">
+                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Profile</div><b style="font-size:13px;color:#334155;">${i.profile}</b></div>
+                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Item Code</div><span style="color:var(--info-color);font-weight:800;">${i.itemCode}</span></div>
+                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Cut L</div><b>${i.length} mm</b></div>
+                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Ex L</div><b style="color:#047857;">${i.exLength ? i.exLength+' mm' : '-'}</b></div>
+                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Pcs / Ex</div><span class="stock-badge" style="background:#eff6ff;color:#0369a1;">${i.pcsPerEx || '-'}</span></div>
+                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">PL Req</div><span class="stock-badge bg-total">${i.pcsQty}</span></div>
+                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Req Ex</div><span class="stock-badge" style="background:#fff7ed;color:#c2410c;">${i.requiredExtrusions || '-'}</span></div>
+                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Box / Status</div><span class="stock-badge" style="background:#ecfdf5;color:#10b981;">${i.availableBox}</span> ${lineStatusHtml(i.status)}</div>
+                </div>`;
+            }).join('');
+
+            readyCratesHTML+=`<tr class="crate-card-row">
+                <td colspan="7" style="padding:0 0 16px 0;border:0;background:transparent;">
+                    <div style="border:2px solid ${crateBorder};border-radius:16px;overflow:hidden;background:${crateBg};box-shadow:0 4px 14px rgba(15,23,42,.10);margin:0 2px 0 2px;position:relative;">
+                        <div style="height:5px;background:${crateBorder};width:100%;"></div>
+                        <div style="display:grid;grid-template-columns:140px 90px minmax(180px,1.4fr) 115px 120px 105px minmax(145px,1fr) 110px;gap:10px;align-items:center;padding:14px 16px;border-bottom:2px solid ${crateBorder};background:linear-gradient(90deg,rgba(255,255,255,.72),rgba(255,255,255,.28));">
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Crate</div><b style="font-size:17px;color:#164e63;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-box-open"></i>${row.crateNo}</b></div>
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Profiles</div><b>${row.profileCount}</b></div>
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Profiles / Items</div><span style="font-size:12px;color:#475569;">${row.profiles.map(x=>x.itemCode).join(' • ')}</span></div>
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">PL Req Total</div><span class="stock-badge bg-total">${row.pcsQty}</span></div>
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Box Stage Total</div><span class="stock-badge" style="background:#ecfdf5;color:#10b981;">${row.availableBox}</span></div>
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Req Extrusions</div><span class="stock-badge" style="background:#fff7ed;color:#c2410c;">${row.requiredExtrusions || '-'}</span></div>
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Crate Status</div>${crateStatusHtml(row.status)}</div>
+                            <div>${actionBtn}</div>
+                        </div>
+                        <div style="padding:0;background:#fff;">
+                            <div style="display:grid;grid-template-columns:90px minmax(145px,1.35fr) 95px 95px 85px 100px 100px minmax(115px,.9fr);gap:8px;align-items:center;padding:8px 12px;background:#dcecf0;color:#164e63;border-bottom:1px solid #c7dfe5;font-size:10px;font-weight:800;text-transform:uppercase;">
+                                <div>Profile</div><div>Item Code</div><div>Cut L</div><div>Ex L</div><div>Pcs / Ex</div><div>PL Req Pcs</div><div>Req Ex</div><div>Box / Status</div>
+                            </div>
+                            ${profileCards}
+                        </div>
+                    </div>
+                </td>
+            </tr>`;
+        });
+        const readySummary=document.getElementById('plReadyFilterSummary');
+        if(readySummary) readySummary.textContent=`${readyFiltered.length} crates shown • ${readyRows.length} total in ${activePackingContainer} • ${statusFilter||'All statuses'}`;
         let rawHTML = '';
         filtered.forEach(pl => {
             rawHTML += `<tr><td>${pl.date}</td><td><b>${pl.plNumber}</b></td><td>${pl.poNumber}</td><td>${pl.month}</td><td>${pl.container}</td><td><span class="stock-badge bg-crate">${pl.crateNo}</span></td><td>${pl.profile}</td><td><span style="color:var(--info-color); font-weight:600;">${pl.itemCode||'-'}</span></td><td>${pl.length} mm</td><td><span class="stock-badge bg-total">${pl.pcsQty} Pcs</span></td><td>${pl.netWeight} kg / ${pl.grossWeight} kg</td>
@@ -2050,11 +2586,11 @@ function renderPackingListTable() {
             let cbBalance = availCardboard - reqBoxes;
             let cbStatusHtml = cbBalance >= 0 ? `<span style="color:var(--success-color); font-weight:800;">OK (+${cbBalance})</span>` : `<span style="color:var(--warning-color); font-weight:800;">Short ${Math.abs(cbBalance)}</span>`;
             
-            return `<tr><td><b>${v.profile}</b></td><td><span style="color:var(--info-color);font-weight:600;">${v.itemCode}</span></td><td>${v.length} mm</td><td><span class="stock-badge bg-total">${v.qty} Pcs</span></td><td><span class="stock-badge bg-wrap">${currentStock} Pcs</span></td><td><b>${balStatus}</b></td><td style="background:${cbBalance < 0 ? 'rgba(225, 29, 72, 0.05)' : 'rgba(16, 185, 129, 0.05)'};">${cbStatusHtml}</td></tr>`;
+            const plan=getExtrusionPlan(v.profile,v.itemCode,v.length,v.qty); return `<tr><td><b>${v.profile}</b></td><td><span style="color:var(--info-color);font-weight:600;">${v.itemCode}</span></td><td>${v.length} mm</td><td>${plan.exLength ? plan.exLength+' mm' : '-'}</td><td><span class="stock-badge" style="background:#eff6ff;color:#0369a1;">${plan.pcsPerEx || '-'} Pcs</span></td><td><span class="stock-badge bg-total">${v.qty} Pcs</span></td><td><span class="stock-badge" style="background:#fff7ed;color:#c2410c;">${plan.requiredExtrusions || '-'} Ex</span></td><td><span class="stock-badge bg-wrap">${currentStock} Pcs</span></td><td><b>${balStatus}</b></td><td style="background:${cbBalance < 0 ? 'rgba(225, 29, 72, 0.05)' : 'rgba(16, 185, 129, 0.05)'};">${cbStatusHtml}</td></tr>`;
         }).join('');
 
-        const sumTbody = document.getElementById('plSummaryTableBody'); if (sumTbody) sumTbody.innerHTML = consHTML || '<tr><td colspan="7" style="text-align:center;">No data</td></tr>';
-        const readyTbody = document.getElementById('plReadyToPackTableBody'); if (readyTbody) readyTbody.innerHTML = readyCratesHTML || '<tr><td colspan="8" style="text-align:center; color:var(--text-muted);">No crates available in Box Stage</td></tr>';
+        const sumTbody = document.getElementById('plSummaryTableBody'); if (sumTbody) sumTbody.innerHTML = consHTML || '<tr><td colspan="10" style="text-align:center;">No data</td></tr>';
+        const readyTbody = document.getElementById('plReadyToPackTableBody'); if (readyTbody) readyTbody.innerHTML = readyCratesHTML || '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);padding:30px;">No crates match this status</td></tr>';
         const rawTbody = document.getElementById('packingListTableBody'); if (rawTbody) rawTbody.innerHTML = rawHTML || '<tr><td colspan="12" style="text-align:center; color:var(--text-muted);">No logs</td></tr>';
     } catch(e) { console.error('Packing list render error:', e); const body=document.getElementById('packingListTableBody'); if(body) body.innerHTML='<tr><td colspan=12 style="text-align:center;color:#e11d48;font-weight:700;">Packing List could not be rendered. Check browser console for details.</td></tr>'; }
 }
@@ -2155,11 +2691,52 @@ window.clearCurrentPackingContainer = function() {
     );
 };
 
+function getExtrusionPlan(profile,itemCode,length,qty){
+    const matched=masterData.find(m=>String(m.profile).trim()===String(profile).trim() && String(m.itemCode||'').trim()===String(itemCode||'').trim() && cleanLen(m.length)===cleanLen(length));
+    const exLength=parseFloat(matched?.exLength)||0;
+    const cutLength=parseFloat(length)||0;
+    const pcsPerEx=(exLength>0 && cutLength>0) ? Math.floor(exLength/cutLength) : 0;
+    const requiredExtrusions=pcsPerEx>0 ? Math.ceil(Math.max(0,Number(qty)||0)/pcsPerEx) : 0;
+    const remainderPcs=pcsPerEx>0 ? Math.max(0,(Number(qty)||0)%pcsPerEx) : 0;
+    return {matched,exLength,cutLength,pcsPerEx,requiredExtrusions,remainderPcs};
+}
+function updatePlExtrusionInfo(){
+    const profile=document.getElementById('plSelectProfile')?.value||'';
+    const itemCode=document.getElementById('plSelectItemCode')?.value||'';
+    const length=document.getElementById('plSelectLength')?.value||'';
+    const qty=parseInt(document.getElementById('plPcsQty')?.value)||0;
+    const exEl=document.getElementById('plExLength'), pcsEl=document.getElementById('plPcsPerEx'), reqEl=document.getElementById('plRequiredExtrusions');
+    if(!exEl||!pcsEl||!reqEl) return;
+    const plan=getExtrusionPlan(profile,itemCode,length,qty);
+    exEl.value=plan.exLength?`${plan.exLength} mm`:'-';
+    pcsEl.value=plan.pcsPerEx?`${plan.pcsPerEx} Pcs`:'-';
+    reqEl.value=plan.requiredExtrusions?`${plan.requiredExtrusions} Ex`:'-';
+    [exEl,pcsEl,reqEl].forEach(el=>el.title='Calculated from Master Catalog Ex Length ÷ Cut Length');
+}
+
 function populatePlPoDropdown() { const plPoSelect = document.getElementById('plSelectPo'); if(!plPoSelect) return; plPoSelect.innerHTML = '<option value="">-- Choose PO Number --</option>'; [...new Set(poList.map(p => String(p.poNumber).trim()))].forEach(po => plPoSelect.appendChild(new Option(po, po))); }
-function onPlPoSelect() { const poNum = document.getElementById('plSelectPo').value; const profileSelect = document.getElementById('plSelectProfile'); profileSelect.innerHTML = '<option value="">-- Select Profile --</option>'; document.getElementById('plSelectItemCode').innerHTML = '<option value="">-- Select Item Code --</option>'; document.getElementById('plSelectLength').innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('plNetWeight').value = ''; if (!poNum) return; const poItems = poList.filter(p => String(p.poNumber).trim() === String(poNum).trim()); [...new Set(poItems.map(p => String(p.profile).trim()))].forEach(prof => profileSelect.appendChild(new Option(prof, prof))); }
-function onPlProfileSelect() { const poNum = document.getElementById('plSelectPo').value; const profile = document.getElementById('plSelectProfile').value; const itemSelect = document.getElementById('plSelectItemCode'); itemSelect.innerHTML = '<option value="">-- Select Item Code --</option>'; document.getElementById('plSelectLength').innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('plNetWeight').value = ''; if (!poNum || !profile) return; const poItems = poList.filter(p => String(p.poNumber).trim() === poNum && String(p.profile).trim() === profile); const uniqueItems = []; poItems.forEach(p => { const matchedCat = masterData.find(m => String(m.profile) === profile && cleanLen(m.length) === cleanLen(p.length)); if(matchedCat && matchedCat.itemCode && !uniqueItems.includes(matchedCat.itemCode)) { uniqueItems.push(matchedCat.itemCode); itemSelect.appendChild(new Option(matchedCat.itemCode, matchedCat.itemCode)); } }); }
-function onPlItemCodeSelect() { const poNum = document.getElementById('plSelectPo').value; const profile = document.getElementById('plSelectProfile').value; const itemCode = document.getElementById('plSelectItemCode').value; const lengthSelect = document.getElementById('plSelectLength'); lengthSelect.innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('plNetWeight').value = ''; if (!poNum || !profile || !itemCode) return; const poItems = poList.filter(p => String(p.poNumber).trim() === poNum && String(p.profile).trim() === profile); const matches = poItems.filter(p => { const matchedCat = masterData.find(m => String(m.profile) === profile && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); matches.forEach(p => lengthSelect.appendChild(new Option(`${p.length} mm`, p.length))); if(matches.length === 1) { lengthSelect.value = matches[0].length; calculatePlWeights(); } }
-function calculatePlWeights() { const poNum = document.getElementById('plSelectPo').value; const profile = document.getElementById('plSelectProfile').value; const itemCode = document.getElementById('plSelectItemCode').value; const length = document.getElementById('plSelectLength').value; const pcsQty = parseInt(document.getElementById('plPcsQty').value) || 0; if (!profile || !itemCode || !length || pcsQty <= 0) { document.getElementById('plNetWeight').value = ''; return; } const po = poList.find(p => { if (String(p.poNumber).trim() !== String(poNum).trim() || cleanLen(p.length) !== cleanLen(length)) return false; const matchedCat = masterData.find(m => String(m.profile) === String(p.profile) && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); if(!po) return; const matched = masterData.find(m => String(m.profile).trim() === String(profile).trim() && cleanLen(m.length) === cleanLen(length)); const uw = matched ? matched.unitWeight : 0; document.getElementById('plNetWeight').value = `${(pcsQty * uw).toFixed(2)} kg`; }
+function onPlPoSelect() { const poNum = document.getElementById('plSelectPo').value; const profileSelect = document.getElementById('plSelectProfile'); profileSelect.innerHTML = '<option value="">-- Select Profile --</option>'; document.getElementById('plSelectItemCode').innerHTML = '<option value="">-- Select Item Code --</option>'; document.getElementById('plSelectLength').innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('plNetWeight').value = ''; updatePlExtrusionInfo(); if (!poNum) return; const poItems = poList.filter(p => String(p.poNumber).trim() === String(poNum).trim()); [...new Set(poItems.map(p => String(p.profile).trim()))].forEach(prof => profileSelect.appendChild(new Option(prof, prof))); }
+function onPlProfileSelect() { const poNum = document.getElementById('plSelectPo').value; const profile = document.getElementById('plSelectProfile').value; const itemSelect = document.getElementById('plSelectItemCode'); itemSelect.innerHTML = '<option value="">-- Select Item Code --</option>'; document.getElementById('plSelectLength').innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('plNetWeight').value = ''; updatePlExtrusionInfo(); if (!poNum || !profile) return; const poItems = poList.filter(p => String(p.poNumber).trim() === poNum && String(p.profile).trim() === profile); const uniqueItems = []; poItems.forEach(p => { const matchedCat = masterData.find(m => String(m.profile) === profile && cleanLen(m.length) === cleanLen(p.length)); if(matchedCat && matchedCat.itemCode && !uniqueItems.includes(matchedCat.itemCode)) { uniqueItems.push(matchedCat.itemCode); itemSelect.appendChild(new Option(matchedCat.itemCode, matchedCat.itemCode)); } }); }
+function onPlItemCodeSelect() { const poNum = document.getElementById('plSelectPo').value; const profile = document.getElementById('plSelectProfile').value; const itemCode = document.getElementById('plSelectItemCode').value; const lengthSelect = document.getElementById('plSelectLength'); lengthSelect.innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('plNetWeight').value = ''; updatePlExtrusionInfo(); if (!poNum || !profile || !itemCode) return; const poItems = poList.filter(p => String(p.poNumber).trim() === poNum && String(p.profile).trim() === profile); const matches = poItems.filter(p => { const matchedCat = masterData.find(m => String(m.profile) === profile && cleanLen(m.length) === cleanLen(p.length)); return matchedCat && matchedCat.itemCode === itemCode; }); matches.forEach(p => { const cat=masterData.find(m=>String(m.profile).trim()===profile && cleanLen(m.length)===cleanLen(p.length) && String(m.itemCode||'').trim()===itemCode); const ex=cat?.exLength||'-'; const pcsPerEx=(parseFloat(ex)>0 && parseFloat(p.length)>0)?Math.floor(parseFloat(ex)/parseFloat(p.length)):0; lengthSelect.appendChild(new Option(`${p.length} mm`, p.length)); if(cat) lengthSelect.options[lengthSelect.options.length-1].title=`Ex Length: ${ex} mm | ${pcsPerEx||'-'} Pcs / Extrusion`; }); if(matches.length === 1) { lengthSelect.value = matches[0].length; calculatePlWeights(); } updatePlExtrusionInfo(); }
+function calculatePlWeights() {
+    const poNum=document.getElementById('plSelectPo').value;
+    const profile=document.getElementById('plSelectProfile').value;
+    const itemCode=document.getElementById('plSelectItemCode').value;
+    const length=document.getElementById('plSelectLength').value;
+    const pcsQty=parseInt(document.getElementById('plPcsQty').value)||0;
+    updatePlExtrusionInfo();
+    if(!profile||!itemCode||!length||pcsQty<=0){document.getElementById('plNetWeight').value='';return;}
+    const po=poList.find(p=>{
+        if(String(p.poNumber).trim()!==String(poNum).trim()||cleanLen(p.length)!==cleanLen(length)) return false;
+        const matchedCat=masterData.find(m=>String(m.profile).trim()===String(p.profile).trim()&&cleanLen(m.length)===cleanLen(p.length));
+        return matchedCat&&matchedCat.itemCode===itemCode;
+    });
+    const matched=masterData.find(m=>String(m.profile).trim()===String(profile).trim()&&String(m.itemCode||'').trim()===String(itemCode).trim()&&cleanLen(m.length)===cleanLen(length));
+    if(!po||!matched){document.getElementById('plNetWeight').value='';return;}
+    document.getElementById('plNetWeight').value=`${(pcsQty*(matched.unitWeight||0)).toFixed(2)} kg`;
+    updatePlExtrusionInfo();
+}
+
 async function savePackingListEntry(){
  if(isAppBusy)return; isAppBusy=true;
  try{
@@ -2174,9 +2751,9 @@ async function savePackingListEntry(){
   if(alreadyPacked+pcsQty>Number(po.orderQty||0))return showToast(`Packing quantity exceeds PO quantity. Remaining: ${Math.max(0,Number(po.orderQty||0)-alreadyPacked)} Pcs.`,'error');
   const netWeight=parseFloat((pcsQty*(matched.unitWeight||0)).toFixed(2)),filterMonth=activePackingMonth||new Date().toLocaleString('en-US',{month:'long'});
   const newPl={pl_number:plNum,po_number:poNum,shipment_month:filterMonth,container,crate_no:crateNo,profile,item_code:itemCode,length,box_qty:1,pcs_qty:pcsQty,net_weight:netWeight,gross_weight:grossWeight,packing_date:plDate};
-  const {data:inserted,error}=await supabaseClient.from('packing_list').insert([newPl]).select();
+  const {error}=await supabaseClient.from('packing_list').insert([newPl]);
   if(error)throw new Error(`Packing List save failed: ${error.message}`);
-  if(inserted?.length)packingLists.unshift({id:inserted[0].id,plNumber:plNum,poNumber:poNum,month:filterMonth,container,crateNo,profile,itemCode,length,boxQty:1,pcsQty,netWeight,grossWeight,date:plDate});
+  packingLists.unshift({id:-Date.now(),plNumber:plNum,poNumber:poNum,month:filterMonth,container,crateNo,profile,itemCode,length,boxQty:1,pcsQty,netWeight,grossWeight,date:plDate});
   showToast('Packing List record saved successfully.','success'); document.getElementById('packingListForm').reset(); renderPackingListTable();
  }catch(e){console.error(e);showToast(e.message||'Packing List save failed.','error');}finally{isAppBusy=false;}
 }
@@ -2323,11 +2900,11 @@ function renderMasterCatalog() {
 
 function openMasterEditModal(index) { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editMasterIndex').value = index; document.getElementById('editMasterProfile').value = item.profile; document.getElementById('editMasterItemCode').value = item.itemCode || ''; document.getElementById('editMasterMaterial').value = item.material || ''; document.getElementById('editMasterLength').value = item.length; document.getElementById('editMasterExLength').value = item.exLength || ''; document.getElementById('editMasterUnitWeight').value = item.unitWeight; document.getElementById('editMasterBoxCapacity').value = item.boxCapacity || 100; document.getElementById('masterEditModal').style.display = 'flex'; }
 function closeMasterEditModal() { document.getElementById('masterEditModal').style.display = 'none'; }
-async function saveMasterCatalogEdit() { if(isAppBusy) return; isAppBusy=true; try { const index = parseInt(document.getElementById('editMasterIndex').value); const profile = document.getElementById('editMasterProfile').value.trim(); const itemCode = document.getElementById('editMasterItemCode').value.trim(); const material = document.getElementById('editMasterMaterial').value.trim(); const length = document.getElementById('editMasterLength').value.trim(); const exLength = document.getElementById('editMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('editMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('editMasterBoxCapacity').value) || 100; if (isNaN(index)) return; const item = masterData[index]; item.profile = profile; item.itemCode = itemCode; item.material = material; item.length = length; item.exLength = exLength; item.unitWeight = uw; item.boxCapacity = cap; if (item.db_id) { try { await supabaseClient.from('master_catalog').update({ profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap }).eq('id', item.db_id); } catch(e) {} } else { try { let {data} = await supabaseClient.from('master_catalog').insert([{ profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: item.cutQty, punch_qty: item.punchQty, wrap_qty: item.wrapQty, box_qty: item.boxQty, crate_qty: item.crateQty }]).select(); if(data && data.length > 0) { item.db_id = data[0].id; } } catch(e) {} } saveMasterExtrasLocally(); closeMasterEditModal(); showToast("Catalog updated successfully", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderProfileSummaryTable(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
+async function saveMasterCatalogEdit() { if(isAppBusy) return; isAppBusy=true; try { const index = parseInt(document.getElementById('editMasterIndex').value); const profile = document.getElementById('editMasterProfile').value.trim(); const itemCode = document.getElementById('editMasterItemCode').value.trim(); const material = document.getElementById('editMasterMaterial').value.trim(); const length = document.getElementById('editMasterLength').value.trim(); const exLength = document.getElementById('editMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('editMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('editMasterBoxCapacity').value) || 100; if (isNaN(index)) return; const item = masterData[index]; item.profile = profile; item.itemCode = itemCode; item.material = material; item.length = length; item.exLength = exLength; item.unitWeight = uw; item.boxCapacity = cap; if (item.db_id) { try { await supabaseClient.from('master_catalog').update({ profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap }).eq('id', item.db_id); } catch(e) {} } else { try { const r=await supabaseClient.from('master_catalog').insert([{ profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: item.cutQty, punch_qty: item.punchQty, wrap_qty: item.wrapQty, box_qty: item.boxQty, crate_qty: item.crateQty }]); if(r.error) throw r.error; } catch(e) { showToast(dbErrorMessage(e,'Master catalog save failed'),'error'); return; } } saveMasterExtrasLocally(); closeMasterEditModal(); showToast("Catalog updated successfully", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderProfileSummaryTable(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
 function deleteMasterItem(index) { if (currentUserRole !== 'Admin') return; showConfirm("Delete catalog item?", async () => { const item = masterData[index]; if (item && item.db_id) await supabaseClient.from('master_catalog').delete().eq('id', item.db_id); masterData.splice(index, 1); saveMasterExtrasLocally(); renderMasterCatalog(); showToast("Catalog item deleted", "success"); }); }
 function openAddMasterModal() { if (currentUserRole !== 'Admin') return; document.getElementById('addMasterProfile').value = ''; document.getElementById('addMasterItemCode').value = ''; document.getElementById('addMasterMaterial').value = ''; document.getElementById('addMasterLength').value = ''; document.getElementById('addMasterExLength').value = ''; document.getElementById('addMasterUnitWeight').value = ''; document.getElementById('addMasterBoxCapacity').value = '100'; document.getElementById('addMasterModal').style.display = 'flex'; }
 function closeAddMasterModal() { document.getElementById('addMasterModal').style.display = 'none'; }
-async function saveNewMasterProfile() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const profile = document.getElementById('addMasterProfile').value.trim(); const itemCode = document.getElementById('addMasterItemCode').value.trim(); const material = document.getElementById('addMasterMaterial').value.trim(); const length = document.getElementById('addMasterLength').value.trim(); const exLength = document.getElementById('addMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('addMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('addMasterBoxCapacity').value) || 100; if (!profile || !itemCode || !length) { showToast("Fill all fields", "warning"); return; } const exists = masterData.find(m => String(m.profile).trim() === profile && cleanLen(m.length) === cleanLen(length) && m.itemCode === itemCode); if (exists) { showToast("Already exists!", "error"); return; } const newEntry = { profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0 }; const mapped = { db_id: Date.now(), profile: profile, itemCode: itemCode, material: material, length: length, exLength: exLength, unitWeight: uw, cutQty: 0, punchQty: 0, wrapQty: 0, boxQty: 0, crateQty: 0, boxCapacity: cap }; try { const { data } = await supabaseClient.from('master_catalog').insert([newEntry]).select(); if (data && data.length > 0) { mapped.db_id = data[0].id; } } catch (e) {} masterData.push(mapped); masterData.sort((a, b) => (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) || (parseFloat(a.length)||0) - (parseFloat(b.length)||0)); saveMasterExtrasLocally(); closeAddMasterModal(); showToast("Profile added!", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
+async function saveNewMasterProfile() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const profile = document.getElementById('addMasterProfile').value.trim(); const itemCode = document.getElementById('addMasterItemCode').value.trim(); const material = document.getElementById('addMasterMaterial').value.trim(); const length = document.getElementById('addMasterLength').value.trim(); const exLength = document.getElementById('addMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('addMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('addMasterBoxCapacity').value) || 100; if (!profile || !itemCode || !length) { showToast("Fill all fields", "warning"); return; } const exists = masterData.find(m => String(m.profile).trim() === profile && cleanLen(m.length) === cleanLen(length) && m.itemCode === itemCode); if (exists) { showToast("Already exists!", "error"); return; } const newEntry = { profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0 }; const mapped = { db_id: Date.now(), profile: profile, itemCode: itemCode, material: material, length: length, exLength: exLength, unitWeight: uw, cutQty: 0, punchQty: 0, wrapQty: 0, boxQty: 0, crateQty: 0, boxCapacity: cap }; try { const r=await supabaseClient.from('master_catalog').insert([newEntry]); if(r.error) throw r.error; } catch (e) { showToast(dbErrorMessage(e,'Master catalog add failed'),'error'); return; } masterData.push(mapped); masterData.sort((a, b) => (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) || (parseFloat(a.length)||0) - (parseFloat(b.length)||0)); saveMasterExtrasLocally(); closeAddMasterModal(); showToast("Profile added!", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
 async function resetAllDataToZero() {
     if (currentUserRole !== 'Admin') return showToast('Only Admin can reset current stock.', 'error');
     if (isAppBusy) return;
@@ -2397,7 +2974,7 @@ window.getAISDataHealth = function(){
   const rows = [
     ['Master Catalog', masterData.length], ['Production Orders', poList.length], ['Shipments', shipmentList.length],
     ['Packing List', packingLists.length], ['Production History', historyLogs.length], ['Reject Logs', rejectLogs.length],
-    ['Recovery Logs', recoverLogs.length], ['Cardboard Transactions', cardboardStockList.length]
+    ['Legacy Recovery Logs', recoverLogs.length], ['Recovery Cut Logs', recoveryCutLogs.length], ['Recovery Wrapping Logs', recoveryWrapLogs.length], ['Cardboard Transactions', cardboardStockList.length], ['Cardboard Manual Data', cardboardManualData.length], ['Cardboard Manual Data', cardboardManualData.length]
   ];
   const duplicateKeys = new Set(), duplicates=[];
   masterData.forEach(m=>{
@@ -2439,4 +3016,90 @@ window.getSecurityStatus = function(){
   };
 };
 
+window.addEventListener('error', function(event){
+  const msg = String(event?.message || '');
+  console.error('AIS Tracker runtime error:', event?.error || msg || event);
+  // Browsers intentionally expose only "Script error." for some cross-origin CDN failures.
+  // Do not flood the user with misleading generic errors; application code reports actionable errors itself.
+  if (msg && msg !== 'Script error.' && !msg.includes('ResizeObserver')) {
+    const target = event?.target;
+    const isExternal = target && target.tagName === 'SCRIPT' && target.src && !target.src.startsWith(location.origin);
+    if (!isExternal && document.getElementById('mainContent')?.style.display !== 'none') {
+      showToast(`Runtime error: ${msg}`,'error');
+    }
+  }
+});
+window.addEventListener('unhandledrejection', function(event){
+  const reason=event.reason; console.error('AIS Tracker unhandled promise rejection:',reason);
+  const msg = String(reason?.message || reason || 'Unexpected database error.');
+  if (document.getElementById('mainContent')?.style.display !== 'none') showToast(`Save/sync error: ${msg}`,'error');
+});
+
 // END OF SCRIPT
+
+window.dashboardDataPeriod = dashboardDataPeriod;
+window.setDashboardPeriodBadge = setDashboardPeriodBadge;
+
+// ===== V16 stability helpers for existing UI hooks =====
+function populateCbProfileDropdown(){
+  const p=document.getElementById('cbSelectProfile'); if(!p) return;
+  p.innerHTML='<option value="">-- Choose Profile --</option>';
+  [...new Set(masterData.map(m=>String(m.profile||'').trim()).filter(Boolean))].forEach(v=>p.appendChild(new Option(v,v)));
+  const dl=document.getElementById('cbMaterialList');
+  if(dl){dl.innerHTML=''; [...new Set(masterData.map(m=>String(m.material||'').trim()).filter(v=>v&&v!=='-'))].forEach(v=>dl.appendChild(new Option(v,v)));}
+}
+function updateProductionCardboardAvailability(){
+  const box=document.getElementById('productionCardboardAvailability'); if(!box) return;
+  const p=document.getElementById('selectProfile')?.value||'', i=document.getElementById('selectItemCode')?.value||'', l=document.getElementById('selectLength')?.value||'';
+  if(!p||!i||!l){box.textContent='Select profile, item code and length to check cardboard stock.';box.className='production-cardboard-info neutral';return;}
+  const avail=getAvailableCardboard(p,i,l); const entered=parseInt(document.getElementById('boxQty')?.value)||0; const ok=entered<=avail;
+  box.innerHTML=`<i class="fa-solid fa-box-open"></i> <span>Available Cardboard Stock: <b>${avail.toLocaleString()} Boxes</b>${entered?` • Entered: <b>${entered}</b> • ${ok?'Balance after save: '+(avail-entered):'SHORT BY '+(entered-avail)}`:''}</span>`;
+  box.className='production-cardboard-info '+(ok?'ok':'danger');
+}
+function onPoFilterProfileChange(){
+  const profile=document.getElementById('filterPoProfile')?.value||''; const item=document.getElementById('filterPoItemCode'); if(!item)return;
+  item.innerHTML='<option value="">All Item Codes</option>';
+  [...new Set(poList.filter(p=>!profile||String(p.profile).trim()===profile).map(p=>p.itemCode).filter(Boolean))].forEach(v=>item.appendChild(new Option(v,v)));
+  renderPoDetailsTable();
+}
+function updatePoFilters(){
+  const pn=document.getElementById('filterPoNumber'), pf=document.getElementById('filterPoProfile'), pi=document.getElementById('filterPoItemCode');
+  if(!pn||!pf||!pi)return;
+  const oldN=pn.value,oldP=pf.value,oldI=pi.value;
+  pn.innerHTML='<option value="">All PO Numbers</option>'; [...new Set(poList.map(p=>p.poNumber).filter(Boolean))].forEach(v=>pn.appendChild(new Option(v,v)));
+  pf.innerHTML='<option value="">All Profiles</option>'; [...new Set(poList.map(p=>String(p.profile||'').trim()).filter(Boolean))].forEach(v=>pf.appendChild(new Option(v,v)));
+  pn.value=oldN; pf.value=oldP; pi.innerHTML='<option value="">All Item Codes</option>'; [...new Set(poList.filter(p=>!pf.value||String(p.profile).trim()===pf.value).map(p=>p.itemCode).filter(Boolean))].forEach(v=>pi.appendChild(new Option(v,v))); pi.value=oldI;
+}
+function renderPoDetailsTable(){
+  const body=document.getElementById('poDetailsTableBody'); if(!body)return;
+  const pn=document.getElementById('filterPoNumber')?.value||'', pf=document.getElementById('filterPoProfile')?.value||'', pi=document.getElementById('filterPoItemCode')?.value||'';
+  const rows=poList.filter(p=>(!pn||p.poNumber===pn)&&(!pf||String(p.profile).trim()===pf)&&(!pi||p.itemCode===pi));
+  body.innerHTML=rows.length?rows.map((po)=>{const idx=poList.indexOf(po);const m=masterData.find(x=>String(x.profile).trim()===String(po.profile).trim()&&cleanLen(x.length)===cleanLen(po.length));return `<tr><td>${po.date||'-'}</td><td>${po.poNumber||'-'}</td><td>${po.profile||'-'}</td><td>${po.itemCode||'-'}</td><td>${po.length||'-'} mm</td><td>${m?Number(m.unitWeight||0).toFixed(4):'-'}</td><td>${Number(po.orderQty||0).toLocaleString()}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openPoEditModal(${idx})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deletePoItem(${po.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`;}).join(''):'<tr><td colspan="8" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No production orders match the filters.</td></tr>';
+}
+function renderShipmentHistoryTable(){
+  const body=document.getElementById('shipmentHistoryTableBody'); if(!body)return;
+  body.innerHTML=shipmentList.length?shipmentList.map((s,i)=>`<tr><td>${s.date||'-'}</td><td>${s.poNumber||'-'}</td><td>${s.profile||'-'}</td><td>${s.itemCode||'-'}</td><td>${s.length||'-'} mm</td><td>${s.month||'-'}</td><td>${s.container||'-'}</td><td>${Number(s.shippedQty||0).toLocaleString()}</td><td>${Number(s.remainingBalance||0).toLocaleString()}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openShipmentEditModal(${i})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):'<tr><td colspan="10" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No shipment records.</td></tr>';
+}
+window.renderShipmentHistoryTable=renderShipmentHistoryTable;
+function renderDailyInstructions(){
+  const box=document.getElementById('instructionBoardContainer'); if(!box)return;
+  const visible=dailyInstructionsList.filter(x=>!String(x.target_user||'').startsWith('SYS_')).sort((a,b)=>String(a.target_date).localeCompare(String(b.target_date)));
+  box.innerHTML=visible.length?visible.map(x=>`<div class="card" style="margin:0;border-left:5px solid ${x.priority==='High'?'#e11d48':'#d97706'};background:#fffdf5;"><div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;font-weight:800;color:#92400e;"><span>${x.target_date||'-'}</span><span>${x.priority||'Normal'}</span></div><h4 style="margin:8px 0;color:#334155;">${x.target_user||'All Sections'}</h4><p style="margin:0;color:#475569;font-weight:600;font-size:13px;line-height:1.5;">${x.message||''}</p><div style="margin-top:10px;font-size:10px;color:#94a3b8;">${x.status||''}</div></div>`).join(''):'<div style="grid-column:1/-1;text-align:center;padding:24px;color:var(--text-muted);font-weight:700;">No active instructions.</div>';
+}
+async function saveDailyInstruction(){
+  if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return;
+  const rec={target_date:document.getElementById('planDate').value,target_user:document.getElementById('planUser').value,priority:document.getElementById('planPriority').value,message:document.getElementById('planMessage').value.trim(),status:'Pending',action_taken:''};
+  if(!rec.target_date||!rec.message)return showToast('Enter date and instruction message.','warning');
+  try{const r=await supabaseClient.from('daily_instructions').insert([rec]);if(r.error)throw r.error;dailyInstructionsList.unshift({...rec,id:-Date.now()});renderDailyInstructions();document.getElementById('planMessage').value='';showToast('Instruction pinned.','success');}catch(e){showToast(dbErrorMessage(e,'Instruction save failed'),'error');}
+}
+function openPoEditModal(idx){const p=poList[idx];if(!p)return;document.getElementById('editPoId').value=p.id;document.getElementById('editPoDate').value=p.date||'';document.getElementById('editPoNumber').value=p.poNumber||'';document.getElementById('editPoProfile').value=p.profile||'';document.getElementById('editPoLength').value=p.length||'';document.getElementById('editPoQty').value=p.orderQty||0;document.getElementById('poEditModal').style.display='flex';}
+function closePoEditModal(){document.getElementById('poEditModal').style.display='none';}
+async function savePoEdit(){const id=document.getElementById('editPoId').value;const p=poList.find(x=>String(x.id)===String(id));if(!p)return;const vals={po_date:document.getElementById('editPoDate').value,po_number:document.getElementById('editPoNumber').value.trim(),profile:document.getElementById('editPoProfile').value.trim(),length:cleanLen(document.getElementById('editPoLength').value),order_qty:Math.max(1,parseInt(document.getElementById('editPoQty').value)||0)};try{const r=await supabaseClient.from('production_orders').update(vals).eq('id',id);if(r.error)throw r.error;Object.assign(p,{date:vals.po_date,poNumber:vals.po_number,profile:vals.profile,length:vals.length,orderQty:vals.order_qty});closePoEditModal();updatePoFilters();renderPoDetailsTable();renderPoCharts();renderBalanceWorkTable();showToast('PO updated.','success');}catch(e){showToast(dbErrorMessage(e,'PO update failed'),'error');}}
+function openShipmentEditModal(idx){const s=shipmentList[idx];if(!s)return;document.getElementById('editShipmentId').value=s.id;document.getElementById('editShipmentDate').value=s.date||'';document.getElementById('editShipmentContainer').value=s.container||'';document.getElementById('editShipmentQty').value=s.shippedQty||0;document.getElementById('shipmentEditModal').style.display='flex';}
+function closeShipmentEditModal(){document.getElementById('shipmentEditModal').style.display='none';}
+async function saveShipmentEdit(){const id=document.getElementById('editShipmentId').value;const s=shipmentList.find(x=>String(x.id)===String(id));if(!s)return;const date=document.getElementById('editShipmentDate').value,container=document.getElementById('editShipmentContainer').value,qty=Math.max(1,parseInt(document.getElementById('editShipmentQty').value)||0);try{const r=await supabaseClient.from('shipments').update({shipment_date:date,container:container,shipped_qty:qty}).eq('id',id);if(r.error)throw r.error;Object.assign(s,{date,container,shippedQty:qty});closeShipmentEditModal();renderShipmentHistoryTable();renderDashboard();renderBalanceWorkTable();showToast('Shipment updated.','success');}catch(e){showToast(dbErrorMessage(e,'Shipment update failed'),'error');}}
+window.openPoEditModal=openPoEditModal; window.openShipmentEditModal=openShipmentEditModal;
+
+window.updateProductionCardboardAvailability=updateProductionCardboardAvailability;
+
+window.resetCardboardStock=resetCardboardStock; window.saveCardboardManualData=saveCardboardManualData; window.editCardboardManualData=editCardboardManualData; window.deleteCardboardManualData=deleteCardboardManualData; window.cancelCardboardManualEdit=cancelCardboardManualEdit;
