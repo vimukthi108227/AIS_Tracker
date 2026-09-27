@@ -1033,3 +1033,972 @@ body.dark-mode .pl-control-actions select option{background:#16283b!important;co
 #cardboardManualDataTableBody td{vertical-align:middle;}
 #resetCardboardBtn{white-space:nowrap;}
 @media(max-width:700px){#resetCardboardBtn{width:100%;}.cardboard-manual-panel{padding:12px;}}
+
+/* ===== Tablet / mobile zoom & login focus fix V21 ===== */
+html{width:100%;min-width:0;}
+@media (max-width:1100px){
+  /* Prevent mobile/tablet browsers from auto-zooming when login inputs receive focus. */
+  .ais-password-box input,
+  .ais-login-panel input,
+  .ais-login-panel select,
+  .ais-login-panel textarea{font-size:16px!important;}
+  .ais-password-box{min-height:48px;}
+}
+@media (max-width:800px){
+  body{overflow-x:hidden;touch-action:pan-y;}
+  .ais-login-shell{width:min(100%,96vw);max-width:100%;}
+  .ais-login-panel{overflow:visible;}
+}
+@media (min-width:801px) and (max-width:1100px){
+  .ais-login-shell{width:min(100%,96vw);max-width:100%;}
+  .ais-login-panel{padding:38px 34px;}
+}
+
+/* V22 - lock production box quantity when cardboard stock is unavailable */
+#boxQty:disabled{
+  background:#f1f5f9!important;
+  color:#64748b!important;
+  border-color:#cbd5e1!important;
+  cursor:not-allowed!important;
+  opacity:1!important;
+}
+
+/* ===== V24 ALUMEX ELEGANT DASHBOARD + TABLET POLISH ===== */
+.dashboard-hero{
+  position:relative; min-height:156px; margin:0 0 18px; overflow:hidden;
+  border-radius:20px; border:1px solid rgba(16,185,129,.24);
+  background:#0b3341 url('alumex-global.png') right center/auto 100% no-repeat;
+  box-shadow:0 14px 30px rgba(15,39,66,.14), inset 0 1px 0 rgba(255,255,255,.25);
+  isolation:isolate;
+}
+.dashboard-hero::after{
+  content:""; position:absolute; inset:0; z-index:-1;
+  background:linear-gradient(90deg,rgba(5,30,43,.98) 0%,rgba(7,54,66,.94) 43%,rgba(7,76,86,.55) 72%,rgba(6,78,59,.08) 100%);
+}
+.dashboard-hero-overlay{position:absolute;inset:0;pointer-events:none;background:linear-gradient(135deg,rgba(16,185,129,.10),transparent 45%,rgba(2,132,199,.10));}
+.dashboard-hero-content{position:relative;z-index:2;padding:25px 28px;max-width:720px;color:#fff;}
+.dashboard-hero-kicker{display:inline-flex;align-items:center;gap:7px;font-size:10px;letter-spacing:1.25px;font-weight:900;color:#9ff3d0;margin-bottom:7px;}
+.dashboard-hero-content h2{margin:0;color:#fff;font-size:25px;line-height:1.15;font-weight:900;letter-spacing:-.3px;text-shadow:0 2px 12px rgba(0,0,0,.25);}
+.dashboard-hero-content p{margin:8px 0 0;color:rgba(239,253,249,.88);font-size:12px;font-weight:600;line-height:1.55;max-width:650px;}
+.dashboard-hero-mark{position:absolute;right:24px;bottom:18px;z-index:2;text-align:right;color:rgba(255,255,255,.92);text-shadow:0 2px 10px rgba(0,0,0,.3);}
+.dashboard-hero-mark span{display:block;font-size:23px;font-weight:900;letter-spacing:1px;}
+.dashboard-hero-mark small{display:block;font-size:8px;letter-spacing:1.1px;font-weight:800;color:#a9e7d2;}
+#dashboardTab .kpi-grid{margin-bottom:18px;gap:12px;}
+#dashboardTab .kpi-card{min-height:92px;position:relative;overflow:hidden;border-radius:15px;background:linear-gradient(145deg,rgba(255,255,255,.98),rgba(247,252,250,.96));box-shadow:0 7px 18px rgba(15,39,66,.07);}
+#dashboardTab .kpi-card::after{content:"";position:absolute;width:95px;height:95px;border-radius:50%;right:-48px;bottom:-52px;background:rgba(16,185,129,.055);pointer-events:none;}
+#dashboardTab .kpi-card:hover{transform:translateY(-3px);box-shadow:0 13px 25px rgba(15,39,66,.12);}
+#dashboardTab .kpi-details h4{letter-spacing:.35px;font-size:10px;}
+#dashboardTab .kpi-details .kpi-value{font-size:21px;letter-spacing:-.2px;}
+#dashboardTab .kpi-subweight{font-size:11px!important;color:#64748b;line-height:1.4;}
+#dashboardTab .chart-card-animated,#dashboardTab .card{border-radius:16px;}
+#dashboardTab .chart-card-animated{box-shadow:0 7px 18px rgba(15,39,66,.06);}
+#dashboardTab .dashboard-chart-head h4{font-size:13px!important;font-weight:900;letter-spacing:.05px;}
+#dashboardTab .chart-period-badge{border-radius:999px;letter-spacing:.45px;}
+#dashboardTab .prod-summary-title{font-weight:900;letter-spacing:.2px;}
+#dashboardTab .funnel-container{gap:10px;}
+#dashboardTab .funnel-step{border-radius:13px;}
+
+/* Tablet: preserve the existing charts, only improve sizing/spacing and touch usability. */
+@media (max-width:1100px){
+  .dashboard-hero{min-height:145px;background-size:auto 100%;background-position:80% center;}
+  .dashboard-hero-content{padding:23px 22px;max-width:75%;}
+  .dashboard-hero-content h2{font-size:22px;}
+  .dashboard-hero-mark{right:18px;bottom:14px;opacity:.82;}
+  #dashboardTab .kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+  #dashboardTab .kpi-card{min-height:88px;padding:12px;}
+  #dashboardTab .kpi-icon{width:40px;height:40px;min-width:40px;font-size:18px;}
+  .dashboard-charts-grid{gap:12px;}
+  .dashboard-chart-head{padding-bottom:8px;}
+  .btn{min-height:42px;}
+  input,select,textarea{min-height:42px;font-size:16px!important;}
+  .nav-tabs{gap:8px;padding-bottom:10px;}
+  .tab-btn{min-height:42px;padding:10px 13px;}
+  .table-container{border-radius:12px;}
+}
+@media (max-width:700px){
+  .dashboard-hero{min-height:175px;background-position:72% center;background-size:auto 100%;}
+  .dashboard-hero::after{background:linear-gradient(90deg,rgba(5,30,43,.99) 0%,rgba(7,54,66,.94) 60%,rgba(7,76,86,.48) 100%);}
+  .dashboard-hero-content{padding:22px 18px;max-width:100%;}
+  .dashboard-hero-content h2{font-size:20px;max-width:270px;}
+  .dashboard-hero-content p{font-size:11px;max-width:300px;}
+  .dashboard-hero-mark{display:none;}
+  #dashboardTab .kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+  #dashboardTab .kpi-card{min-height:84px;padding:9px;gap:8px;}
+  #dashboardTab .kpi-icon{width:34px;height:34px;min-width:34px;font-size:15px;}
+  #dashboardTab .kpi-details .kpi-value{font-size:16px;}
+  #dashboardTab .kpi-details h4{font-size:8.5px;}
+  #dashboardTab .kpi-subweight{font-size:9px!important;}
+  #dashboardTab .chart-card-animated,#dashboardTab .card{padding:14px;border-radius:13px;}
+  #dashboardTab .dashboard-chart-head h4{font-size:12px!important;}
+}
+@media (max-width:420px){
+  #dashboardTab .kpi-grid{grid-template-columns:1fr 1fr;}
+  #dashboardTab .kpi-card{min-height:78px;padding:8px;}
+  #dashboardTab .kpi-icon{display:none;}
+  .dashboard-hero{min-height:165px;}
+  .dashboard-hero-content h2{font-size:18px;}
+}
+
+/* Touch devices: remove hover lift that can make tablet scrolling feel unstable. */
+@media (hover:none) and (pointer:coarse){
+  .card:hover,.kpi-card:hover,#dashboardTab .kpi-card:hover{transform:none;box-shadow:var(--shadow-sm);}
+  input:focus,select:focus{transform:none!important;}
+  .btn:hover,.tab-btn:hover:not(.active){transform:none!important;}
+}
+
+/* ===== V25 ALUMEX EXECUTIVE DASHBOARD - PREMIUM FACTORY COMMAND THEME ===== */
+#dashboardTab{
+  position:relative;
+  padding:2px 0 28px;
+}
+#dashboardTab::before{
+  content:'';
+  position:absolute;
+  inset:-8px -8px auto;
+  height:330px;
+  background:
+    radial-gradient(circle at 10% 10%,rgba(2,132,199,.10),transparent 32%),
+    radial-gradient(circle at 85% 18%,rgba(16,185,129,.10),transparent 30%),
+    linear-gradient(180deg,rgba(239,248,250,.82),rgba(255,255,255,0));
+  pointer-events:none;
+  z-index:-1;
+}
+.dashboard-hero{
+  min-height:176px!important;
+  margin:0 0 16px!important;
+  border:1px solid rgba(51,195,181,.32)!important;
+  border-radius:22px!important;
+  background-color:#082d3b!important;
+  background-image:url('alumex-global.png')!important;
+  background-position:right center!important;
+  background-repeat:no-repeat!important;
+  background-size:auto 116%!important;
+  box-shadow:0 18px 38px rgba(5,42,56,.18),0 2px 0 rgba(255,255,255,.45) inset!important;
+}
+.dashboard-hero::after{
+  background:
+    linear-gradient(90deg,rgba(3,25,37,.99) 0%,rgba(5,43,55,.97) 34%,rgba(6,62,70,.82) 58%,rgba(7,76,86,.28) 78%,rgba(7,76,86,.03) 100%)!important;
+}
+.dashboard-hero-overlay{
+  background:
+    linear-gradient(135deg,rgba(14,165,233,.13),transparent 35%,rgba(16,185,129,.18) 100%),
+    repeating-linear-gradient(115deg,transparent 0 20px,rgba(255,255,255,.025) 21px 22px)!important;
+}
+.dashboard-hero-grid-glow{
+  position:absolute;right:0;top:0;width:54%;height:100%;
+  background-image:linear-gradient(rgba(147,230,220,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(147,230,220,.06) 1px,transparent 1px);
+  background-size:28px 28px;mask-image:linear-gradient(90deg,transparent,black 45%);pointer-events:none;
+}
+.dashboard-hero-content{padding:27px 30px 24px!important;max-width:790px!important;}
+.dashboard-hero-kicker{
+  gap:8px!important;color:#9ff3d0!important;letter-spacing:1.45px!important;font-size:9.5px!important;
+  text-transform:uppercase;
+}
+.hero-live-dot{width:7px;height:7px;border-radius:50%;background:#62f2b0;box-shadow:0 0 0 5px rgba(98,242,176,.10),0 0 12px rgba(98,242,176,.75);display:inline-block;animation:heroLivePulse 2s infinite ease-in-out;}
+.dashboard-hero-content h2{font-size:29px!important;letter-spacing:-.65px!important;line-height:1.08!important;margin-top:2px!important;}
+.dashboard-hero-content p{font-size:12.2px!important;max-width:670px!important;color:rgba(236,250,248,.82)!important;}
+.dashboard-hero-tags{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px;}
+.dashboard-hero-tags span{
+  display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:999px;
+  color:#dffcf3;background:rgba(255,255,255,.075);border:1px solid rgba(170,255,229,.16);
+  font-size:9px;font-weight:900;letter-spacing:.55px;text-transform:uppercase;backdrop-filter:blur(8px);
+}
+.dashboard-hero-tags i{color:#71e8bc;font-size:9px;}
+.dashboard-hero-command{
+  position:absolute;right:22px;top:22px;z-index:3;width:225px;display:flex;flex-direction:column;gap:7px;
+  padding:12px 13px;border-radius:15px;background:rgba(3,28,40,.48);border:1px solid rgba(177,255,231,.15);
+  box-shadow:0 12px 26px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.07);backdrop-filter:blur(10px);
+}
+.dashboard-hero-command span{display:flex;align-items:center;gap:8px;color:#d9f8ef;font-size:8.5px;font-weight:800;letter-spacing:.65px;}
+.dashboard-hero-command i{width:16px;color:#70e5bb;text-align:center;}
+.dashboard-hero-command .hero-command-brand{font-size:14px;color:#fff;letter-spacing:1.2px;padding-bottom:7px;margin-bottom:1px;border-bottom:1px solid rgba(255,255,255,.10);}
+.dashboard-hero-mark{right:28px!important;bottom:17px!important;opacity:.42;}
+.dashboard-hero-mark span{font-size:19px!important;letter-spacing:1.8px!important;}
+.dashboard-hero-mark small{font-size:7px!important;}
+
+#dashboardTab .kpi-grid{
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:11px!important;margin-bottom:17px!important;
+}
+#dashboardTab .kpi-card{
+  min-height:102px!important;padding:14px 15px!important;border-radius:17px!important;
+  border:1px solid #d7e7e9!important;border-left-width:4px!important;
+  background:linear-gradient(145deg,rgba(255,255,255,.98),rgba(246,251,252,.94))!important;
+  box-shadow:0 8px 22px rgba(7,55,70,.075),0 1px 0 rgba(255,255,255,.9) inset!important;
+}
+#dashboardTab .kpi-card::before{
+  content:'';position:absolute;left:0;right:0;top:0;height:2px;
+  background:linear-gradient(90deg,rgba(2,132,199,.0),rgba(16,185,129,.38),rgba(2,132,199,.0));
+}
+#dashboardTab .kpi-card::after{width:120px!important;height:120px!important;right:-62px!important;bottom:-68px!important;background:radial-gradient(circle,rgba(16,185,129,.09),transparent 68%)!important;}
+#dashboardTab .kpi-icon{border-radius:14px!important;box-shadow:0 7px 14px rgba(3,65,78,.14);}
+#dashboardTab .kpi-details h4{font-size:9.5px!important;letter-spacing:.65px!important;color:#536875!important;}
+#dashboardTab .kpi-details .kpi-value{font-size:21px!important;line-height:1.15!important;margin-top:5px!important;}
+#dashboardTab .kpi-subweight{font-size:10.5px!important;}
+
+#dashboardTab > .dashboard-charts-grid{
+  gap:13px!important;margin-bottom:14px!important;
+}
+#dashboardTab .chart-card-animated{
+  border:1px solid #d9e7ea!important;border-radius:17px!important;padding:15px!important;
+  background:linear-gradient(145deg,rgba(255,255,255,.985),rgba(248,252,252,.95))!important;
+  box-shadow:0 8px 22px rgba(7,55,70,.055)!important;
+}
+#dashboardTab .chart-card-animated::before{
+  content:'';position:absolute;left:0;top:0;right:0;height:3px;border-radius:17px 17px 0 0;
+  background:linear-gradient(90deg,#0284c7,#10b981,#14b8a6);
+  opacity:.72;
+}
+#dashboardTab .chart-card-animated:hover{transform:translateY(-2px)!important;box-shadow:0 14px 28px rgba(7,55,70,.09)!important;}
+#dashboardTab .dashboard-chart-head{border-bottom:1px solid #e4edf0!important;padding-bottom:9px!important;}
+#dashboardTab .dashboard-chart-head h4{color:#123b4a!important;font-size:12.8px!important;letter-spacing:.15px!important;}
+#dashboardTab .chart-period-badge{font-size:8px!important;background:#effbf7!important;border-color:#b7ead6!important;color:#08745e!important;box-shadow:none!important;}
+#dashboardTab .chart-period-blue{background:#eff8fe!important;border-color:#b8dff4!important;color:#07699b!important;}
+#dashboardTab .chart-val-big{font-size:22px!important;color:#0b3d4c!important;margin-top:10px!important;}
+#dashboardTab .chart-val-label{font-size:10px!important;color:#71838d!important;letter-spacing:.25px;}
+#dashboardTab .master-chart-container{max-width:410px!important;}
+
+#dashboardTab .prod-summary-title,
+#dashboardTab .section-title,
+#dashboardTab .section-header{color:#0b5362!important;}
+#dashboardTab .card h3{color:#0b5362!important;}
+
+body.dark-mode #dashboardTab::before{background:linear-gradient(180deg,rgba(4,31,42,.55),transparent);}
+body.dark-mode #dashboardTab .kpi-card,
+body.dark-mode #dashboardTab .chart-card-animated{background:linear-gradient(145deg,rgba(10,28,39,.96),rgba(12,35,47,.92))!important;border-color:#234553!important;}
+body.dark-mode #dashboardTab .kpi-details h4{color:#9db1ba!important;}
+body.dark-mode #dashboardTab .dashboard-chart-head{border-color:#25414d!important;}
+body.dark-mode #dashboardTab .dashboard-chart-head h4,
+body.dark-mode #dashboardTab .chart-val-big{color:#e5f2f4!important;}
+body.dark-mode #dashboardTab .chart-val-label{color:#8ca2ac!important;}
+
+@keyframes heroLivePulse{0%,100%{transform:scale(1);opacity:.85}50%{transform:scale(1.22);opacity:1}}
+
+/* Tablet: keep the same dashboard charts; optimize only presentation and touch spacing. */
+@media(max-width:1100px){
+  #dashboardTab .kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px!important;}
+  .dashboard-hero{min-height:190px!important;background-size:auto 125%!important;background-position:86% center!important;}
+  .dashboard-hero-content{max-width:72%!important;padding:26px 22px!important;}
+  .dashboard-hero-content h2{font-size:24px!important;}
+  .dashboard-hero-command{right:14px;top:14px;width:190px;}
+  .dashboard-hero-tags{margin-top:11px;}
+  #dashboardTab .chart-card-animated{padding:13px!important;}
+}
+@media(max-width:700px){
+  #dashboardTab .kpi-grid{grid-template-columns:1fr 1fr!important;gap:8px!important;}
+  .dashboard-hero{min-height:195px!important;background-size:auto 110%!important;background-position:73% center!important;}
+  .dashboard-hero::after{background:linear-gradient(90deg,rgba(3,25,37,.99) 0%,rgba(5,43,55,.96) 65%,rgba(6,62,70,.58) 100%)!important;}
+  .dashboard-hero-content{max-width:100%!important;padding:22px 17px!important;}
+  .dashboard-hero-content h2{font-size:21px!important;max-width:290px;}
+  .dashboard-hero-content p{font-size:10.5px!important;max-width:300px!important;}
+  .dashboard-hero-command{display:none!important;}
+  .dashboard-hero-tags span{padding:5px 7px;font-size:7.8px;}
+  .dashboard-hero-mark{display:none!important;}
+  #dashboardTab .kpi-card{min-height:86px!important;padding:9px!important;gap:8px!important;}
+  #dashboardTab .kpi-icon{width:36px!important;height:36px!important;min-width:36px!important;font-size:15px!important;}
+  #dashboardTab .kpi-details .kpi-value{font-size:16px!important;}
+  #dashboardTab .kpi-details h4{font-size:8px!important;}
+}
+
+/* ===== V26 - MERGED SHIPMENT HANDOVER + EXECUTIVE HERO ===== */
+.dashboard-hero{
+  min-height:176px!important;
+  transition:min-height .25s ease,box-shadow .25s ease;
+}
+.dashboard-hero.has-shipment-handover{
+  min-height:258px!important;
+}
+.dashboard-shipment-handover{
+  position:relative;
+  z-index:5;
+  margin:14px 16px 0;
+  min-height:68px;
+  padding:10px 12px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:18px;
+  border-radius:16px;
+  background:linear-gradient(135deg,rgba(7,54,79,.88),rgba(2,115,157,.78));
+  border:1px solid rgba(147,230,220,.25);
+  box-shadow:0 10px 24px rgba(0,20,35,.20),inset 0 1px 0 rgba(255,255,255,.10);
+  backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px);
+  color:#fff;
+}
+.dashboard-shipment-handover-info{
+  display:flex;align-items:center;gap:12px;min-width:0;
+}
+.dashboard-shipment-icon{
+  width:44px;height:44px;min-width:44px;border-radius:13px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.10);
+  border:1px solid rgba(255,255,255,.13);
+  box-shadow:inset 0 1px 5px rgba(0,0,0,.14);
+}
+.dashboard-shipment-icon i{font-size:21px;color:#bfeeff;}
+.dashboard-shipment-handover h4{
+  margin:0 0 3px!important;font-size:9px!important;line-height:1.2!important;
+  color:#bde9ff!important;text-transform:uppercase;letter-spacing:1.3px;font-weight:900!important;
+}
+#shipmentTargetDisplay{
+  font-size:13px;color:#fff;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  text-shadow:0 1px 5px rgba(0,0,0,.28);
+}
+.dashboard-shipment-timer-wrap{display:flex;flex-direction:column;align-items:flex-end;min-width:205px;}
+.dashboard-shipment-timer-label{
+  font-size:8px;color:#bde9ff;text-transform:uppercase;font-weight:900;letter-spacing:1.1px;margin-bottom:3px;
+}
+.dashboard-shipment-timer{
+  font-size:21px;font-weight:950;letter-spacing:1.5px;color:#fff;
+  background:rgba(0,26,45,.48);padding:7px 13px;border-radius:11px;
+  border:1px solid rgba(255,255,255,.12);font-variant-numeric:tabular-nums;
+  text-shadow:0 2px 7px rgba(0,0,0,.35);display:flex;align-items:center;white-space:nowrap;
+}
+.dashboard-hero.has-shipment-handover .dashboard-hero-content{padding-top:18px!important;}
+.dashboard-hero.has-shipment-handover .dashboard-hero-command{top:auto!important;bottom:18px!important;}
+
+@media (max-width:1100px){
+  .dashboard-hero.has-shipment-handover{min-height:265px!important;}
+  .dashboard-shipment-handover{margin:12px 13px 0;gap:12px;}
+  .dashboard-shipment-timer-wrap{min-width:185px;}
+  .dashboard-shipment-timer{font-size:18px;padding:7px 10px;}
+  .dashboard-hero.has-shipment-handover .dashboard-hero-content{padding-top:16px!important;}
+}
+@media (max-width:700px){
+  .dashboard-hero.has-shipment-handover{min-height:330px!important;}
+  .dashboard-shipment-handover{margin:10px 10px 0;padding:9px;flex-direction:column;align-items:stretch;gap:8px;}
+  .dashboard-shipment-timer-wrap{min-width:0;align-items:flex-start;}
+  .dashboard-shipment-timer{font-size:17px;}
+  #shipmentTargetDisplay{font-size:11px;}
+  .dashboard-shipment-icon{width:38px;height:38px;min-width:38px;}
+  .dashboard-shipment-icon i{font-size:18px;}
+  .dashboard-hero.has-shipment-handover .dashboard-hero-content{padding-top:13px!important;}
+}
+
+/* ===== V27 - CLEAN ALUMEX IMAGE HEADER ===== */
+/* Use the ALUMEX global/factory image as the full dashboard header.
+   Remove the separate Production & Fulfillment content panel and keep
+   shipment countdown as a compact overlay on the image. */
+#dashboardTab .dashboard-hero{
+  min-height:188px!important;
+  margin:0 0 16px!important;
+  position:relative!important;
+  overflow:hidden!important;
+  border-radius:22px!important;
+  border:1px solid rgba(25,143,168,.34)!important;
+  background-color:#0a5263!important;
+  background-image:url('alumex-global.png')!important;
+  background-repeat:no-repeat!important;
+  background-size:cover!important;
+  background-position:center 48%!important;
+  box-shadow:0 16px 34px rgba(5,42,56,.16),0 2px 0 rgba(255,255,255,.45) inset!important;
+}
+#dashboardTab .dashboard-hero::after{
+  content:''!important;
+  position:absolute!important;
+  inset:0!important;
+  z-index:1!important;
+  pointer-events:none!important;
+  background:linear-gradient(90deg,rgba(3,35,48,.72) 0%,rgba(4,67,80,.40) 45%,rgba(4,88,103,.18) 72%,rgba(4,88,103,.08) 100%)!important;
+}
+#dashboardTab .dashboard-hero-overlay,
+#dashboardTab .dashboard-hero-grid-glow{
+  z-index:2!important;
+  pointer-events:none!important;
+}
+#dashboardTab .dashboard-hero-content,
+#dashboardTab .dashboard-hero-command,
+#dashboardTab .dashboard-hero-mark{
+  display:none!important;
+}
+#dashboardTab .dashboard-hero.has-shipment-handover{
+  min-height:188px!important;
+}
+#dashboardTab .dashboard-shipment-handover{
+  position:absolute!important;
+  z-index:8!important;
+  top:18px!important;
+  left:18px!important;
+  right:18px!important;
+  margin:0!important;
+  min-height:70px!important;
+  background:linear-gradient(135deg,rgba(4,70,96,.80),rgba(2,133,171,.62))!important;
+  border:1px solid rgba(193,246,255,.34)!important;
+  box-shadow:0 12px 28px rgba(0,25,42,.24),inset 0 1px 0 rgba(255,255,255,.14)!important;
+  backdrop-filter:blur(8px)!important;
+  -webkit-backdrop-filter:blur(8px)!important;
+}
+#dashboardTab .dashboard-shipment-handover-info{min-width:0!important;}
+#dashboardTab .dashboard-shipment-handover h4{color:#d7f5ff!important;}
+#dashboardTab #shipmentTargetDisplay{color:#fff!important;}
+#dashboardTab .dashboard-shipment-timer-label{color:#d7f5ff!important;}
+#dashboardTab .dashboard-shipment-timer{background:rgba(0,38,61,.62)!important;border-color:rgba(193,246,255,.22)!important;}
+#dashboardTab .dashboard-hero.has-shipment-handover .dashboard-hero-content{display:none!important;}
+#dashboardTab .dashboard-hero.has-shipment-handover .dashboard-hero-command{display:none!important;}
+
+@media(max-width:1100px){
+  #dashboardTab .dashboard-hero,
+  #dashboardTab .dashboard-hero.has-shipment-handover{min-height:180px!important;background-position:center 48%!important;}
+  #dashboardTab .dashboard-shipment-handover{top:12px!important;left:12px!important;right:12px!important;gap:10px!important;}
+  #dashboardTab .dashboard-shipment-timer-wrap{min-width:180px!important;}
+}
+@media(max-width:700px){
+  #dashboardTab .dashboard-hero,
+  #dashboardTab .dashboard-hero.has-shipment-handover{min-height:165px!important;background-position:center center!important;}
+  #dashboardTab .dashboard-shipment-handover{top:9px!important;left:9px!important;right:9px!important;padding:8px!important;min-height:58px!important;border-radius:13px!important;gap:7px!important;}
+  #dashboardTab .dashboard-shipment-icon{width:36px!important;height:36px!important;min-width:36px!important;border-radius:10px!important;}
+  #dashboardTab .dashboard-shipment-icon i{font-size:17px!important;}
+  #dashboardTab .dashboard-shipment-handover h4{font-size:8px!important;letter-spacing:.8px!important;}
+  #dashboardTab #shipmentTargetDisplay{font-size:10px!important;}
+  #dashboardTab .dashboard-shipment-timer-wrap{min-width:0!important;align-items:flex-end!important;}
+  #dashboardTab .dashboard-shipment-timer-label{font-size:7px!important;}
+  #dashboardTab .dashboard-shipment-timer{font-size:14px!important;padding:6px 8px!important;letter-spacing:.6px!important;}
+}
+\n\n/* ===== V28 - DASHBOARD REFERENCE LAYOUT =====\n   Match the supplied reference: main nav only, then one clean ALUMEX image hero.\n   The existing dashboard charts/data remain unchanged. */\n#mainNavTabs.dashboard-nav-mode{margin-bottom:10px!important;}\n#mainNavTabs.dashboard-nav-mode .smart-subnav{display:none!important;}\n\n#dashboardTab{padding-top:0!important;}\n#dashboardTab .dashboard-hero,\n#dashboardTab .dashboard-hero.has-shipment-handover{\n  min-height:178px!important;\n  height:178px!important;\n  margin:0 0 16px!important;\n  border-radius:18px!important;\n  overflow:hidden!important;\n  background-image:linear-gradient(90deg,rgba(2,35,49,.72) 0%,rgba(2,64,77,.30) 45%,rgba(0,95,112,.10) 100%),url('alumex-global.png')!important;\n  background-repeat:no-repeat!important;\n  background-size:100% 100%!important;\n  background-position:center!important;\n  box-shadow:0 12px 28px rgba(5,42,56,.16)!important;\n}\n#dashboardTab .dashboard-hero::after{\n  background:linear-gradient(90deg,rgba(1,31,44,.32) 0%,rgba(1,62,75,.12) 50%,rgba(0,84,98,.04) 100%)!important;\n}\n#dashboardTab .dashboard-shipment-handover{\n  position:absolute!important;\n  inset:0!important;\n  margin:0!important;\n  min-height:0!important;\n  height:100%!important;\n  padding:18px 22px!important;\n  border:0!important;\n  border-radius:0!important;\n  background:transparent!important;\n  box-shadow:none!important;\n  backdrop-filter:none!important;\n  -webkit-backdrop-filter:none!important;\n  display:flex!important;\n  align-items:flex-start!important;\n  justify-content:space-between!important;\n  gap:18px!important;\n}\n#dashboardTab .dashboard-shipment-handover-info{\n  padding:9px 14px 9px 9px!important;\n  border-radius:14px!important;\n  background:rgba(2,54,72,.48)!important;\n  border:1px solid rgba(205,246,255,.20)!important;\n  box-shadow:0 8px 18px rgba(0,25,42,.16)!important;\n  backdrop-filter:blur(6px)!important;\n  -webkit-backdrop-filter:blur(6px)!important;\n}\n#dashboardTab .dashboard-shipment-icon{\n  width:44px!important;height:44px!important;min-width:44px!important;\n  background:rgba(55,176,221,.25)!important;\n  border-color:rgba(215,250,255,.24)!important;\n}\n#dashboardTab .dashboard-shipment-handover h4{font-size:9px!important;color:#d9f8ff!important;}\n#dashboardTab #shipmentTargetDisplay{font-size:13px!important;color:#fff!important;}\n#dashboardTab .dashboard-shipment-timer-wrap{\n  min-width:215px!important;\n  align-items:flex-end!important;\n  padding-top:2px!important;\n}\n#dashboardTab .dashboard-shipment-timer-label{font-size:8px!important;color:#d9f8ff!important;}\n#dashboardTab .dashboard-shipment-timer{\n  background:rgba(0,37,59,.72)!important;\n  border:1px solid rgba(215,250,255,.20)!important;\n  border-radius:12px!important;\n  padding:7px 13px!important;\n  font-size:20px!important;\n  box-shadow:0 8px 20px rgba(0,24,40,.16)!important;\n}\n#dashboardTab .dashboard-hero-content,\n#dashboardTab .dashboard-hero-command,\n#dashboardTab .dashboard-hero-mark{display:none!important;}\n\n@media(max-width:1100px){\n  #dashboardTab .dashboard-hero,\n  #dashboardTab .dashboard-hero.has-shipment-handover{height:165px!important;min-height:165px!important;background-size:100% 100%!important;}\n  #dashboardTab .dashboard-shipment-handover{padding:13px 15px!important;}\n  #dashboardTab .dashboard-shipment-timer-wrap{min-width:185px!important;}\n  #dashboardTab .dashboard-shipment-timer{font-size:17px!important;}\n}\n@media(max-width:700px){\n  #dashboardTab .dashboard-hero,\n  #dashboardTab .dashboard-hero.has-shipment-handover{height:150px!important;min-height:150px!important;border-radius:14px!important;}\n  #dashboardTab .dashboard-shipment-handover{padding:10px!important;gap:8px!important;}\n  #dashboardTab .dashboard-shipment-handover-info{padding:6px 8px 6px 6px!important;max-width:62%!important;}\n  #dashboardTab .dashboard-shipment-icon{width:36px!important;height:36px!important;min-width:36px!important;}\n  #dashboardTab .dashboard-shipment-handover h4{font-size:7px!important;}\n  #dashboardTab #shipmentTargetDisplay{font-size:9px!important;}\n  #dashboardTab .dashboard-shipment-timer-wrap{min-width:0!important;padding-top:0!important;}\n  #dashboardTab .dashboard-shipment-timer-label{font-size:6px!important;}\n  #dashboardTab .dashboard-shipment-timer{font-size:12px!important;padding:5px 7px!important;}\n}\n
+
+/* ===== V29 ALUMEX ELITE VISUAL SYSTEM =====
+   Premium login + dashboard treatment based on the approved ALUMEX concept.
+   Functional controls, data logic and existing charts remain unchanged. */
+.ais-login-overlay{
+  padding:18px!important;
+  background:#031a2a!important;
+  background-image:radial-gradient(circle at 15% 10%,rgba(40,196,151,.16),transparent 30%),linear-gradient(135deg,#03263b 0%,#064b62 52%,#06322f 100%)!important;
+}
+.ais-login-shell{
+  width:min(1180px,97vw)!important;
+  min-height:700px!important;
+  grid-template-columns:1.08fr .92fr!important;
+  border-radius:24px!important;
+  border:1px solid rgba(255,255,255,.18)!important;
+  box-shadow:0 30px 90px rgba(0,20,35,.52)!important;
+}
+.ais-login-visual{
+  min-height:700px!important;
+  background:#075b78!important;
+}
+.ais-global-image{
+  content:url('alumex-global-hero.png')!important;
+  object-fit:cover!important;
+  object-position:center!important;
+  filter:saturate(1.05) contrast(1.03)!important;
+}
+.ais-visual-overlay{
+  background:linear-gradient(180deg,rgba(0,24,42,.05) 0%,rgba(0,28,45,.10) 46%,rgba(0,20,35,.78) 100%)!important;
+}
+.ais-brand-lockup{
+  left:28px!important;
+  top:28px!important;
+  right:auto!important;
+  bottom:auto!important;
+  z-index:4!important;
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:flex-start!important;
+}
+.ais-logo{
+  width:172px!important;
+  max-width:none!important;
+  height:auto!important;
+  padding:0!important;
+  border-radius:12px!important;
+  background:rgba(255,255,255,.93)!important;
+  box-shadow:0 12px 30px rgba(0,23,38,.24)!important;
+}
+.ais-brand-title,.ais-brand-sub{display:none!important;}
+.ais-visual-foot{
+  left:28px!important;
+  bottom:24px!important;
+  padding:8px 12px!important;
+  border-radius:999px!important;
+  background:rgba(1,36,53,.58)!important;
+  border:1px solid rgba(214,250,255,.18)!important;
+  backdrop-filter:blur(8px)!important;
+  color:#e5fbff!important;
+  letter-spacing:.8px!important;
+}
+.ais-login-panel{
+  padding:46px 44px!important;
+  background:linear-gradient(180deg,#fbfefd 0%,#f2f9f7 100%)!important;
+}
+.ais-login-top{margin-bottom:30px!important;}
+.ais-login-heading h1{
+  font-size:36px!important;
+  letter-spacing:-1px!important;
+  color:#0b3550!important;
+}
+.ais-login-heading p{max-width:390px!important;}
+.ais-role-card{
+  min-height:68px!important;
+  border-color:#d4e7e3!important;
+  border-radius:14px!important;
+  background:rgba(255,255,255,.92)!important;
+  box-shadow:0 7px 18px rgba(5,57,67,.055)!important;
+}
+.ais-role-card:hover{
+  border-color:#38b98b!important;
+  box-shadow:0 12px 28px rgba(5,121,87,.13)!important;
+}
+.ais-role-icon{
+  background:linear-gradient(135deg,#e6f7f0,#d9f2ed)!important;
+  color:#087f62!important;
+}
+.ais-login-button{
+  background:linear-gradient(135deg,#0672c8 0%,#058fbd 46%,#0aa36f 100%)!important;
+  box-shadow:0 12px 28px rgba(5,122,163,.18)!important;
+}
+.ais-login-footer{margin-top:28px!important;}
+
+/* Dashboard hero: use the supplied ALUMEX scene as the full visual background,
+   with the exact ALUMEX logo placed at the same clean top-left position as the approved mockup. */
+#dashboardTab .dashboard-hero,
+#dashboardTab .dashboard-hero.has-shipment-handover{
+  position:relative!important;
+  min-height:238px!important;
+  height:238px!important;
+  margin:0 0 16px!important;
+  border-radius:18px!important;
+  overflow:hidden!important;
+  background-image:linear-gradient(90deg,rgba(1,33,51,.14) 0%,rgba(0,72,91,.03) 60%,rgba(0,35,54,.10) 100%),url('alumex-global-hero.png')!important;
+  background-size:cover!important;
+  background-position:center!important;
+  box-shadow:0 14px 34px rgba(3,45,63,.20)!important;
+}
+#dashboardTab .dashboard-hero-overlay,
+#dashboardTab .dashboard-hero-grid-glow{display:none!important;}
+.dashboard-exact-logo{
+  position:absolute!important;
+  z-index:8!important;
+  top:18px!important;
+  left:18px!important;
+  width:150px!important;
+  height:auto!important;
+  padding:7px 9px!important;
+  border-radius:12px!important;
+  background:rgba(255,255,255,.92)!important;
+  box-shadow:0 10px 24px rgba(0,30,48,.20)!important;
+  object-fit:contain!important;
+}
+#dashboardTab .dashboard-hero-content,
+#dashboardTab .dashboard-hero-command,
+#dashboardTab .dashboard-hero-mark{display:none!important;}
+#dashboardTab .dashboard-shipment-handover{
+  position:absolute!important;
+  z-index:9!important;
+  left:18px!important;
+  right:18px!important;
+  bottom:16px!important;
+  top:auto!important;
+  height:auto!important;
+  min-height:0!important;
+  margin:0!important;
+  padding:0!important;
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+  display:flex!important;
+  align-items:stretch!important;
+  justify-content:space-between!important;
+  gap:14px!important;
+}
+#dashboardTab .dashboard-shipment-handover-info{
+  flex:1 1 auto!important;
+  min-width:0!important;
+  padding:10px 15px 10px 10px!important;
+  border-radius:14px!important;
+  background:rgba(0,48,70,.78)!important;
+  border:1px solid rgba(215,250,255,.25)!important;
+  box-shadow:0 10px 24px rgba(0,25,42,.20)!important;
+  backdrop-filter:blur(9px)!important;
+}
+#dashboardTab .dashboard-shipment-icon{
+  width:44px!important;height:44px!important;min-width:44px!important;
+  background:rgba(28,157,219,.34)!important;
+  border-color:rgba(218,250,255,.28)!important;
+}
+#dashboardTab .dashboard-shipment-handover h4{font-size:9px!important;color:#d9f8ff!important;}
+#dashboardTab #shipmentTargetDisplay{font-size:13px!important;color:#fff!important;}
+#dashboardTab .dashboard-shipment-timer-wrap{
+  flex:0 0 auto!important;
+  min-width:230px!important;
+  padding:0!important;
+  justify-content:center!important;
+  align-items:flex-end!important;
+}
+#dashboardTab .dashboard-shipment-timer-label{font-size:8px!important;color:#d9f8ff!important;}
+#dashboardTab .dashboard-shipment-timer{
+  background:rgba(0,38,59,.84)!important;
+  border:1px solid rgba(215,250,255,.22)!important;
+  border-radius:12px!important;
+  padding:8px 14px!important;
+  font-size:20px!important;
+  box-shadow:0 10px 24px rgba(0,24,40,.20)!important;
+}
+
+/* Dashboard shell polish without changing chart types or data. */
+#dashboardTab .kpi-grid{gap:14px!important;}
+#dashboardTab .kpi-card{
+  border-radius:16px!important;
+  border-top:1px solid rgba(255,255,255,.9)!important;
+  box-shadow:0 10px 24px rgba(4,46,63,.07)!important;
+}
+#dashboardTab .chart-card-animated,
+#dashboardTab .card{
+  border-radius:16px!important;
+  box-shadow:0 9px 22px rgba(4,46,63,.055)!important;
+}
+
+@media(max-width:900px){
+  .ais-login-shell{grid-template-columns:1fr!important;min-height:auto!important;}
+  .ais-login-visual{min-height:320px!important;}
+  .ais-brand-lockup{top:18px!important;left:18px!important;}
+  .ais-logo{width:138px!important;}
+  .ais-login-panel{padding:30px 24px!important;}
+  #dashboardTab .dashboard-hero,
+  #dashboardTab .dashboard-hero.has-shipment-handover{height:205px!important;min-height:205px!important;background-position:center!important;}
+  .dashboard-exact-logo{width:118px!important;top:12px!important;left:12px!important;}
+  #dashboardTab .dashboard-shipment-handover{left:10px!important;right:10px!important;bottom:10px!important;gap:8px!important;}
+  #dashboardTab .dashboard-shipment-timer-wrap{min-width:175px!important;}
+  #dashboardTab .dashboard-shipment-timer{font-size:15px!important;padding:6px 9px!important;}
+}
+@media(max-width:620px){
+  .ais-login-visual{min-height:250px!important;}
+  #dashboardTab .dashboard-hero,
+  #dashboardTab .dashboard-hero.has-shipment-handover{height:175px!important;min-height:175px!important;}
+  .dashboard-exact-logo{width:90px!important;padding:5px 6px!important;}
+  #dashboardTab .dashboard-shipment-handover-info{max-width:57%!important;padding:6px!important;}
+  #dashboardTab .dashboard-shipment-handover h4{font-size:7px!important;}
+  #dashboardTab #shipmentTargetDisplay{font-size:8px!important;}
+  #dashboardTab .dashboard-shipment-timer-wrap{min-width:0!important;}
+  #dashboardTab .dashboard-shipment-timer-label{font-size:6px!important;}
+  #dashboardTab .dashboard-shipment-timer{font-size:11px!important;padding:5px 6px!important;}
+}
+
+/* ===== V30 - MERGED ALUMEX HERO HEADER =====
+   The former top header is rendered inside the dashboard hero so the hero is one
+   continuous ALUMEX control surface. Existing buttons, clock and countdown remain functional. */
+#mainContent > .header{display:none!important;}
+#dashboardTab .dashboard-hero,
+#dashboardTab .dashboard-hero.has-shipment-handover{
+  position:relative!important;
+  min-height:365px!important;
+  height:365px!important;
+  margin:0 0 16px!important;
+  border-radius:22px!important;
+  overflow:hidden!important;
+  background-image:linear-gradient(180deg,rgba(2,31,45,.28) 0%,rgba(2,54,67,.08) 48%,rgba(1,37,52,.34) 100%),url('alumex-global-hero.png')!important;
+  background-repeat:no-repeat!important;
+  background-position:center!important;
+  background-size:cover!important;
+  box-shadow:0 18px 38px rgba(5,42,56,.18),0 2px 0 rgba(255,255,255,.35) inset!important;
+}
+#dashboardTab .dashboard-hero::after{display:none!important;}
+#dashboardTab .dashboard-hero-overlay{background:linear-gradient(180deg,rgba(0,34,48,.20),transparent 42%,rgba(0,39,53,.20))!important;}
+#dashboardTab .dashboard-hero-content,
+#dashboardTab .dashboard-hero-command,
+#dashboardTab .dashboard-hero-mark,
+#dashboardTab .dashboard-exact-logo{display:none!important;}
+
+.dashboard-merged-header{
+  position:absolute!important;
+  z-index:30!important;
+  top:0!important;left:0!important;right:0!important;
+  min-height:96px!important;
+  padding:10px 14px!important;
+  display:grid!important;
+  grid-template-columns:minmax(360px,1.15fr) minmax(470px,1.45fr) 255px!important;
+  align-items:center!important;
+  gap:14px!important;
+  background:linear-gradient(180deg,rgba(3,35,49,.90),rgba(3,54,67,.62))!important;
+  border-bottom:1px solid rgba(194,247,255,.22)!important;
+  box-shadow:0 10px 28px rgba(0,22,34,.18)!important;
+  backdrop-filter:blur(8px)!important;
+  -webkit-backdrop-filter:blur(8px)!important;
+}
+.dashboard-merged-header .header-logo-container{
+  display:flex!important;align-items:center!important;gap:12px!important;min-width:0!important;
+}
+.dashboard-merged-header .alumex-logo-frame{
+  width:78px!important;height:68px!important;min-width:78px!important;border-radius:14px!important;
+  background:rgba(255,255,255,.94)!important;box-shadow:0 7px 18px rgba(0,0,0,.18)!important;
+}
+.dashboard-merged-header .alumex-logo-svg{height:47px!important;max-width:65px!important;}
+.dashboard-merged-header .header-titles{min-width:0!important;position:relative!important;z-index:2!important;}
+.dashboard-merged-header .header-titles h1{
+  color:#fff!important;font-size:20px!important;line-height:1.08!important;white-space:nowrap!important;
+  text-shadow:0 2px 10px rgba(0,0,0,.35)!important;letter-spacing:-.35px!important;
+}
+.dashboard-merged-header .header-titles p{color:#d9eef2!important;font-size:10.5px!important;margin-top:5px!important;}
+.dashboard-merged-header .header-actions-group{
+  display:flex!important;align-items:center!important;justify-content:center!important;gap:7px!important;
+  flex-wrap:nowrap!important;width:100%!important;
+}
+.dashboard-merged-header .header-controls{display:contents!important;}
+.dashboard-merged-header .header-actions-group .btn{
+  min-height:38px!important;padding:8px 10px!important;border-radius:10px!important;
+  font-size:10px!important;white-space:nowrap!important;box-shadow:0 5px 12px rgba(0,0,0,.12)!important;
+}
+.dashboard-merged-header .header-clock-slot{
+  display:flex!important;justify-content:flex-end!important;align-items:center!important;min-width:0!important;
+}
+.dashboard-merged-header .header-clock-slot .live-clock-badge{
+  width:245px!important;min-width:245px!important;height:70px!important;
+  background:rgba(3,48,62,.72)!important;border:1px solid rgba(172,245,228,.28)!important;
+  box-shadow:0 8px 22px rgba(0,20,30,.16)!important;color:#fff!important;
+  backdrop-filter:blur(10px)!important;-webkit-backdrop-filter:blur(10px)!important;
+}
+.dashboard-merged-header .clock-main-line strong{font-size:20px!important;}
+.dashboard-merged-header .clock-live-pill{font-size:8px!important;}
+.dashboard-merged-header .clock-date-line{font-size:8px!important;}
+
+/* Shipment handover/countdown sits inside the same hero, below the integrated header. */
+#dashboardTab .dashboard-shipment-handover{
+  position:absolute!important;
+  z-index:25!important;
+  left:50%!important;right:auto!important;top:auto!important;bottom:14px!important;
+  transform:translateX(-50%)!important;
+  width:min(72%,980px)!important;height:auto!important;min-height:66px!important;
+  margin:0!important;padding:8px 10px!important;
+  display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;
+  border:1px solid rgba(177,246,255,.18)!important;border-radius:16px!important;
+  background:rgba(1,49,67,.78)!important;box-shadow:0 12px 28px rgba(0,23,37,.22)!important;
+  backdrop-filter:blur(10px)!important;-webkit-backdrop-filter:blur(10px)!important;
+}
+#dashboardTab .dashboard-shipment-handover-info{
+  display:flex!important;align-items:center!important;gap:9px!important;min-width:0!important;
+  padding:4px 8px!important;border:0!important;background:transparent!important;box-shadow:none!important;
+}
+#dashboardTab .dashboard-shipment-icon{width:44px!important;height:44px!important;min-width:44px!important;}
+#dashboardTab .dashboard-shipment-handover h4{font-size:9px!important;letter-spacing:.8px!important;}
+#dashboardTab #shipmentTargetDisplay{font-size:13px!important;font-weight:900!important;white-space:nowrap!important;}
+#dashboardTab .dashboard-shipment-timer-wrap{min-width:245px!important;align-items:flex-end!important;padding:0!important;}
+#dashboardTab .dashboard-shipment-timer-label{font-size:8px!important;letter-spacing:.8px!important;}
+#dashboardTab .dashboard-shipment-timer{font-size:20px!important;padding:6px 12px!important;border-radius:11px!important;}
+
+@media(max-width:1200px){
+  #dashboardTab .dashboard-hero,#dashboardTab .dashboard-hero.has-shipment-handover{height:340px!important;min-height:340px!important;}
+  .dashboard-merged-header{grid-template-columns:minmax(310px,1fr) minmax(390px,1.3fr) 225px!important;gap:8px!important;}
+  .dashboard-merged-header .header-titles h1{font-size:17px!important;}
+  .dashboard-merged-header .header-actions-group{gap:4px!important;}
+  .dashboard-merged-header .header-actions-group .btn{padding:7px 7px!important;font-size:9px!important;}
+  .dashboard-merged-header .header-clock-slot .live-clock-badge{width:215px!important;min-width:215px!important;}
+  #dashboardTab .dashboard-shipment-handover{width:78%!important;}
+}
+@media(max-width:900px){
+  #dashboardTab .dashboard-hero,#dashboardTab .dashboard-hero.has-shipment-handover{height:330px!important;min-height:330px!important;background-position:center!important;}
+  .dashboard-merged-header{grid-template-columns:1fr auto!important;grid-template-areas:'brand clock' 'actions actions';min-height:125px!important;padding:8px 10px!important;}
+  .dashboard-merged-header .header-logo-container{grid-area:brand;}
+  .dashboard-merged-header .header-controls{grid-area:actions!important;display:block!important;}
+  .dashboard-merged-header .header-actions-group{justify-content:flex-start!important;overflow-x:auto!important;padding-bottom:2px!important;}
+  .dashboard-merged-header .header-clock-slot{grid-area:clock;}
+  .dashboard-merged-header .header-clock-slot .live-clock-badge{width:190px!important;min-width:190px!important;height:62px!important;}
+  .dashboard-merged-header .clock-main-line strong{font-size:17px!important;}
+  #dashboardTab .dashboard-shipment-handover{width:92%!important;bottom:10px!important;}
+}
+@media(max-width:600px){
+  #dashboardTab .dashboard-hero,#dashboardTab .dashboard-hero.has-shipment-handover{height:315px!important;min-height:315px!important;border-radius:15px!important;background-position:52% center!important;}
+  .dashboard-merged-header{grid-template-columns:1fr!important;grid-template-areas:'brand' 'clock' 'actions';min-height:155px!important;}
+  .dashboard-merged-header .header-logo-container{justify-content:center!important;}
+  .dashboard-merged-header .header-titles h1{font-size:14px!important;white-space:normal!important;text-align:center!important;}
+  .dashboard-merged-header .header-titles p{text-align:center!important;font-size:8px!important;}
+  .dashboard-merged-header .header-clock-slot{justify-content:center!important;}
+  .dashboard-merged-header .header-clock-slot .live-clock-badge{width:200px!important;min-width:200px!important;height:56px!important;}
+  .dashboard-merged-header .header-actions-group{justify-content:center!important;flex-wrap:wrap!important;overflow:visible!important;}
+  .dashboard-merged-header .header-actions-group .btn{min-height:34px!important;padding:6px 7px!important;font-size:8px!important;}
+  #dashboardTab .dashboard-shipment-handover{width:94%!important;bottom:8px!important;min-height:58px!important;padding:5px!important;gap:5px!important;}
+  #dashboardTab .dashboard-shipment-icon{width:34px!important;height:34px!important;min-width:34px!important;}
+  #dashboardTab .dashboard-shipment-handover h4{font-size:6px!important;}
+  #dashboardTab #shipmentTargetDisplay{font-size:8px!important;}
+  #dashboardTab .dashboard-shipment-timer-wrap{min-width:0!important;}
+  #dashboardTab .dashboard-shipment-timer-label{font-size:6px!important;}
+  #dashboardTab .dashboard-shipment-timer{font-size:10px!important;padding:4px 6px!important;}
+}
+
+/* ===== V31 - Slim Transparent Integrated Header + Shipment Hero ===== */
+#dashboardTab .dashboard-hero,
+#dashboardTab .dashboard-hero.has-shipment-handover{
+  height:345px!important;
+  min-height:345px!important;
+}
+
+.dashboard-merged-header{
+  min-height:76px!important;
+  height:76px!important;
+  padding:7px 12px!important;
+  grid-template-columns:minmax(340px,1.1fr) minmax(430px,1.35fr) 235px!important;
+  gap:10px!important;
+  background:linear-gradient(180deg,rgba(3,31,44,.48),rgba(3,52,65,.20))!important;
+  border-bottom:1px solid rgba(220,250,255,.18)!important;
+  box-shadow:0 7px 18px rgba(0,22,34,.10)!important;
+  backdrop-filter:blur(5px)!important;
+  -webkit-backdrop-filter:blur(5px)!important;
+}
+.dashboard-merged-header .alumex-logo-frame{
+  width:62px!important;height:55px!important;min-width:62px!important;
+  border-radius:11px!important;background:rgba(255,255,255,.86)!important;
+}
+.dashboard-merged-header .alumex-logo-svg{height:39px!important;max-width:54px!important;}
+.dashboard-merged-header .header-logo-container{gap:10px!important;}
+.dashboard-merged-header .header-titles h1{font-size:18px!important;}
+.dashboard-merged-header .header-titles p{font-size:9px!important;margin-top:3px!important;}
+.dashboard-merged-header .header-actions-group{gap:5px!important;}
+.dashboard-merged-header .header-actions-group .btn{
+  min-height:34px!important;padding:6px 8px!important;border-radius:9px!important;
+  font-size:9px!important;box-shadow:0 4px 10px rgba(0,0,0,.09)!important;
+}
+.dashboard-merged-header .header-clock-slot .live-clock-badge{
+  width:220px!important;min-width:220px!important;height:60px!important;
+  background:rgba(3,48,62,.46)!important;border-color:rgba(172,245,228,.24)!important;
+  box-shadow:0 6px 16px rgba(0,20,30,.10)!important;
+  backdrop-filter:blur(7px)!important;-webkit-backdrop-filter:blur(7px)!important;
+}
+.dashboard-merged-header .clock-orbit{width:45px!important;height:45px!important;min-width:45px!important;}
+.dashboard-merged-header .clock-face{width:35px!important;height:35px!important;}
+.dashboard-merged-header .clock-main-line strong{font-size:18px!important;}
+.dashboard-merged-header .clock-live-pill{font-size:7px!important;margin-bottom:2px!important;}
+.dashboard-merged-header .clock-date-line{font-size:7.5px!important;margin-top:2px!important;}
+
+/* Shipment page: use the ALUMEX global image as a subtle, transparent banner. */
+#shipmentTab > .card:first-child{
+  position:relative!important;
+  overflow:hidden!important;
+  border-radius:18px!important;
+  border:1px solid rgba(6,112,137,.16)!important;
+  background:rgba(255,255,255,.91)!important;
+}
+#shipmentTab > .card:first-child::before{
+  content:"";
+  position:absolute!important;
+  inset:0!important;
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.90) 0%,rgba(255,255,255,.94) 42%,rgba(255,255,255,.98) 100%),
+    url('alumex-global-hero.png') center/cover no-repeat!important;
+  opacity:.72!important;
+  pointer-events:none!important;
+}
+#shipmentTab > .card:first-child > *{position:relative!important;z-index:1!important;}
+#shipmentTab > .card:first-child .cargo-banner-header{
+  min-height:118px!important;
+  display:flex!important;align-items:flex-end!important;
+  padding:18px 22px!important;
+  border-radius:14px!important;
+  overflow:hidden!important;
+  background:
+    linear-gradient(90deg,rgba(2,40,56,.82),rgba(2,87,103,.48),rgba(1,111,127,.20)),
+    url('alumex-global-hero.png') center/cover no-repeat!important;
+  box-shadow:0 8px 20px rgba(0,40,55,.14)!important;
+}
+#shipmentTab > .card:first-child .cargo-banner-header h2{
+  color:#fff!important;text-shadow:0 2px 8px rgba(0,0,0,.35)!important;margin:0!important;
+}
+
+@media(max-width:1200px){
+  .dashboard-merged-header{grid-template-columns:minmax(300px,1fr) minmax(390px,1.2fr) 205px!important;}
+  .dashboard-merged-header .header-titles h1{font-size:16px!important;}
+  .dashboard-merged-header .header-actions-group .btn{padding:6px 6px!important;font-size:8px!important;}
+  .dashboard-merged-header .header-clock-slot .live-clock-badge{width:195px!important;min-width:195px!important;height:56px!important;}
+  #dashboardTab .dashboard-hero,#dashboardTab .dashboard-hero.has-shipment-handover{height:330px!important;min-height:330px!important;}
+}
+@media(max-width:900px){
+  .dashboard-merged-header{min-height:105px!important;height:105px!important;grid-template-columns:1fr auto!important;grid-template-areas:'brand clock' 'actions actions'!important;}
+  .dashboard-merged-header .header-logo-container{grid-area:brand!important;}
+  .dashboard-merged-header .header-controls{grid-area:actions!important;}
+  .dashboard-merged-header .header-clock-slot{grid-area:clock!important;}
+  #dashboardTab .dashboard-hero,#dashboardTab .dashboard-hero.has-shipment-handover{height:325px!important;min-height:325px!important;}
+}
+@media(max-width:600px){
+  .dashboard-merged-header{min-height:135px!important;height:135px!important;grid-template-columns:1fr!important;grid-template-areas:'brand' 'clock' 'actions'!important;}
+  #dashboardTab .dashboard-hero,#dashboardTab .dashboard-hero.has-shipment-handover{height:315px!important;min-height:315px!important;}
+}
+
+/* ===== V32 FINAL - compact hero + clear navigation placement ===== */
+/* On Overview the nav is moved by JS directly below the hero image. */
+#dashboardTab .dashboard-hero,
+#dashboardTab .dashboard-hero.has-shipment-handover{
+  height:300px!important;
+  min-height:300px!important;
+  margin-bottom:10px!important;
+  border-radius:18px!important;
+}
+.dashboard-merged-header{
+  min-height:62px!important;
+  height:62px!important;
+  padding:5px 12px!important;
+  grid-template-columns:minmax(340px,1.1fr) minmax(430px,1.35fr) 225px!important;
+  gap:9px!important;
+  background:linear-gradient(180deg,rgba(3,31,44,.36),rgba(3,52,65,.14))!important;
+  border-bottom:1px solid rgba(220,250,255,.14)!important;
+  box-shadow:0 5px 14px rgba(0,22,34,.08)!important;
+  backdrop-filter:blur(4px)!important;
+  -webkit-backdrop-filter:blur(4px)!important;
+}
+.dashboard-merged-header .alumex-logo-frame{
+  width:52px!important;height:46px!important;min-width:52px!important;border-radius:9px!important;
+}
+.dashboard-merged-header .alumex-logo-svg{height:32px!important;max-width:45px!important;}
+.dashboard-merged-header .header-logo-container{gap:8px!important;}
+.dashboard-merged-header .header-titles h1{font-size:16px!important;line-height:1.05!important;}
+.dashboard-merged-header .header-titles p{font-size:8px!important;margin-top:2px!important;}
+.dashboard-merged-header .header-actions-group{gap:4px!important;}
+.dashboard-merged-header .header-actions-group .btn{
+  min-height:30px!important;padding:5px 7px!important;border-radius:8px!important;font-size:8px!important;
+}
+.dashboard-merged-header .header-clock-slot .live-clock-badge{
+  width:205px!important;min-width:205px!important;height:51px!important;border-radius:12px!important;
+}
+.dashboard-merged-header .clock-orbit{width:38px!important;height:38px!important;min-width:38px!important;}
+.dashboard-merged-header .clock-face{width:30px!important;height:30px!important;}
+.dashboard-merged-header .clock-main-line strong{font-size:16px!important;}
+.dashboard-merged-header .clock-live-pill{font-size:6.5px!important;}
+.dashboard-merged-header .clock-date-line{font-size:6.5px!important;}
+
+#mainNavTabs.dashboard-nav-below-hero{
+  width:100%!important;
+  margin:0 0 14px!important;
+  border-radius:14px!important;
+  padding:5px!important;
+  background:rgba(255,255,255,.98)!important;
+  border:1px solid #d3e1e7!important;
+  box-shadow:0 7px 18px rgba(15,39,66,.08)!important;
+  position:relative!important;
+  z-index:20!important;
+}
+#mainNavTabs.dashboard-nav-below-hero .smart-nav-row{
+  gap:5px!important;padding:4px!important;background:linear-gradient(180deg,#fff,#f6fafb)!important;
+}
+#mainNavTabs.dashboard-nav-below-hero .smart-category{
+  min-height:46px!important;padding:10px 17px!important;font-size:13px!important;font-weight:800!important;
+  border-radius:11px!important;color:#40576c!important;white-space:nowrap!important;
+}
+#mainNavTabs.dashboard-nav-below-hero .smart-category i{font-size:13px!important;margin-right:4px!important;}
+#mainNavTabs.dashboard-nav-below-hero .smart-category:hover{transform:none!important;background:#edf8f3!important;color:#0b7653!important;}
+#mainNavTabs.dashboard-nav-below-hero .smart-category.active{
+  background:linear-gradient(135deg,#123b5b,#145a72)!important;color:#fff!important;
+  box-shadow:0 6px 14px rgba(18,59,91,.18)!important;
+}
+#mainNavTabs.dashboard-nav-below-hero .smart-category.smart-standalone{color:#08724f!important;background:#f5fbf8!important;}
+#mainNavTabs.dashboard-nav-below-hero .smart-category.smart-standalone.active{background:linear-gradient(135deg,#0f766e,#11865f)!important;color:#fff!important;}
+
+@media(max-width:1200px){
+  #dashboardTab .dashboard-hero,#dashboardTab .dashboard-hero.has-shipment-handover{height:285px!important;min-height:285px!important;}
+  .dashboard-merged-header{grid-template-columns:minmax(280px,1fr) minmax(360px,1.2fr) 200px!important;height:58px!important;min-height:58px!important;}
+  .dashboard-merged-header .header-titles h1{font-size:14px!important;}
+  .dashboard-merged-header .header-actions-group .btn{font-size:7px!important;padding:5px 6px!important;}
+  .dashboard-merged-header .header-clock-slot .live-clock-badge{width:185px!important;min-width:185px!important;height:47px!important;}
+  #mainNavTabs.dashboard-nav-below-hero .smart-category{font-size:12px!important;padding:9px 12px!important;}
+}
+@media(max-width:900px){
+  #dashboardTab .dashboard-hero,#dashboardTab .dashboard-hero.has-shipment-handover{height:290px!important;min-height:290px!important;}
+  .dashboard-merged-header{min-height:88px!important;height:88px!important;grid-template-columns:1fr auto!important;grid-template-areas:'brand clock' 'actions actions'!important;}
+  .dashboard-merged-header .header-logo-container{grid-area:brand!important;}
+  .dashboard-merged-header .header-controls{grid-area:actions!important;}
+  .dashboard-merged-header .header-clock-slot{grid-area:clock!important;}
+  #mainNavTabs.dashboard-nav-below-hero .smart-nav-row{overflow-x:auto!important;}
+  #mainNavTabs.dashboard-nav-below-hero .smart-category{min-height:42px!important;padding:8px 11px!important;font-size:11px!important;}
+}
+@media(max-width:600px){
+  #dashboardTab .dashboard-hero,#dashboardTab .dashboard-hero.has-shipment-handover{height:285px!important;min-height:285px!important;}
+  .dashboard-merged-header{min-height:112px!important;height:112px!important;grid-template-columns:1fr!important;grid-template-areas:'brand' 'clock' 'actions'!important;}
+  .dashboard-merged-header .header-clock-slot{justify-content:flex-start!important;}
+  #mainNavTabs.dashboard-nav-below-hero .smart-category{min-width:max-content!important;font-size:10.5px!important;}
+}

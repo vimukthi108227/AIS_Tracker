@@ -241,26 +241,25 @@ const INITIAL_CATALOG = [ {"profile": "1037", "length": "1727.2", "unit_weight":
 window.injectCountdownUI = function() {
     if (!document.getElementById('shipmentCountdownContainer')) {
         const dashTab = document.getElementById('dashboardTab');
-        if(dashTab) {
+        const hero = dashTab ? dashTab.querySelector('.dashboard-hero') : null;
+        if(hero) {
             const countdownHtml = `
-            <div id="shipmentCountdownContainer" style="display:none; background: linear-gradient(135deg, #1e3a8a, #0284c7); color: white; padding: 18px 25px; border-radius: var(--radius-lg); margin-bottom: 24px; box-shadow: 0 10px 25px -5px rgba(2, 132, 199, 0.4); justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; border: 1px solid #38bdf8; animation: fadeInUp 0.5s ease;">
-                <div style="display:flex; align-items:center; gap:20px;">
-                    <div style="background: rgba(255,255,255,0.1); padding: 14px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: inset 0 2px 5px rgba(0,0,0,0.2);">
-                        <i class="fa-solid fa-ship" style="font-size: 32px; color: #bae6fd; animation: floatCyber 3s ease-in-out infinite alternate;"></i>
-                    </div>
+            <div id="shipmentCountdownContainer" class="dashboard-shipment-handover" style="display:none;">
+                <div class="dashboard-shipment-handover-info">
+                    <div class="dashboard-shipment-icon"><i class="fa-solid fa-ship"></i></div>
                     <div>
-                        <h4 style="margin: 0 0 5px 0; font-size: 13.5px; color: #e0f2fe; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 900;">Next Shipment Handover</h4>
-                        <div id="shipmentTargetDisplay" style="font-size: 16px; color: #fff; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">Not Set</div>
+                        <h4>Next Shipment Handover</h4>
+                        <div id="shipmentTargetDisplay">Not Set</div>
                     </div>
                 </div>
-                <div style="display:flex; flex-direction:column; align-items:flex-end;">
-                    <div style="font-size: 11px; color: #bae6fd; text-transform: uppercase; font-weight: 800; letter-spacing: 1px; margin-bottom: 5px;">Time Remaining</div>
-                    <div id="countdownTimerDisplay" style="font-size: 26px; font-weight: 900; letter-spacing: 2px; background: rgba(0,0,0,0.3); padding: 10px 20px; border-radius: 12px; font-variant-numeric: tabular-nums; border: 1px solid rgba(255,255,255,0.15); text-shadow: 0 2px 5px rgba(0,0,0,0.4); display: flex; align-items: center;">
-                        -- : -- : --
-                    </div>
+                <div class="dashboard-shipment-timer-wrap">
+                    <div class="dashboard-shipment-timer-label">Time Remaining</div>
+                    <div id="countdownTimerDisplay" class="dashboard-shipment-timer">-- : -- : --</div>
                 </div>
             </div>`;
-            dashTab.insertAdjacentHTML('afterbegin', countdownHtml);
+            const gridGlow = hero.querySelector('.dashboard-hero-grid-glow');
+            if(gridGlow) gridGlow.insertAdjacentHTML('afterend', countdownHtml);
+            else hero.insertAdjacentHTML('afterbegin', countdownHtml);
         }
     }
 
@@ -297,12 +296,15 @@ window.updateShipmentCountdown = function() {
     
     if (!container || !targetDisplay || !timerDisplay) return;
     
+    const hero = container.closest('.dashboard-hero');
     if (!shipmentDeadline || isNaN(shipmentDeadline)) {
         container.style.display = 'none';
+        if(hero) hero.classList.remove('has-shipment-handover');
         return;
     }
     
     container.style.display = 'flex';
+    if(hero) hero.classList.add('has-shipment-handover');
     
     const options = { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
     targetDisplay.textContent = shipmentDeadline.toLocaleDateString('en-US', options);
@@ -690,6 +692,18 @@ function activateNavCategoryForTab(tabId, btn){
   const nav=document.getElementById('mainNavTabs'); if(!nav) return;
   const item=btn || nav.querySelector(`.tab-btn[onclick*="${tabId}"]`);
   const direct=nav.querySelector(`.smart-category[data-tab="${tabId}"]`);
+  // Dashboard is the landing/overview screen: keep the main category nav clean and
+  // do not open the secondary "Executive Dashboard" strip beneath it.
+  if(tabId === 'dashboardTab') {
+    nav.querySelectorAll('.smart-category').forEach(b=>b.classList.remove('active'));
+    const overviewBtn=nav.querySelector('.smart-category[data-category="overview"]');
+    if(overviewBtn) overviewBtn.classList.add('active');
+    const panel=document.getElementById('smartSubnav');
+    if(panel) panel.classList.remove('open');
+    nav.classList.add('dashboard-nav-mode');
+    return;
+  }
+  nav.classList.remove('dashboard-nav-mode');
   if(direct){
     nav.querySelectorAll('.smart-category').forEach(b=>b.classList.remove('active'));
     direct.classList.add('active');
@@ -707,7 +721,32 @@ function activateNavCategoryForTab(tabId, btn){
   const panel=document.getElementById('smartSubnav'); if(panel) panel.classList.add('open');
 }
 
+function setDashboardNavPlacement(tabId){
+  const nav=document.getElementById('mainNavTabs');
+  const main=document.getElementById('mainContent');
+  const dash=document.getElementById('dashboardTab');
+  if(!nav || !main || !dash) return;
+  if(!window.__aisNavHome){
+    window.__aisNavHome={parent:nav.parentElement,next:nav.nextElementSibling};
+  }
+  if(tabId==='dashboardTab'){
+    const hero=dash.querySelector('.dashboard-hero');
+    if(hero && nav.parentElement!==dash){
+      hero.insertAdjacentElement('afterend',nav);
+    }
+    nav.classList.add('dashboard-nav-below-hero');
+  }else{
+    const home=window.__aisNavHome;
+    if(home && home.parent && nav.parentElement!==home.parent){
+      if(home.next && home.next.parentElement===home.parent) home.parent.insertBefore(nav,home.next);
+      else home.parent.appendChild(nav);
+    }
+    nav.classList.remove('dashboard-nav-below-hero');
+  }
+}
+
 function switchTab(tabId, btn) {
+  setDashboardNavPlacement(tabId);
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active')); 
   document.querySelectorAll('#mainNavTabs .tab-btn').forEach(el => el.classList.remove('active')); 
   document.getElementById(tabId).classList.add('active'); 
@@ -1915,7 +1954,10 @@ async function submitDailyEntry() {
       profileVal=document.getElementById('selectProfile').value, itemCodeVal=document.getElementById('selectItemCode').value,
       lengthVal=document.getElementById('selectLength').value, cutQty=parseInt(document.getElementById('cutQty').value)||0,
       punchQty=parseInt(document.getElementById('punchQty').value)||0, wrapQty=parseInt(document.getElementById('wrapQty').value)||0,
-      enteredBoxes=parseInt(document.getElementById('boxQty').value)||0, crateQty=parseInt(document.getElementById('crateQty').value)||0;
+      enteredBoxes=Math.max(0,parseInt(document.getElementById('boxQty').value)||0), crateQty=parseInt(document.getElementById('crateQty').value)||0;
+    const availableCardboard=Math.max(0,Number(getAvailableCardboard(profileVal,itemCodeVal,lengthVal))||0);
+    // Do not block production when cardboard is insufficient. The production Box Qty is
+    // recorded as entered, while actual cardboard stock consumption is capped at what is available.
     if(!dateVal||!profileVal||!itemCodeVal||!lengthVal) return showToast('Please select correctly.','warning');
     const item=masterData.find(m=>String(m.profile).trim()===profileVal&&m.itemCode===itemCodeVal&&cleanLen(m.length)===cleanLen(lengthVal));
     if(!item) return showToast('Selected catalog item was not found.','error');
@@ -1937,8 +1979,10 @@ async function submitDailyEntry() {
     const newLog={log_date:dateVal,shift:shiftVal,profile:profileVal,length:cleanLen(lengthVal),cut_qty:cutQty,punch_qty:punchQty,wrap_qty:wrapQty,box_qty:boxPcs,crate_qty:crateQty,log_time:new Date().toLocaleTimeString()};
     let stockUpdated=false, insertedLog=null, cardboardDeducted=null;
     try {
-      // Validate and reserve cardboard BEFORE committing production movement.
-      if(enteredBoxes>0) cardboardDeducted=await deductCardboardBoxesForProduction(profileVal,itemCodeVal,lengthVal,enteredBoxes);
+      // Reserve only the cardboard that actually exists. If production needs more boxes,
+      // the remaining production quantity is still recorded, but cardboard stock bottoms at 0.
+      const cardboardToDeduct=Math.min(enteredBoxes,availableCardboard);
+      if(cardboardToDeduct>0) cardboardDeducted=await deductCardboardBoxesForProduction(profileVal,itemCodeVal,lengthVal,cardboardToDeduct);
       if(item.db_id){
         await dbUpdate('master_catalog',{cut_qty:next.cutQty,punch_qty:next.punchQty,wrap_qty:next.wrapQty,box_qty:next.boxQty,crate_qty:next.crateQty},item.db_id,'Production stock save failed');
         stockUpdated=true;
@@ -1951,7 +1995,7 @@ async function submitDailyEntry() {
         try {
           // The insert helper intentionally does not request SELECT/RETURNING; remove the most recent matching local transaction if possible.
           const idx=cardboardStockList.indexOf(cardboardDeducted); if(idx>=0){cardboardStockList.splice(idx,1);saveCardboardLocally();}
-          const q=await supabaseClient.from('cardboard_stock').delete().eq('cb_date',cardboardDeducted.date).eq('cb_type',cardboardDeducted.type).eq('used',enteredBoxes);
+          const q=await supabaseClient.from('cardboard_stock').delete().eq('cb_date',cardboardDeducted.date).eq('cb_type',cardboardDeducted.type).eq('used',cardboardToDeduct);
           if(q.error) console.warn('Cardboard rollback warning:',q.error);
         } catch(rb){ console.warn('Cardboard rollback failed:',rb); }
       }
@@ -3049,12 +3093,38 @@ function populateCbProfileDropdown(){
   if(dl){dl.innerHTML=''; [...new Set(masterData.map(m=>String(m.material||'').trim()).filter(v=>v&&v!=='-'))].forEach(v=>dl.appendChild(new Option(v,v)));}
 }
 function updateProductionCardboardAvailability(){
-  const box=document.getElementById('productionCardboardAvailability'); if(!box) return;
+  const box=document.getElementById('productionCardboardAvailability');
+  const input=document.getElementById('boxQty');
+  if(!box) return;
   const p=document.getElementById('selectProfile')?.value||'', i=document.getElementById('selectItemCode')?.value||'', l=document.getElementById('selectLength')?.value||'';
-  if(!p||!i||!l){box.textContent='Select profile, item code and length to check cardboard stock.';box.className='production-cardboard-info neutral';return;}
-  const avail=getAvailableCardboard(p,i,l); const entered=parseInt(document.getElementById('boxQty')?.value)||0; const ok=entered<=avail;
-  box.innerHTML=`<i class="fa-solid fa-box-open"></i> <span>Available Cardboard Stock: <b>${avail.toLocaleString()} Boxes</b>${entered?` • Entered: <b>${entered}</b> • ${ok?'Balance after save: '+(avail-entered):'SHORT BY '+(entered-avail)}`:''}</span>`;
-  box.className='production-cardboard-info '+(ok?'ok':'danger');
+  if(!p||!i||!l){
+    if(input){ input.value=0; input.removeAttribute('max'); input.disabled=true; input.title='Select profile, item code and length first.'; }
+    box.textContent='Select profile, item code and length to check cardboard stock.';
+    box.className='production-cardboard-info neutral';
+    return;
+  }
+  const avail=Math.max(0,Number(getAvailableCardboard(p,i,l))||0);
+  let entered=Math.max(0,parseInt(input?.value)||0);
+
+  // Box Qty is a production quantity and must NOT be blocked by cardboard stock.
+  // Users may enter any quantity (even when cardboard stock is 0). Cardboard consumption
+  // is capped at the available stock during save, so cardboard stock can never become negative.
+  if(input){
+    input.removeAttribute('max');
+    input.disabled=false;
+    input.value=entered;
+    input.title=avail<=0 ? 'No cardboard stock available. Production Box Qty can still be entered.' : `Available cardboard: ${avail} boxes`;
+  }
+  const shortBy=Math.max(0,entered-avail);
+  const ok=shortBy===0;
+  const afterSave=Math.max(0,avail-entered);
+  box.innerHTML=`<i class="fa-solid ${avail>0?'fa-box-open':'fa-box'}"></i> <span>Available Cardboard Stock: <b>${avail.toLocaleString()} Boxes</b>${entered?` • Entered Box Qty: <b>${entered}</b> • ${ok?'Stock after save: '+afterSave:'Cardboard used: '+avail+' • Short by: '+shortBy}`:''}</span>`;
+  box.className='production-cardboard-info '+(entered && !ok?'danger':(avail>0?'ok':'neutral'));
+}
+function enforceProductionCardboardQty(){
+  const input=document.getElementById('boxQty');
+  if(!input) return;
+  updateProductionCardboardAvailability();
 }
 function onPoFilterProfileChange(){
   const profile=document.getElementById('filterPoProfile')?.value||''; const item=document.getElementById('filterPoItemCode'); if(!item)return;

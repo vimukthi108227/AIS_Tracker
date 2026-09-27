@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
   <title>Alumex PLC - AIS Section Multi-Stage Stock Tracker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -98,10 +98,10 @@
     <div class="ais-login-backdrop"></div>
     <div class="ais-login-shell">
       <section class="ais-login-visual">
-        <img src="alumex-global.png" class="ais-global-image" alt="Alumex global operations">
+        <img src="alumex-global-hero.png" class="ais-global-image" alt="Alumex global operations">
         <div class="ais-visual-overlay"></div>
         <div class="ais-brand-lockup">
-          <img src="alumex-logo.png" class="ais-logo" alt="Alumex logo">
+          <img src="alumex-logo-cropped.png" class="ais-logo" alt="Alumex logo">
           <div class="ais-brand-title">AFFORDABLE INTERIOR SYSTEMS</div>
           <div class="ais-brand-sub">Production • Stock • Reject • Packing • Shipment</div>
         </div>
@@ -266,6 +266,28 @@
 
     <!-- TAB 0: Dashboard -->
     <div id="dashboardTab" class="tab-content active">
+      <section class="dashboard-hero" aria-label="Alumex Operations Dashboard">
+        <img src="alumex-logo-cropped.png" class="dashboard-exact-logo" alt="Alumex logo">
+        <div class="dashboard-hero-overlay"></div>
+        <div class="dashboard-hero-grid-glow" aria-hidden="true"></div>
+        <div class="dashboard-hero-content">
+          <div class="dashboard-hero-kicker"><span class="hero-live-dot"></span><i class="fa-solid fa-building-circle-check"></i> ALUMEX • OPERATIONS CONTROL CENTER</div>
+          <h2>Production & Fulfillment Dashboard</h2>
+          <p>Live operational visibility across stock, production, packing, shipment and quality performance.</p>
+          <div class="dashboard-hero-tags" aria-label="Dashboard scope">
+            <span><i class="fa-solid fa-crosshairs"></i> Precision</span>
+            <span><i class="fa-solid fa-shield-halved"></i> Quality</span>
+            <span><i class="fa-solid fa-globe"></i> Global Reach</span>
+          </div>
+        </div>
+        <div class="dashboard-hero-command" aria-hidden="true">
+          <span class="hero-command-brand">ALUMEX PLC</span>
+          <span><i class="fa-solid fa-cubes"></i> MULTI-STAGE STOCK</span>
+          <span><i class="fa-solid fa-boxes-packing"></i> PACKING & SHIPMENT</span>
+          <span><i class="fa-solid fa-chart-line"></i> LIVE OPERATIONS</span>
+        </div>
+        <div class="dashboard-hero-mark"><span>ALUMEX</span><small>ULTIMATE IN ALUMINIUM PROFILES</small></div>
+      </section>
       <div id="recoveryMonthReminder" class="recovery-month-reminder" style="display:none;"></div>
       <div class="kpi-grid">
         <div class="kpi-card" style="border-left: 5px solid #0284c7;"><div class="kpi-icon" style="background: linear-gradient(135deg, #0284c7, #0369a1);"><i class="fa-solid fa-layer-group"></i></div><div class="kpi-details"><h4 style="color: #0369a1;">Total Stock Levels</h4><div class="kpi-value" id="kpiTotalStockPcs" style="color: #0284c7;">0 Pcs</div><div class="kpi-subweight" id="kpiTotalStockWt" style="font-weight: 700;">0.00 kg</div></div></div>
@@ -356,7 +378,7 @@
 </div></div></div>
 
     <!-- Admin Entry Tab -->
-    <div id="adminEntryTab" class="tab-content"><div class="card"><h3><i class="fa-solid fa-list-check"></i> Enter Production Quantities by Stage</h3><div id="entryStatusBanner" class="status-banner"></div><form id="dailyEntryForm"><div class="form-grid"><div class="form-group"><label>Select Date</label><input type="date" id="entryDate" onchange="checkDateStatus()" required></div><div class="form-group"><label>Shift</label><select id="shift" onchange="checkDateStatus()" required><option value="Day">Day Shift</option><option value="Night">Night Shift</option></select></div><div class="form-group"><label>1. Select Profile</label><select id="selectProfile" onchange="onProfileSelect()" required><option value="">-- Choose Profile --</option></select></div><div class="form-group"><label>2. Select Item Code</label><select id="selectItemCode" onchange="onItemCodeSelect()" required><option value="">-- Choose Item --</option></select></div><div class="form-group"><label>3. Select Length (mm)</label><select id="selectLength" onchange="onLengthSelect()" required><option value="">-- Choose Length --</option></select></div></div><div class="stage-section"><h4><i class="fa-solid fa-layer-group"></i> Daily Production Stages Entry</h4><div class="form-grid"><div class="form-group"><label>1. Cut Stage Qty (Pcs)</label><input type="number" id="cutQty" min="0" value="0"></div><div class="form-group" id="punchGroup"><label>2. Punching Qty (Pcs)</label><input type="number" id="punchQty" min="0" value="0"></div><div class="form-group"><label>3. Wrapping Qty (Pcs)</label><input type="number" id="wrapQty" min="0" value="0"></div><div class="form-group" style="background: rgba(16, 185, 129, 0.1); padding: 8px 10px; border-radius: 8px; border: 1px solid #10b981;"><label style="color: #047857;"><i class="fa-solid fa-box-open"></i> 4. Box Packing Qty (Boxes)</label><input type="number" id="boxQty" min="0" value="0" style="border-color:#10b981;" oninput="updateProductionCardboardAvailability()"><div id="productionCardboardAvailability" class="production-cardboard-info neutral"><i class="fa-solid fa-box"></i> Select profile, item code and length to check cardboard stock.</div></div><div class="form-group" style="background: rgba(254, 243, 199, 0.4); padding: 8px 10px; border-radius: 8px; border: 1px solid #fcd34d;"><label style="color: #b45309;"><i class="fa-solid fa-boxes-packing"></i> 5. Crate Stage Qty (Pcs)</label><input type="number" id="crateQty" min="0" value="0"></div></div></div><div style="margin-top: 16px;"><button type="button" class="btn btn-animated" onclick="submitDailyEntry()"><i class="fa-solid fa-floppy-disk"></i> Process Movement</button></div></form></div></div>
+    <div id="adminEntryTab" class="tab-content"><div class="card"><h3><i class="fa-solid fa-list-check"></i> Enter Production Quantities by Stage</h3><div id="entryStatusBanner" class="status-banner"></div><form id="dailyEntryForm"><div class="form-grid"><div class="form-group"><label>Select Date</label><input type="date" id="entryDate" onchange="checkDateStatus()" required></div><div class="form-group"><label>Shift</label><select id="shift" onchange="checkDateStatus()" required><option value="Day">Day Shift</option><option value="Night">Night Shift</option></select></div><div class="form-group"><label>1. Select Profile</label><select id="selectProfile" onchange="onProfileSelect()" required><option value="">-- Choose Profile --</option></select></div><div class="form-group"><label>2. Select Item Code</label><select id="selectItemCode" onchange="onItemCodeSelect()" required><option value="">-- Choose Item --</option></select></div><div class="form-group"><label>3. Select Length (mm)</label><select id="selectLength" onchange="onLengthSelect()" required><option value="">-- Choose Length --</option></select></div></div><div class="stage-section"><h4><i class="fa-solid fa-layer-group"></i> Daily Production Stages Entry</h4><div class="form-grid"><div class="form-group"><label>1. Cut Stage Qty (Pcs)</label><input type="number" id="cutQty" min="0" value="0"></div><div class="form-group" id="punchGroup"><label>2. Punching Qty (Pcs)</label><input type="number" id="punchQty" min="0" value="0"></div><div class="form-group"><label>3. Wrapping Qty (Pcs)</label><input type="number" id="wrapQty" min="0" value="0"></div><div class="form-group" style="background: rgba(16, 185, 129, 0.1); padding: 8px 10px; border-radius: 8px; border: 1px solid #10b981;"><label style="color: #047857;"><i class="fa-solid fa-box-open"></i> 4. Box Packing Qty (Boxes)</label><input type="number" id="boxQty" min="0" value="0" style="border-color:#10b981;" oninput="enforceProductionCardboardQty()"><div id="productionCardboardAvailability" class="production-cardboard-info neutral"><i class="fa-solid fa-box"></i> Select profile, item code and length to check cardboard stock.</div></div><div class="form-group" style="background: rgba(254, 243, 199, 0.4); padding: 8px 10px; border-radius: 8px; border: 1px solid #fcd34d;"><label style="color: #b45309;"><i class="fa-solid fa-boxes-packing"></i> 5. Crate Stage Qty (Pcs)</label><input type="number" id="crateQty" min="0" value="0"></div></div></div><div style="margin-top: 16px;"><button type="button" class="btn btn-animated" onclick="submitDailyEntry()"><i class="fa-solid fa-floppy-disk"></i> Process Movement</button></div></form></div></div>
 
     <!-- Public Stock Tab -->
     <div id="publicStockTab" class="tab-content"><div class="card"><div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;"><h3 style="margin:0;"><i class="fa-solid fa-chart-column"></i> Current Total Stock Level by Stage</h3><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-accent" onclick="exportStockExcel()"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" style="background:#dc2626;color:#fff;" onclick="exportStockPdf()"><i class="fa-solid fa-file-pdf"></i> PDF</button></div></div><div class="form-grid" style="margin-bottom: 14px; background: var(--emerald-light); padding: 10px 14px; border-radius: var(--radius-md); border: 1px solid var(--emerald-border);"><div class="form-group" style="max-width: 250px;"><label style="color: var(--primary-dark); font-weight: 700;"><i class="fa-solid fa-filter"></i> 1. Select Profile:</label><select id="stockFilterProfile" onchange="onStockProfileFilterChange()"><option value="">-- All Profiles --</option></select></div><div class="form-group" style="max-width: 250px;"><label style="color: var(--primary-dark); font-weight: 700;"><i class="fa-solid fa-magnifying-glass"></i> 2. Select Item Code:</label><select id="stockFilterItemCode" onchange="renderProfileSummaryTable()"><option value="">-- All Item Codes --</option></select></div></div><div class="table-container"><table><thead><tr><th style="width: 65px;">Profile</th><th style="width: 110px;">Item Code</th><th style="width: 75px;">Length</th><th style="width: 65px;">Unit Wt</th><th>Cut Stock</th><th>Punch Stock</th><th>Wrap Stock</th><th>Box Stock (Pcs)</th><th style="background: linear-gradient(180deg, #059669 0%, #047857 100%); color:#fff;">Packed Boxes</th><th style="background: linear-gradient(180deg, #b45309 0%, #d97706 100%);">Crate Stock</th><th style="background: linear-gradient(180deg, #022c22 0%, #064e3b 100%);">Total Stock (Pcs/kg)</th><th style="width: 70px;">Action</th></tr></thead><tbody id="profileSummaryTableBody"></tbody></table></div></div></div>
@@ -430,5 +452,36 @@
   </div>
 
   <script src="script.js"></script>
+
+<script>
+(function(){
+  function mergeHeaderIntoDashboardHero(){
+    const header=document.querySelector('#mainContent > .header');
+    const hero=document.querySelector('#dashboardTab .dashboard-hero');
+    if(!header || !hero || hero.dataset.mergedHeader==='1') return;
+    const logo=header.querySelector('.header-logo-container');
+    const controls=header.querySelector('.header-controls');
+    const clock=header.querySelector('.header-clock-slot');
+    if(!logo || !controls || !clock) return;
+
+    const top=document.createElement('div');
+    top.className='dashboard-merged-header';
+    top.setAttribute('aria-label','AIS Tracker controls');
+
+    // Keep the existing functional controls and live clock, but render them inside the hero.
+    top.appendChild(logo);
+    top.appendChild(controls);
+    top.appendChild(clock);
+    hero.prepend(top);
+
+    // The old standalone header is no longer needed; its live elements were moved above.
+    header.style.display='none';
+    hero.dataset.mergedHeader='1';
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', mergeHeaderIntoDashboardHero);
+  else mergeHeaderIntoDashboardHero();
+  window.addEventListener('load', mergeHeaderIntoDashboardHero);
+})();
+</script>
 </body>
 </html>
