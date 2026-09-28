@@ -1239,7 +1239,11 @@ function renderDashboard() {
   const currentMonthLabel = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
   setDashboardPeriodBadge('factoryStockPeriod', 'LIVE SNAPSHOT');
   setDashboardPeriodBadge('overallPoPeriod', dashboardDataPeriod(poList.map(p => p.date), 'No dated POs'));
-  setDashboardPeriodBadge('overallPlPeriod', dashboardDataPeriodFromMonthFields(packingLists.map(p => p.date || p.month), 'Active PL data'), true);
+  // PL dashboard is intentionally scoped to the CURRENT ACTIVE shipment only.
+  // Completed/previous containers must not be included in this chart or its summary.
+  ensurePackingSelection();
+  const activePlRecords = getPackingContainerRecords(activePackingMonth, activePackingContainer);
+  setDashboardPeriodBadge('overallPlPeriod', `${activePackingMonth || 'Active month'} • ${activePackingContainer || 'Active container'}`, true);
   let mRejWt = 0, mRecWt = 0, mPlantRejWt = 0, mOtherRejWt = 0; 
   let mProdWrapWt = 0; 
   let profileRejMap = {}; 
@@ -1525,13 +1529,15 @@ function renderDashboard() {
   if(document.getElementById('funnelBoxBar')) document.getElementById('funnelBoxBar').style.width = `${totalWipPcs ? Math.round((totalBox / totalWipPcs) * 100) : 0}%`;
 
   let plReqWt = 0;
-  let chartCutWt = 0, chartPunchWt = 0, chartWrapWt = 0, chartBoxWt = 0, chartManualWt = 0, chartPendingWt = 0;
+  let chartCutWt = 0, chartPunchWt = 0, chartWrapWt = 0, chartBoxWt = 0, chartCrateWt = 0, chartManualWt = 0, chartPendingWt = 0;
   
   let crateMapForChart = {};
   for(let i=1; i<=50; i++) { crateMapForChart["Crate " + i] = { req: 0, comp: 0, items: [] }; }
   
   let availableStockPL = masterData.map(m => ({ ...m }));
-  packingLists.forEach(pl => {
+  // IMPORTANT: use only the active/current Packing List (month + container).
+  // Historical/completed PL containers are excluded from this dashboard chart.
+  activePlRecords.forEach(pl => {
       let reqQty = pl.pcsQty;
       let matched = availableStockPL.find(m => String(m.profile).trim() === String(pl.profile).trim() && cleanLen(m.length) === cleanLen(pl.length) && m.itemCode === pl.itemCode);
       let uw = matched ? (matched.unitWeight || 0) : 0;
@@ -1541,27 +1547,27 @@ function renderDashboard() {
       let allocatedBox = 0, allocatedWrap = 0, allocatedPunch = 0, allocatedCut = 0;
       let remReq = reqQty;
       
+      let allocatedCrate = 0;
       if (matched) {
-          let combinedBoxStock = matched.boxQty + matched.crateQty;
-          allocatedBox = Math.min(remReq, combinedBoxStock);
-          
-          if (allocatedBox > matched.crateQty) {
-              matched.boxQty -= (allocatedBox - matched.crateQty);
-              matched.crateQty = 0;
-          } else {
-              matched.crateQty -= allocatedBox;
-          }
+          // Keep Box and Crate separate so the dashboard can report the true
+          // Packing List completion weight (Wrap + Box + Crate).
+          allocatedCrate = Math.min(remReq, matched.crateQty || 0);
+          matched.crateQty = Math.max(0, (matched.crateQty || 0) - allocatedCrate);
+          remReq -= allocatedCrate;
+
+          allocatedBox = Math.min(remReq, matched.boxQty || 0);
+          matched.boxQty = Math.max(0, (matched.boxQty || 0) - allocatedBox);
           remReq -= allocatedBox;
 
-          allocatedWrap = Math.min(remReq, matched.wrapQty); matched.wrapQty -= allocatedWrap; remReq -= allocatedWrap;
-          allocatedPunch = Math.min(remReq, matched.punchQty); matched.punchQty -= allocatedPunch; remReq -= allocatedPunch;
-          allocatedCut = Math.min(remReq, matched.cutQty); matched.cutQty -= allocatedCut; remReq -= allocatedCut;
+          allocatedWrap = Math.min(remReq, matched.wrapQty || 0); matched.wrapQty = Math.max(0, (matched.wrapQty || 0) - allocatedWrap); remReq -= allocatedWrap;
+          allocatedPunch = Math.min(remReq, matched.punchQty || 0); matched.punchQty = Math.max(0, (matched.punchQty || 0) - allocatedPunch); remReq -= allocatedPunch;
+          allocatedCut = Math.min(remReq, matched.cutQty || 0); matched.cutQty = Math.max(0, (matched.cutQty || 0) - allocatedCut); remReq -= allocatedCut;
       }
       
       if (!crateMapForChart[pl.crateNo]) crateMapForChart[pl.crateNo] = { req: 0, comp: 0, items: [] };
       crateMapForChart[pl.crateNo].req += reqQty;
       crateMapForChart[pl.crateNo].comp += allocatedBox;
-      crateMapForChart[pl.crateNo].items.push({ req: reqQty, box: allocatedBox, wrap: allocatedWrap, punch: allocatedPunch, cut: allocatedCut, pending: remReq, unitWeight: uw });
+      crateMapForChart[pl.crateNo].items.push({ req: reqQty, box: allocatedBox, crate: allocatedCrate, wrap: allocatedWrap, punch: allocatedPunch, cut: allocatedCut, pending: remReq, unitWeight: uw });
   });
 
   for (let crateId in crateMapForChart) {
@@ -1576,6 +1582,7 @@ function renderDashboard() {
               chartManualWt += (i.req * w);
           } else {
               chartBoxWt += (i.box * w);
+              chartCrateWt += (i.crate * w);
               chartWrapWt += (i.wrap * w);
               chartPunchWt += (i.punch * w);
               chartCutWt += (i.cut * w);
@@ -1601,18 +1608,36 @@ function renderDashboard() {
           
           if(document.getElementById('overallPlChart')) { 
               safeChartDestroy(overallPlChartInstance, 'overallPlChart'); 
-              let cData = [ Number(chartCutWt.toFixed(2))||0, Number(chartPunchWt.toFixed(2))||0, Number(chartWrapWt.toFixed(2))||0, Number(chartBoxWt.toFixed(2))||0, Number(chartManualWt.toFixed(2))||0, Number(chartPendingWt.toFixed(2))||0 ]; 
-              if(cData.every(v => v===0)) cData = [1]; 
-              overallPlChartInstance = new Chart(document.getElementById('overallPlChart'), { type: 'doughnut', data: { labels: cData.length===1 ? ['No PLs'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Completed', 'Pending'], datasets: [{ hoverOffset: 10, data: cData, backgroundColor: cData.length===1 ? ['#e2e8f0'] : ['#0284c7', '#ea580c', '#d946ef', '#10b981', '#059669', '#e11d48'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, false), cutout: '65%' } }); 
-              
+              const plCompleteWt = Math.min(plReqWt, chartWrapWt + chartBoxWt + chartCrateWt + chartManualWt);
+              const plWaitingWt = Math.min(Math.max(0, plReqWt - plCompleteWt), chartCutWt + chartPunchWt);
+              const plPendingWt = Math.max(0, plReqWt - plCompleteWt - plWaitingWt);
+              const plCompletePct = plReqWt > 0 ? (plCompleteWt / plReqWt) * 100 : 0;
+              const plWaitingPct = plReqWt > 0 ? (plWaitingWt / plReqWt) * 100 : 0;
+              const plPendingPct = plReqWt > 0 ? (plPendingWt / plReqWt) * 100 : 0;
+
+              let cData = [ Number(chartCutWt.toFixed(2))||0, Number(chartPunchWt.toFixed(2))||0, Number(chartWrapWt.toFixed(2))||0, Number(chartBoxWt.toFixed(2))||0, Number(chartCrateWt.toFixed(2))||0, Number(chartManualWt.toFixed(2))||0, Number(chartPendingWt.toFixed(2))||0 ];
+              if(cData.every(v => v===0)) cData = [1];
+              overallPlChartInstance = new Chart(document.getElementById('overallPlChart'), { type: 'doughnut', data: { labels: cData.length===1 ? ['No PLs'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Crate', 'Completed', 'Pending'], datasets: [{ hoverOffset: 10, data: cData, backgroundColor: cData.length===1 ? ['#e2e8f0'] : ['#0284c7', '#ea580c', '#d946ef', '#10b981', '#f59e0b', '#059669', '#e11d48'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, false), cutout: '65%' } });
+
               let plWeightBreakdownHtml = `
-              <div style="font-size: 11px; margin-top: 15px; width: 100%; display: flex; flex-direction: column; gap: 4px;">
-                  <div style="display:flex; justify-content:space-between; color: #e11d48;"><span>Pending:</span> <span>${chartPendingWt.toFixed(2)} kg</span></div>
-                  <div style="display:flex; justify-content:space-between; color: #0284c7;"><span>Cut Stage:</span> <span>${chartCutWt.toFixed(2)} kg</span></div>
-                  <div style="display:flex; justify-content:space-between; color: #ea580c;"><span>Punch Stage:</span> <span>${chartPunchWt.toFixed(2)} kg</span></div>
-                  <div style="display:flex; justify-content:space-between; color: #d946ef;"><span>Wrap Stage:</span> <span>${chartWrapWt.toFixed(2)} kg</span></div>
-                  <div style="display:flex; justify-content:space-between; color: #10b981;"><span>Box Stage:</span> <span>${chartBoxWt.toFixed(2)} kg</span></div>
-                  <div style="display:flex; justify-content:space-between; color: #059669; font-weight:800; border-top:1px dashed #cbd5e1; padding-top:4px;"><span>Completed:</span> <span>${chartManualWt.toFixed(2)} kg</span></div>
+              <div class="pl-dashboard-breakdown-list">
+                <div class="pl-progress-summary">
+                  <div class="pl-progress-row pl-complete">
+                    <div class="pl-progress-label"><span><i class="fa-solid fa-circle-check"></i> PL Complete Weight</span><b>${plCompleteWt.toFixed(2)} kg</b></div>
+                    <div class="pl-progress-track"><span style="width:${Math.min(100, plCompletePct).toFixed(2)}%"></span></div>
+                    <div class="pl-progress-meta"><span>Wrapping + Box + Crate</span><b>${plCompletePct.toFixed(1)}%</b></div>
+                  </div>
+                  <div class="pl-progress-row pl-waiting">
+                    <div class="pl-progress-label"><span><i class="fa-solid fa-hourglass-half"></i> Waiting / Processing Weight</span><b>${plWaitingWt.toFixed(2)} kg</b></div>
+                    <div class="pl-progress-track"><span style="width:${Math.min(100, plWaitingPct).toFixed(2)}%"></span></div>
+                    <div class="pl-progress-meta"><span>Cut + Punch</span><b>${plWaitingPct.toFixed(1)}%</b></div>
+                  </div>
+                  <div class="pl-progress-row pl-pending">
+                    <div class="pl-progress-label"><span><i class="fa-solid fa-clock"></i> Pending Weight</span><b>${plPendingWt.toFixed(2)} kg</b></div>
+                    <div class="pl-progress-track"><span style="width:${Math.min(100, plPendingPct).toFixed(2)}%"></span></div>
+                    <div class="pl-progress-meta"><span>Remaining PL requirement</span><b>${plPendingPct.toFixed(1)}%</b></div>
+                  </div>
+                </div>
               </div>`;
               
               const plParent = document.getElementById('overallPlChart').parentElement.parentElement;

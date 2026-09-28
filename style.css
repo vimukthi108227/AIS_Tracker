@@ -2002,3 +2002,20 @@ body.dark-mode #dashboardTab .chart-val-label{color:#8ca2ac!important;}
   .dashboard-merged-header .header-clock-slot{justify-content:flex-start!important;}
   #mainNavTabs.dashboard-nav-below-hero .smart-category{min-width:max-content!important;font-size:10.5px!important;}
 }
+
+/* PL dashboard progress summary - live weight breakdown under the PL chart */
+.pl-dashboard-breakdown-list{width:100%;margin-top:12px;}
+.pl-progress-summary{display:flex;flex-direction:column;gap:8px;padding:10px 11px 9px;border-radius:10px;border:1px solid #dbe7ee;background:linear-gradient(180deg,rgba(248,250,252,.96),rgba(255,255,255,.98));}
+.pl-progress-row{padding:7px 8px;border-radius:8px;background:rgba(255,255,255,.78);border:1px solid rgba(203,213,225,.7);}
+.pl-progress-label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;font-weight:800;color:#334155;}
+.pl-progress-label span{display:flex;align-items:center;gap:6px;}
+.pl-progress-label b{font-size:12px;white-space:nowrap;}
+.pl-progress-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px;font-size:10.5px;font-weight:700;color:#64748b;}
+.pl-progress-meta b{font-size:11px;}
+.pl-progress-track{height:6px;margin-top:6px;border-radius:999px;overflow:hidden;background:#e2e8f0;}
+.pl-progress-track span{display:block;height:100%;border-radius:999px;transition:width .35s ease;}
+.pl-complete .pl-progress-label{color:#047857}.pl-complete .pl-progress-label i{color:#059669}.pl-complete .pl-progress-label b,.pl-complete .pl-progress-meta b{color:#059669}.pl-complete .pl-progress-track span{background:#10b981;}
+.pl-waiting .pl-progress-label{color:#c2410c}.pl-waiting .pl-progress-label i{color:#f59e0b}.pl-waiting .pl-progress-label b,.pl-waiting .pl-progress-meta b{color:#ea580c}.pl-waiting .pl-progress-track span{background:#f59e0b;}
+.pl-pending .pl-progress-label{color:#be123c}.pl-pending .pl-progress-label i{color:#e11d48}.pl-pending .pl-progress-label b,.pl-pending .pl-progress-meta b{color:#e11d48}.pl-pending .pl-progress-track span{background:#e11d48;}
+body.dark-mode .pl-progress-summary{background:rgba(15,23,42,.72);border-color:#334155}.body.dark-mode .pl-progress-row{background:rgba(15,23,42,.5);border-color:#334155}.dark-mode .pl-progress-row{background:rgba(15,23,42,.5);border-color:#334155}.dark-mode .pl-progress-label{color:#e2e8f0}.dark-mode .pl-progress-meta{color:#94a3b8}.dark-mode .pl-progress-track{background:#334155}
+@media(max-width:520px){.pl-progress-label{font-size:11px}.pl-progress-label b{font-size:11px}.pl-progress-meta{font-size:10px}}
