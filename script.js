@@ -530,23 +530,13 @@ async function loadDataFromSupabase(isSilent = false) {
       return matches.length ? String(matches[0].itemCode).trim() : '';
     };
     window.resolveMasterItemCode = resolveMasterItemCode;
-    // Keep all legacy records synchronized with Master Catalog Item Codes at read/render time.
-    const syncItemCodesFromMaster = () => {
-      shipmentList.forEach(x => x.itemCode = resolveMasterItemCode(x.profile, x.length, x.itemCode));
-      packingLists.forEach(x => x.itemCode = resolveMasterItemCode(x.profile, x.length, x.itemCode));
-      poList.forEach(x => x.itemCode = resolveMasterItemCode(x.profile, x.length, x.itemCode));
-      rejectLogs.forEach(x => x.item_code = resolveMasterItemCode(x.profile, x.length, x.item_code) || x.item_code || '');
-      recoveryCutLogs.forEach(x => { x.source_item_code = resolveMasterItemCode(x.source_profile, x.original_length, x.source_item_code) || x.source_item_code || ''; x.new_item_code = resolveMasterItemCode(x.new_profile, x.new_length, x.new_item_code) || x.new_item_code || ''; });
-      recoveryWrapLogs.forEach(x => x.item_code = resolveMasterItemCode(x.profile, x.length, x.item_code) || x.item_code || '');
-    };
-
     poList = poData.map(item => ({
       id: item.id, date: item.po_date, poNumber: item.po_number, profile: item.profile,
       itemCode: resolveMasterItemCode(item.profile, item.length, item.item_code),
       length: cleanLen(item.length), orderQty: item.order_qty
     }));
-    shipmentList = shipData.map(item => ({ id: item.id, date: item.shipment_date, month: item.shipment_month, poNumber: item.po_number, profile: item.profile, itemCode: resolveMasterItemCode(item.profile, item.length, item.item_code), length: cleanLen(item.length), container: item.container, shippedQty: item.shipped_qty, remainingBalance: item.remaining_balance }));
-    packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate 1`, profile: item.profile, itemCode: resolveMasterItemCode(item.profile, item.length, item.item_code), length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date }));
+    shipmentList = shipData.map(item => ({ id: item.id, date: item.shipment_date, month: item.shipment_month, poNumber: item.po_number, profile: item.profile, length: cleanLen(item.length), container: item.container, shippedQty: item.shipped_qty, remainingBalance: item.remaining_balance }));
+    packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate 1`, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date }));
     historyLogs = logData.map(item => ({ id: item.id, date: item.log_date, shift: item.shift, profile: item.profile, length: cleanLen(item.length), cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, timestamp: item.log_time || item.created_at || new Date().toISOString() }));
     rejectLogs = rjData; recoverLogs = rcData; dailyInstructionsList = instData;
     recoveryCutLogs = (rCutData || []).map(r => ({id:r.id,cut_date:r.cut_date,source_profile:r.source_profile,source_item_code:r.source_item_code,original_length:cleanLen(r.original_length),new_profile:r.new_profile,new_item_code:r.new_item_code,new_length:cleanLen(r.new_length),cut_pcs:Number(r.cut_pcs)||0,cut_weight:Number(r.cut_weight)||0}));
@@ -560,7 +550,6 @@ async function loadDataFromSupabase(isSilent = false) {
     const manualRow = (instData || []).find(r => r.target_user === 'SYS_CARDBOARD_MANUAL');
     if (manualRow && manualRow.message) { try { cardboardManualData = JSON.parse(manualRow.message) || []; } catch(e) { cardboardManualData=[]; } saveCardboardManualLocally(); } else { const localManual = localStorage.getItem('alumex_cardboard_manual_local'); if(localManual) { try { cardboardManualData = JSON.parse(localManual) || []; } catch(e) { cardboardManualData=[]; } } }
 
-    syncItemCodesFromMaster();
     const profileLookup = new Map();
     masterData.forEach(m => profileLookup.set(`${String(m.profile).trim()}_${cleanLen(m.length)}`, m));
 
@@ -829,7 +818,7 @@ async function saveRejectEntry() {
     showToast('Reject saved successfully.','success'); document.getElementById('rejectEntryForm').reset(); document.getElementById('rejDate').value=d;
   } catch(e){ console.error(e); showToast(e.message||'Reject save failed.','error'); } finally { isAppBusy=false; }
 }
-function renderRejectTable() { try { const subTab = document.getElementById('rejectEntrySubTab'); let filterDiv = document.getElementById('rejectFilterContainer'); if (!filterDiv && subTab) { filterDiv = document.createElement('div'); filterDiv.id = 'rejectFilterContainer'; filterDiv.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; background: rgba(16, 185, 129, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px dashed var(--emerald-border); flex-wrap: wrap; gap: 15px;"><div><label style="font-weight:800; margin-right:10px; color:var(--primary-dark);"><i class="fa-solid fa-calendar-days"></i> Filter by Month:</label><input type="month" id="rejectMonthFilter" onchange="renderRejectTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700;"></div><div style="display:flex; gap: 12px; font-weight: 800; font-size: 13.5px; flex-wrap: wrap;"><div style="background: #fee2e2; color: #9f1239; padding: 8px 14px; border-radius: 6px;"><i class="fa-solid fa-dumpster"></i> Total: <span id="rejSumTotal">0.00</span> kg</div></div></div>`; const tableContainer = subTab.querySelector('.table-container'); subTab.insertBefore(filterDiv, tableContainer); const now = new Date(); document.getElementById('rejectMonthFilter').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; } const selectedMonthVal = document.getElementById('rejectMonthFilter') ? document.getElementById('rejectMonthFilter').value : ''; let filteredLogs = rejectLogs; let sumTotal = 0; if (selectedMonthVal) filteredLogs = rejectLogs.filter(r => r.reject_date && r.reject_date.startsWith(selectedMonthVal)); filteredLogs.forEach(r => { sumTotal += (parseFloat(r.weight) || 0); }); if (document.getElementById('rejSumTotal')) document.getElementById('rejSumTotal').textContent = sumTotal.toFixed(2); const tb = document.getElementById('rejectTableBody'); if(!tb) return; let html = ''; if(filteredLogs.length===0) html = `<tr><td colspan="10" style="text-align:center;">No Reject Records Found.</td></tr>`; else { filteredLogs.forEach(r => { const resolvedRejectItemCode = resolveMasterItemCode(r.profile, r.length, r.item_code); r.item_code = resolvedRejectItemCode || r.item_code || '-'; html += `<tr><td>${r.reject_date}</td><td>${r.shift}</td><td>${r.location}</td><td>${r.stage}</td><td><b>${r.profile}</b></td><td>${r.item_code}</td><td>${r.length}</td><td>${r.pcs}</td><td>${r.weight} kg</td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-danger" onclick="deleteRejectItem(${r.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock"></i>`}</td></tr>`; }); } tb.innerHTML = html; } catch(e) {} }
+function renderRejectTable() { try { const subTab = document.getElementById('rejectEntrySubTab'); let filterDiv = document.getElementById('rejectFilterContainer'); if (!filterDiv && subTab) { filterDiv = document.createElement('div'); filterDiv.id = 'rejectFilterContainer'; filterDiv.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; background: rgba(16, 185, 129, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px dashed var(--emerald-border); flex-wrap: wrap; gap: 15px;"><div><label style="font-weight:800; margin-right:10px; color:var(--primary-dark);"><i class="fa-solid fa-calendar-days"></i> Filter by Month:</label><input type="month" id="rejectMonthFilter" onchange="renderRejectTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700;"></div><div style="display:flex; gap: 12px; font-weight: 800; font-size: 13.5px; flex-wrap: wrap;"><div style="background: #fee2e2; color: #9f1239; padding: 8px 14px; border-radius: 6px;"><i class="fa-solid fa-dumpster"></i> Total: <span id="rejSumTotal">0.00</span> kg</div></div></div>`; const tableContainer = subTab.querySelector('.table-container'); subTab.insertBefore(filterDiv, tableContainer); const now = new Date(); document.getElementById('rejectMonthFilter').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; } const selectedMonthVal = document.getElementById('rejectMonthFilter') ? document.getElementById('rejectMonthFilter').value : ''; let filteredLogs = rejectLogs; let sumTotal = 0; if (selectedMonthVal) filteredLogs = rejectLogs.filter(r => r.reject_date && r.reject_date.startsWith(selectedMonthVal)); filteredLogs.forEach(r => { sumTotal += (parseFloat(r.weight) || 0); }); if (document.getElementById('rejSumTotal')) document.getElementById('rejSumTotal').textContent = sumTotal.toFixed(2); const tb = document.getElementById('rejectTableBody'); if(!tb) return; let html = ''; if(filteredLogs.length===0) html = `<tr><td colspan="10" style="text-align:center;">No Reject Records Found.</td></tr>`; else { filteredLogs.forEach(r => { html += `<tr><td>${r.reject_date}</td><td>${r.shift}</td><td>${r.location}</td><td>${r.stage}</td><td><b>${r.profile}</b></td><td>${r.item_code}</td><td>${r.length}</td><td>${r.pcs}</td><td>${r.weight} kg</td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-danger" onclick="deleteRejectItem(${r.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock"></i>`}</td></tr>`; }); } tb.innerHTML = html; } catch(e) {} }
 window.deleteRejectItem = function(id) { if(currentUserRole !== 'Admin') return; showConfirm("Delete this Reject record?", async () => {
   const row=rejectLogs.find(r=>Number(r.id)===Number(id)); if(!row) return;
   try {
@@ -1007,7 +996,7 @@ function renderRecoveryCutStockTable(){
   recoveryCutLogs.forEach(r=>{const k=`${recKey(r.new_profile)}|${recKey(r.new_item_code)}|${cleanLen(r.new_length)}`;if(!groups.has(k))groups.set(k,{profile:r.new_profile,item_code:r.new_item_code,length:r.new_length,cut:0});groups.get(k).cut+=Number(r.cut_pcs)||0;});
   recoveryWrapLogs.forEach(r=>{const k=`${recKey(r.profile)}|${recKey(r.item_code)}|${cleanLen(r.length)}`;if(!groups.has(k))groups.set(k,{profile:r.profile,item_code:r.item_code,length:r.length,cut:0});groups.get(k).wrapped=(groups.get(k).wrapped||0)+(Number(r.wrap_pcs)||0);});
   if(!groups.size){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:24px;">No Recover Cut Stock Available.</td></tr>';return;}
-  let html='';[...groups.values()].forEach(g=>{const available=Math.max(0,g.cut-(g.wrapped||0)),resolvedIC=resolveMasterItemCode(g.profile,g.length,g.item_code)||g.item_code||'-',m=masterData.find(x=>recKey(x.profile)===recKey(g.profile)&&recKey(x.itemCode)===recKey(resolvedIC)&&cleanLen(x.length)===cleanLen(g.length)),uw=getRecoveryUnitWeight(g.profile,resolvedIC,g.length);html+=`<tr><td><b>${g.profile}</b></td><td>${resolvedIC}</td><td>${g.length} mm</td><td>${g.cut||0}</td><td>${g.wrapped||0}</td><td><b style="color:#047857">${available} Pcs</b></td><td>${(available*uw).toFixed(2)} kg</td></tr>`;});tb.innerHTML=html;
+  let html='';[...groups.values()].forEach(g=>{const available=Math.max(0,g.cut-(g.wrapped||0)),m=masterData.find(x=>recKey(x.profile)===recKey(g.profile)&&recKey(x.itemCode)===recKey(g.item_code)&&cleanLen(x.length)===cleanLen(g.length)),uw=getRecoveryUnitWeight(g.profile,g.item_code,g.length);html+=`<tr><td><b>${g.profile}</b></td><td>${g.item_code}</td><td>${g.length} mm</td><td>${g.cut||0}</td><td>${g.wrapped||0}</td><td><b style="color:#047857">${available} Pcs</b></td><td>${(available*uw).toFixed(2)} kg</td></tr>`;});tb.innerHTML=html;
 }
 function populateRecoverWrapProfile(){
   const sel=document.getElementById('rwProfile');if(!sel)return;sel.innerHTML='<option value="">-- Choose Recover Cut Profile --</option>';
@@ -1117,8 +1106,8 @@ async function deleteRecoveryWrapItem(id){
 }
 function renderRecoverTable(){
   const now=new Date(),y=now.getFullYear(),m=now.getMonth();let monthlyReject=0,monthlyRecover=0;rejectLogs.forEach(r=>{const d=new Date(r.reject_date);if(d.getFullYear()===y&&d.getMonth()===m)monthlyReject+=Number(r.weight)||0;});recoveryWrapLogs.forEach(r=>{const d=new Date(r.wrap_date);if(d.getFullYear()===y&&d.getMonth()===m)monthlyRecover+=Number(r.wrap_weight)||0;});const net=Math.max(0,monthlyReject-monthlyRecover),rate=monthlyReject>0?Math.min(100,monthlyRecover/monthlyReject*100):0;const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('recMonthlyReject',`${monthlyReject.toFixed(2)} kg`);set('recMonthlyRecover',`${monthlyRecover.toFixed(2)} kg`);set('recMonthlyNet',`${net.toFixed(2)} kg`);set('recMonthlyRate',`${rate.toFixed(1)}%`);set('recMonthlyRateBadge',`${rate.toFixed(1)}% of reject recovered`);const bar=document.getElementById('recMonthlyRecoverBar');if(bar)bar.style.width=`${rate.toFixed(1)}%`;set('recoverySummaryMonth',now.toLocaleDateString('en-US',{month:'long',year:'numeric'}));
-  const cutTb=document.getElementById('recoveryCutTableBody');if(cutTb){if(!recoveryCutLogs.length)cutTb.innerHTML='<tr><td colspan="10" style="text-align:center;padding:24px;">No Recovery Cut Records Found.</td></tr>';else cutTb.innerHTML=recoveryCutLogs.slice(0,100).map(r=>{ const srcIC=resolveMasterItemCode(r.source_profile,r.original_length,r.source_item_code)||r.source_item_code||'-'; const newIC=resolveMasterItemCode(r.new_profile,r.new_length,r.new_item_code)||r.new_item_code||'-'; return `<tr><td>${r.cut_date}</td><td><b>${r.source_profile}</b></td><td>${srcIC}</td><td>${r.original_length} mm</td><td><b>${r.new_profile}</b></td><td>${newIC}</td><td>${r.new_length} mm</td><td>${r.cut_pcs} Pcs</td><td>${Number(r.cut_weight||0).toFixed(2)} kg</td><td>${currentUserRole==='Admin'&&!r.legacy?`<button class="btn btn-danger" onclick="deleteRecoveryCutItem(${r.id})"><i class="fa-solid fa-trash"></i></button>`:'<i class="fa-solid fa-lock"></i>'}</td></tr>`}).join('');}
-  const wrapTb=document.getElementById('recoveryWrapTableBody');if(wrapTb){if(!recoveryWrapLogs.length)wrapTb.innerHTML='<tr><td colspan="8" style="text-align:center;padding:24px;">No Recovery Wrapping Records Found.</td></tr>';else wrapTb.innerHTML=recoveryWrapLogs.slice(0,100).map(r=>{ const ic=resolveMasterItemCode(r.profile,r.length,r.item_code)||r.item_code||'-'; return `<tr><td>${r.wrap_date}</td><td><b>${r.profile}</b></td><td>${ic}</td><td>${r.length} mm</td><td>${r.available_cut_pcs} Pcs</td><td><b>${r.wrap_pcs} Pcs</b></td><td><b style="color:#047857">${Number(r.wrap_weight||0).toFixed(2)} kg</b></td><td>${currentUserRole==='Admin'?`<button class="btn btn-danger" onclick="deleteRecoveryWrapItem(${r.id})"><i class="fa-solid fa-trash"></i></button>`:'<i class="fa-solid fa-lock"></i>'}</td></tr>`}).join('');}
+  const cutTb=document.getElementById('recoveryCutTableBody');if(cutTb){if(!recoveryCutLogs.length)cutTb.innerHTML='<tr><td colspan="10" style="text-align:center;padding:24px;">No Recovery Cut Records Found.</td></tr>';else cutTb.innerHTML=recoveryCutLogs.slice(0,100).map(r=>`<tr><td>${r.cut_date}</td><td><b>${r.source_profile}</b></td><td>${r.source_item_code}</td><td>${r.original_length} mm</td><td><b>${r.new_profile}</b></td><td>${r.new_item_code}</td><td>${r.new_length} mm</td><td>${r.cut_pcs} Pcs</td><td>${Number(r.cut_weight||0).toFixed(2)} kg</td><td>${currentUserRole==='Admin'&&!r.legacy?`<button class="btn btn-danger" onclick="deleteRecoveryCutItem(${r.id})"><i class="fa-solid fa-trash"></i></button>`:'<i class="fa-solid fa-lock"></i>'}</td></tr>`).join('');}
+  const wrapTb=document.getElementById('recoveryWrapTableBody');if(wrapTb){if(!recoveryWrapLogs.length)wrapTb.innerHTML='<tr><td colspan="8" style="text-align:center;padding:24px;">No Recovery Wrapping Records Found.</td></tr>';else wrapTb.innerHTML=recoveryWrapLogs.slice(0,100).map(r=>`<tr><td>${r.wrap_date}</td><td><b>${r.profile}</b></td><td>${r.item_code}</td><td>${r.length} mm</td><td>${r.available_cut_pcs} Pcs</td><td><b>${r.wrap_pcs} Pcs</b></td><td><b style="color:#047857">${Number(r.wrap_weight||0).toFixed(2)} kg</b></td><td>${currentUserRole==='Admin'?`<button class="btn btn-danger" onclick="deleteRecoveryWrapItem(${r.id})"><i class="fa-solid fa-trash"></i></button>`:'<i class="fa-solid fa-lock"></i>'}</td></tr>`).join('');}
   renderRecoveryCutStockTable();populateRecoverWrapProfile();
 }
 window.renderRecoverTable=renderRecoverTable;
@@ -1865,7 +1854,7 @@ function renderProfileSummaryTable() {
                 const totalWeight = (totalPcs * (item.unitWeight||0)).toFixed(2); 
                 const boxCount = item.boxCapacity ? Math.floor((item.boxQty || 0) / item.boxCapacity) : 0; 
                 const isAd = currentUserRole === 'Admin'; 
-                item.itemCode = resolveMasterItemCode(item.profile,item.length,item.itemCode) || item.itemCode || '-'; html += `<tr><td><b>${item.profile}</b></td><td><span style="font-weight:600; color:var(--info-color);">${item.itemCode || '-'}</span></td><td>${item.length}</td><td>${item.unitWeight}</td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'cutQty')` : ''}"><span class="stock-badge bg-cut">${item.cutQty || 0} Pcs</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'punchQty')` : ''}"><span class="stock-badge bg-punch">${item.punchQty || 0} Pcs</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'wrapQty')` : ''}"><span class="stock-badge bg-wrap">${item.wrapQty || 0} Pcs</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'boxQty')` : ''}"><span class="stock-badge bg-box">${item.boxQty || 0} Pcs</span></td><td><span class="stock-badge" style="background:#059669; color:#fff;">${boxCount} Boxes</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'crateQty')` : ''}"><span class="stock-badge bg-crate">${item.crateQty || 0} Pcs</span></td><td><span class="stock-badge bg-total">${totalPcs} Pcs</span><div style="font-size:11px; font-weight:800; color:#0369a1; background:rgba(3,105,161,0.08); padding:2px 6px; border-radius:4px; display:inline-block; margin-top:4px;">${totalWeight} kg</div></td><td>${isAd ? `<button class="btn btn-accent" style="padding:4px 8px;" onclick="openStockEditModal(${actualIndex})"><i class="fa-solid fa-pen"></i></button>` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; 
+                html += `<tr><td><b>${item.profile}</b></td><td><span style="font-weight:600; color:var(--info-color);">${item.itemCode || '-'}</span></td><td>${item.length}</td><td>${item.unitWeight}</td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'cutQty')` : ''}"><span class="stock-badge bg-cut">${item.cutQty || 0} Pcs</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'punchQty')` : ''}"><span class="stock-badge bg-punch">${item.punchQty || 0} Pcs</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'wrapQty')` : ''}"><span class="stock-badge bg-wrap">${item.wrapQty || 0} Pcs</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'boxQty')` : ''}"><span class="stock-badge bg-box">${item.boxQty || 0} Pcs</span></td><td><span class="stock-badge" style="background:#059669; color:#fff;">${boxCount} Boxes</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'crateQty')` : ''}"><span class="stock-badge bg-crate">${item.crateQty || 0} Pcs</span></td><td><span class="stock-badge bg-total">${totalPcs} Pcs</span><div style="font-size:11px; font-weight:800; color:#0369a1; background:rgba(3,105,161,0.08); padding:2px 6px; border-radius:4px; display:inline-block; margin-top:4px;">${totalWeight} kg</div></td><td>${isAd ? `<button class="btn btn-accent" style="padding:4px 8px;" onclick="openStockEditModal(${actualIndex})"><i class="fa-solid fa-pen"></i></button>` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; 
             }); 
         }
         tbody.innerHTML = html;
@@ -1892,14 +1881,20 @@ function getActivePlBalanceMap() {
 }
 function getPlBalanceFilterValue(id) { return document.getElementById(id)?.value || 'all'; }
 function matchesBalanceFilter(balance, mode) {
-    if (mode === 'pending') return Number(balance) < 0;
-    if (mode === 'available') return Number(balance) >= 0;
+    if (mode === 'pending' || mode === 'pending_po') return Number(balance) < 0;
+    if (mode === 'available' || mode === 'available_po') return Number(balance) >= 0;
     return true;
 }
+function isProductionOrderBalanceMode(mode) { return mode === 'all_po' || mode === 'pending_po' || mode === 'available_po'; }
 function updateBalanceFilterInfo() {
     const activeLabel = `${activePackingMonth || ''} • ${activePackingContainer || ''}`.replace(/^ • | • $/g,'');
     const mode = getPlBalanceFilterValue('balancePlFilter');
-    const text = mode === 'pending' ? 'Showing only active PL lines with pending balance.' : mode === 'available' ? 'Showing only active PL lines with available balance.' : 'Showing all active PL lines.';
+    let text = 'Showing all active PL lines.';
+    if (mode === 'pending') text = 'Showing only active PL lines with pending balance.';
+    else if (mode === 'available') text = 'Showing only active PL lines with available balance.';
+    else if (mode === 'all_po') text = 'Showing all Production Order balance lines.';
+    else if (mode === 'pending_po') text = 'Showing only Production Orders with pending balance.';
+    else if (mode === 'available_po') text = 'Showing only Production Orders with available balance.';
     const el = document.getElementById('balancePlFilterInfo'); if(el) el.textContent = `${activeLabel} — ${text}`;
     const el2 = document.getElementById('plSummaryBalanceFilterInfo'); if(el2) el2.textContent = `${activeLabel} — ${text}`;
 }
@@ -1910,6 +1905,7 @@ function renderBalanceWorkTable() {
         ensurePackingSelection();
         const activePlMap = getActivePlBalanceMap();
         const filterMode = getPlBalanceFilterValue('balancePlFilter');
+        const poMode = isProductionOrderBalanceMode(filterMode);
         updateBalanceFilterInfo();
         let html = '';
         let visibleRows = 0;
@@ -1917,25 +1913,36 @@ function renderBalanceWorkTable() {
             html = `<tr><td colspan="14" style="color:#888;text-align:center;">No profiles available.</td></tr>`;
         } else {
             const shipMap = new Map();
-            shipmentList.forEach(s => { const k = `${String(s.poNumber).trim()}_${String(s.profile).trim()}_${cleanLen(s.length)}`; shipMap.set(k, (shipMap.get(k) || 0) + s.shippedQty); });
+            shipmentList.forEach(s => { const k = `${String(s.poNumber).trim()}_${String(s.profile).trim()}_${cleanLen(s.length)}`; shipMap.set(k, (shipMap.get(k) || 0) + (Number(s.shippedQty)||0)); });
             masterData.forEach(item => {
                 const key = `${String(item.profile).trim()}_${String(item.itemCode).trim()}_${cleanLen(item.length)}`;
                 const plInfo = activePlMap.get(key);
-                if (!plInfo) return; // Balance Work PL column is now scoped to the active Packing List.
-                if (!matchesBalanceFilter(plInfo.balance, filterMode)) return;
-                visibleRows++;
 
-                const currentStockTotal = (item.cutQty || 0) + (item.punchQty || 0) + (item.wrapQty || 0) + (item.boxQty || 0);
+                let currentStockTotal = (item.cutQty || 0) + (item.punchQty || 0) + (item.wrapQty || 0) + (item.boxQty || 0);
                 const crateQty = item.crateQty || 0;
                 let unshippedPoTotal = 0;
                 poList.forEach(po => {
                     if (String(po.profile).trim() === String(item.profile).trim() && cleanLen(po.length) === cleanLen(item.length)) {
                         const shippedForPo = shipMap.get(`${String(po.poNumber).trim()}_${String(po.profile).trim()}_${cleanLen(po.length)}`) || 0;
-                        unshippedPoTotal += Math.max(0, po.orderQty - shippedForPo);
+                        unshippedPoTotal += Math.max(0, (Number(po.orderQty)||0) - shippedForPo);
                     }
                 });
+
+                // Production-order balance = remaining PO quantity after available production stock.
                 const poPendingQty = Math.max(0, unshippedPoTotal - (currentStockTotal + crateQty));
-                const maxPending = Math.max(poPendingQty, Math.max(0, -plInfo.balance));
+                const poBalance = (currentStockTotal + crateQty) - unshippedPoTotal;
+
+                // In Active PL mode, keep the existing PL balance calculation exactly as before.
+                // In Production Order mode, use the PO balance instead.
+                if (!poMode && !plInfo) return;
+                if (poMode && unshippedPoTotal <= 0 && filterMode === 'all_po') return;
+                const displayBalance = poMode ? poBalance : plInfo.balance;
+                if (!matchesBalanceFilter(displayBalance, filterMode)) return;
+                visibleRows++;
+
+                const maxPending = poMode
+                    ? poPendingQty
+                    : Math.max(poPendingQty, Math.max(0, -(plInfo?.balance || 0)));
                 const exLen = parseFloat(item.exLength) || 0, cutLen = parseFloat(item.length) || 0;
                 let pcsPerEx = 0, reqEx = '-';
                 if (exLen > 0 && cutLen > 0) { pcsPerEx = Math.floor(exLen / cutLen); if(pcsPerEx > 0) reqEx = Math.ceil(maxPending / pcsPerEx); }
@@ -1944,14 +1951,16 @@ function renderBalanceWorkTable() {
                 const reqBoxes = Math.ceil(unboxedAndPendingPcs / (item.boxCapacity || 100));
                 const cbBalance = getAvailableCardboard(item.profile, item.itemCode, item.length) - reqBoxes;
                 const cbStatusHtml = cbBalance >= 0 ? `<span style="color:var(--success-color);font-weight:800;">OK (+${cbBalance})</span>` : `<span style="color:var(--warning-color);font-weight:800;"><i class="fa-solid fa-arrow-down"></i> Short ${Math.abs(cbBalance)}</span>`;
-                const bal = plInfo.balance;
+                const bal = displayBalance;
                 const balHtml = bal >= 0
                     ? `<span class="bw-badge bw-ok"><i class="fa-solid fa-check"></i> +${formatBalanceInt(bal)} <small>Pcs</small></span>`
                     : `<span class="bw-badge bw-pending-pl"><i class="fa-solid fa-arrow-down"></i> ${formatBalanceInt(Math.abs(bal))} <small>Pcs</small></span>`;
-                item.itemCode = resolveMasterItemCode(item.profile,item.length,item.itemCode) || item.itemCode || '-'; html += `<tr class="balance-work-row"><td class="bw-profile"><b>${item.profile}</b></td><td class="bw-item"><span>${item.itemCode || '-'}</span></td><td class="bw-length">${formatBalanceLength(item.length)} mm</td><td class="bw-length">${item.exLength ? formatBalanceLength(item.exLength) : '-'} mm</td><td><span class="bw-badge bw-ex">${formatBalanceInt(pcsPerEx)}</span></td><td><span class="bw-badge bw-stock">${formatBalanceInt(currentStockTotal)} <small>Pcs</small></span></td><td><span class="bw-badge bw-crate">${formatBalanceInt(crateQty)} <small>Pcs</small></span></td><td><span class="bw-badge bw-po">${formatBalanceInt(unshippedPoTotal)} <small>Pcs</small></span></td><td><span class="bw-badge ${poPendingQty > 0 ? 'bw-pending-po' : 'bw-ok'}">${formatBalanceInt(poPendingQty)} <small>Pcs</small></span></td><td>${balHtml}</td><td><span class="bw-badge bw-exreq">${reqEx === '-' ? '-' : formatBalanceInt(reqEx)} <small>Ex</small></span></td><td><span class="bw-badge bw-unboxed">${formatBalanceInt(unboxedAndPendingPcs)} <small>Pcs</small></span></td><td><span class="bw-badge bw-boxes">${formatBalanceInt(reqBoxes)} <small>Boxes</small></span></td><td class="bw-cardboard ${cbBalance < 0 ? 'short' : 'ok'}">${cbStatusHtml}</td></tr>`;
+                html += `<tr class="balance-work-row"><td class="bw-profile"><b>${item.profile}</b></td><td class="bw-item"><span>${item.itemCode || '-'}</span></td><td class="bw-length">${formatBalanceLength(item.length)} mm</td><td class="bw-length">${item.exLength ? formatBalanceLength(item.exLength) : '-'} mm</td><td><span class="bw-badge bw-ex">${formatBalanceInt(pcsPerEx)}</span></td><td><span class="bw-badge bw-stock">${formatBalanceInt(currentStockTotal)} <small>Pcs</small></span></td><td><span class="bw-badge bw-crate">${formatBalanceInt(crateQty)} <small>Pcs</small></span></td><td><span class="bw-badge bw-po">${formatBalanceInt(unshippedPoTotal)} <small>Pcs</small></span></td><td><span class="bw-badge ${poPendingQty > 0 ? 'bw-pending-po' : 'bw-ok'}">${formatBalanceInt(poPendingQty)} <small>Pcs</small></span></td><td>${balHtml}</td><td><span class="bw-badge bw-exreq">${reqEx === '-' ? '-' : formatBalanceInt(reqEx)} <small>Ex</small></span></td><td><span class="bw-badge bw-unboxed">${formatBalanceInt(unboxedAndPendingPcs)} <small>Pcs</small></span></td><td><span class="bw-badge bw-boxes">${formatBalanceInt(reqBoxes)} <small>Boxes</small></span></td><td class="bw-cardboard ${cbBalance < 0 ? 'short' : 'ok'}">${cbStatusHtml}</td></tr>`;
             });
         }
-        if (!visibleRows && masterData.length) html = `<tr><td colspan="14" style="color:#64748b;text-align:center;padding:24px;font-weight:700;"><i class="fa-solid fa-circle-check" style="color:#10b981;margin-right:6px;"></i>No active PL lines match this balance filter.</td></tr>`;
+        if (!visibleRows && masterData.length) {
+            html = `<tr><td colspan="14" style="color:#64748b;text-align:center;padding:24px;font-weight:700;"><i class="fa-solid fa-circle-check" style="color:#10b981;margin-right:6px;"></i>No records match this balance filter.</td></tr>`;
+        }
         tbody.innerHTML = html;
     } catch(e) { console.error('Balance Work render error:',e); }
 }
@@ -1960,34 +1969,52 @@ function buildActiveBalanceWorkExportData() {
     ensurePackingSelection();
     const activePlMap = getActivePlBalanceMap();
     const mode = getPlBalanceFilterValue('balancePlFilter');
+    const poMode = isProductionOrderBalanceMode(mode);
+    const shipMap = new Map();
+    shipmentList.forEach(s => { const k = `${String(s.poNumber).trim()}_${String(s.profile).trim()}_${cleanLen(s.length)}`; shipMap.set(k, (shipMap.get(k) || 0) + (Number(s.shippedQty)||0)); });
     const out=[];
-    activePlMap.forEach(v=>{
-        if(!matchesBalanceFilter(v.balance, mode)) return;
-        const m=masterData.find(x=>String(x.profile).trim()===String(v.profile).trim()&&String(x.itemCode).trim()===String(v.itemCode).trim()&&cleanLen(x.length)===cleanLen(v.length));
-        const exLen=parseFloat(m?.exLength)||0, cutLen=parseFloat(v.length)||0;
+    masterData.forEach(item=>{
+        const key=`${String(item.profile).trim()}_${String(item.itemCode).trim()}_${cleanLen(item.length)}`;
+        const v=activePlMap.get(key);
+        let unshipped=0;
+        poList.forEach(po=>{
+            if(String(po.profile).trim()===String(item.profile).trim()&&cleanLen(po.length)===cleanLen(item.length)){
+                const shipped=shipMap.get(`${String(po.poNumber).trim()}_${String(po.profile).trim()}_${cleanLen(po.length)}`)||0;
+                unshipped += Math.max(0,(Number(po.orderQty)||0)-shipped);
+            }
+        });
+        const stock=(item.cutQty||0)+(item.punchQty||0)+(item.wrapQty||0)+(item.boxQty||0);
+        const crate=item.crateQty||0;
+        const poBalance=(stock+crate)-unshipped;
+        if(!poMode && !v) return;
+        if(poMode && unshipped<=0 && mode==='all_po') return;
+        const balance=poMode?poBalance:v.balance;
+        if(!matchesBalanceFilter(balance,mode)) return;
+        const exLen=parseFloat(item.exLength)||0, cutLen=parseFloat(item.length)||0;
         const pcsPerEx=exLen>0&&cutLen>0?Math.floor(exLen/cutLen):0;
-        const pending=Math.max(0,-v.balance);
+        const pending=Math.max(0,-balance);
         const reqEx=pcsPerEx>0?Math.ceil(pending/pcsPerEx):0;
-        const stock=m?((m.cutQty||0)+(m.punchQty||0)+(m.wrapQty||0)+(m.boxQty||0)):0;
-        const crate=m?.crateQty||0;
-        const poPending=0;
-        out.push({'Profile':v.profile,'Item Code':v.itemCode||'-','Cut L (mm)':v.length,'Ex L (mm)':m?.exLength||'-','Pcs / Ex':pcsPerEx,'WIP+Box Stock':stock,'Crate Qty':crate,'Unshipped PO':poPending,'PO Pending':poPending,'PL Required':v.qty,'PL Balance':v.balance,'Req. Extrusions':reqEx});
+        const wip=(item.cutQty||0)+(item.punchQty||0)+(item.wrapQty||0);
+        const unboxed=wip+pending;
+        const reqBoxes=Math.ceil(unboxed/(item.boxCapacity||100));
+        const cb=getAvailableCardboard(item.profile,item.itemCode,item.length)-reqBoxes;
+        out.push({'Profile':item.profile,'Item Code':item.itemCode||'-','Cut L (mm)':item.length,'Ex L (mm)':item.exLength||'-','Pcs / Ex':pcsPerEx,'WIP+Box Stock':stock,'Crate Qty':crate,'Unshipped PO':unshipped,'PO Pending':Math.max(0,unshipped-(stock+crate)),'PL Balance':balance,'Req. Extrusions':reqEx,'Unboxed Pcs':unboxed,'Req. Boxes':reqBoxes,'Cardboard Bal':cb>=0?`OK (+${cb})`:`Short ${Math.abs(cb)}`});
     });
     return out;
 }
+
 function exportBalanceWorkExcel() {
-    const rows=[]; document.querySelectorAll('#balanceWorkTableBody tr').forEach(tr=>{const cells=[...tr.querySelectorAll('td')].map(td=>td.innerText.trim()); if(cells.length===14) rows.push(cells);});
-    if(!rows.length) return showToast('No Balance Work data to export!','warning');
-    const headers=['Profile','Item Code','Cut L (mm)','Ex L (mm)','Pcs / Ex','WIP+Box Stock','Crate Qty','Unshipped PO','PO Pending','PL Balance','Req. Extrusions','Unboxed Pcs','Req. Boxes','Cardboard Bal'];
-    const data=rows.map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]||''])));
-    exportTableToExcel(data,'AIS_Balance_Work_Active_PL','Balance Work - Active PL');
+    const data=buildActiveBalanceWorkExportData();
+    if(!data.length) return showToast('No Balance Work data to export!','warning');
+    const modeText=document.getElementById('balancePlFilter')?.selectedOptions?.[0]?.text||'All';
+    exportTableToExcel(data,'AIS_Balance_Work','Balance Work - '+modeText);
 }
 window.exportBalanceWorkPdf=function(){
-    const rows=[]; document.querySelectorAll('#balanceWorkTableBody tr').forEach(tr=>{const cells=[...tr.querySelectorAll('td')].map(td=>td.innerText.trim()); if(cells.length) rows.push(cells);});
-    if(!rows.length) return showToast('No Balance Work data to print!','warning');
-    const headers=['Profile','Item Code','Cut L (mm)','Ex L (mm)','Pcs / Ex','WIP+Box Stock','Crate Qty','Unshipped PO','PO Pending','PL Balance','Req. Extrusions','Unboxed Pcs','Req. Boxes','Cardboard Bal'];
-    const data=rows.map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]||''])));
-    exportDataToPdf(data,'AIS_Balance_Work_Active_PL','AIS Tracker - Balance Work (Active PL)',`Month: ${activePackingMonth} • ${activePackingContainer} • Filter: ${document.getElementById('balancePlFilter')?.selectedOptions?.[0]?.text||'All'}`);
+    const data=buildActiveBalanceWorkExportData();
+    if(!data.length) return showToast('No Balance Work data to print!','warning');
+    const modeText=document.getElementById('balancePlFilter')?.selectedOptions?.[0]?.text||'All';
+    const title=isProductionOrderBalanceMode(getPlBalanceFilterValue('balancePlFilter'))?'AIS Tracker - Balance Work (Production Orders)':'AIS Tracker - Balance Work (Active PL)';
+    exportDataToPdf(data,'AIS_Balance_Work',title,`Month: ${activePackingMonth} • ${activePackingContainer} • Filter: ${modeText}`);
 };
 
 function populateProfileDropdown() { const select = document.getElementById('selectProfile'); if(!select) return; select.innerHTML = '<option value="">-- Choose Profile --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }
@@ -2026,10 +2053,10 @@ function renderCardboardStock(){
   let total=0; Object.values(groups).forEach(g=>{const b=getCardboardTransactionsBalance(g.profile,g.itemCode,g.length); total += Math.max(0,b.incoming-b.used);});
   if(totalEl) totalEl.textContent=`${total.toLocaleString()} Boxes`;
   const body=document.getElementById('cardboardCapacityTableBody');
-  if(body){ const rows=Object.values(groups).sort((a,b)=>String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true})||String(a.itemCode).localeCompare(String(b.itemCode))); body.innerHTML=rows.length?rows.map(g=>{const b=getCardboardTransactionsBalance(g.profile,g.itemCode,g.length);const bal=b.incoming-b.used;const safe=encodeURIComponent(JSON.stringify(g));g.itemCode = resolveMasterItemCode(g.profile,g.length,g.itemCode) || g.itemCode || '-'; return `<tr><td>${g.material||'-'}</td><td><b>${g.profile}</b></td><td>${g.itemCode}</td><td>${g.length} mm</td><td>${g.capacity}</td><td>${b.incoming}</td><td>${b.used}</td><td><span class="cb-balance-pill ${bal<0?'danger':''}">${bal} Boxes</span></td><td><button class="btn" style="padding:6px 9px;background:#0f766e;color:#fff;" onclick="openCbAdjustModal('${safe}')"><i class="fa-solid fa-sliders"></i></button> <button class="btn" style="padding:6px 9px;background:#0369a1;color:#fff;" onclick="openCbInOutModal('${safe}',${b.incoming},${b.used})"><i class="fa-solid fa-pen"></i></button> <button class="btn" style="padding:6px 9px;background:#64748b;color:#fff;" onclick="openCbCapacityModal('${safe}')"><i class="fa-solid fa-box"></i></button></td></tr>`;}).join(''):`<tr><td colspan="9" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No cardboard stock records.</td></tr>`; }
+  if(body){ const rows=Object.values(groups).sort((a,b)=>String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true})||String(a.itemCode).localeCompare(String(b.itemCode))); body.innerHTML=rows.length?rows.map(g=>{const b=getCardboardTransactionsBalance(g.profile,g.itemCode,g.length);const bal=b.incoming-b.used;const safe=encodeURIComponent(JSON.stringify(g));return `<tr><td>${g.material||'-'}</td><td><b>${g.profile}</b></td><td>${g.itemCode}</td><td>${g.length} mm</td><td>${g.capacity}</td><td>${b.incoming}</td><td>${b.used}</td><td><span class="cb-balance-pill ${bal<0?'danger':''}">${bal} Boxes</span></td><td><button class="btn" style="padding:6px 9px;background:#0f766e;color:#fff;" onclick="openCbAdjustModal('${safe}')"><i class="fa-solid fa-sliders"></i></button> <button class="btn" style="padding:6px 9px;background:#0369a1;color:#fff;" onclick="openCbInOutModal('${safe}',${b.incoming},${b.used})"><i class="fa-solid fa-pen"></i></button> <button class="btn" style="padding:6px 9px;background:#64748b;color:#fff;" onclick="openCbCapacityModal('${safe}')"><i class="fa-solid fa-box"></i></button></td></tr>`;}).join(''):`<tr><td colspan="9" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No cardboard stock records.</td></tr>`; }
   const hist=document.getElementById('cardboardHistoryTableBody');
-  if(hist){hist.innerHTML=cardboardStockList.length?cardboardStockList.map(c=>{const x=parseCardboardType(c.type); const id=Number(c.db_id||c.id); const ic=resolveMasterItemCode(x.profile,x.length,x.itemCode)||x.itemCode||'-'; return `<tr><td>${c.date||'-'}<br><small>${c.timestamp||''}</small></td><td><span class="cb-tx ${Number(c.incoming)>0?'in':'out'}">${Number(c.incoming)>0?'INCOMING':'CONSUMED'}</span></td><td><b>${x.profile||'-'}</b> • ${ic} • ${x.length||'-'} mm</td><td>${c.incoming||0}</td><td>${c.used||0}</td><td>${id>0?`<button class="btn" style="padding:5px 8px;background:#64748b;color:#fff;" onclick="editCardboardTransaction(${id})"><i class="fa-solid fa-pen"></i></button>`:'Auto'}</td></tr>`;}).join(''):`<tr><td colspan="6" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No transactions yet.</td></tr>`;}  const manualBody=document.getElementById('cardboardManualDataTableBody');
-  if(manualBody){manualBody.innerHTML=cardboardManualData.length?cardboardManualData.map(r=>`<tr><td>${r.date||'-'}</td><td>${r.material||'-'}</td><td>${r.profile||'-'}</td><td>${resolveMasterItemCode(r.profile,r.length,r.itemCode)||r.itemCode||'-'}</td><td>${r.length||'-'}</td><td><b>${Number(r.quantity)||0}</b></td><td>${r.note||'-'}</td><td><button class="btn" style="padding:5px 8px;background:#0369a1;color:#fff;" onclick="editCardboardManualData(${Number(r.db_id||r.id)})"><i class="fa-solid fa-pen"></i></button> <button class="btn" style="padding:5px 8px;background:#dc2626;color:#fff;" onclick="deleteCardboardManualData(${Number(r.db_id||r.id)})"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):`<tr><td colspan="8" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No manual cardboard data.</td></tr>`;}
+  if(hist){hist.innerHTML=cardboardStockList.length?cardboardStockList.map(c=>{const x=parseCardboardType(c.type); const id=Number(c.db_id||c.id); return `<tr><td>${c.date||'-'}<br><small>${c.timestamp||''}</small></td><td><span class="cb-tx ${Number(c.incoming)>0?'in':'out'}">${Number(c.incoming)>0?'INCOMING':'CONSUMED'}</span></td><td><b>${x.profile||'-'}</b> • ${x.itemCode||'-'} • ${x.length||'-'} mm</td><td>${c.incoming||0}</td><td>${c.used||0}</td><td>${id>0?`<button class="btn" style="padding:5px 8px;background:#64748b;color:#fff;" onclick="editCardboardTransaction(${id})"><i class="fa-solid fa-pen"></i></button>`:'Auto'}</td></tr>`;}).join(''):`<tr><td colspan="6" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No transactions yet.</td></tr>`;}  const manualBody=document.getElementById('cardboardManualDataTableBody');
+  if(manualBody){manualBody.innerHTML=cardboardManualData.length?cardboardManualData.map(r=>`<tr><td>${r.date||'-'}</td><td>${r.material||'-'}</td><td>${r.profile||'-'}</td><td>${r.itemCode||'-'}</td><td>${r.length||'-'}</td><td><b>${Number(r.quantity)||0}</b></td><td>${r.note||'-'}</td><td><button class="btn" style="padding:5px 8px;background:#0369a1;color:#fff;" onclick="editCardboardManualData(${Number(r.db_id||r.id)})"><i class="fa-solid fa-pen"></i></button> <button class="btn" style="padding:5px 8px;background:#dc2626;color:#fff;" onclick="deleteCardboardManualData(${Number(r.db_id||r.id)})"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):`<tr><td colspan="8" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No manual cardboard data.</td></tr>`;}
 }
 function onCbMaterialSelect(){ const val=(document.getElementById('cbMaterialInput')?.value||'').trim(); const matches=masterData.filter(m=>String(m.material||'').trim()===val); const p=document.getElementById('cbSelectProfile'); if(p){p.innerHTML='<option value="">-- Choose Profile --</option>'; [...new Set(matches.map(m=>String(m.profile).trim()))].forEach(x=>p.appendChild(new Option(x,x)));} onCbProfileSelect(); }
 function onCbProfileSelect(){ const p=document.getElementById('cbSelectProfile'); const i=document.getElementById('cbSelectItemCode'); if(!p||!i)return; const profile=p.value; i.innerHTML='<option value="">-- Choose Item Code --</option>'; const mat=(document.getElementById('cbMaterialInput')?.value||'').trim(); masterData.filter(m=>String(m.profile).trim()===profile && (!mat||String(m.material||'').trim()===mat)).forEach(m=>{if(m.itemCode&&!Array.from(i.options).some(o=>o.value===m.itemCode))i.appendChild(new Option(m.itemCode,m.itemCode));}); onCbItemCodeSelect();}
@@ -2758,7 +2785,7 @@ function renderPackingListTable() {
         if(readySummary) readySummary.textContent=`${readyFiltered.length} crates shown • ${readyRows.length} total in ${activePackingContainer} • ${statusFilter||'All statuses'}`;
         let rawHTML = '';
         filtered.forEach(pl => {
-            rawHTML += `<tr><td>${pl.date}</td><td><b>${pl.plNumber}</b></td><td>${pl.poNumber}</td><td>${pl.month}</td><td>${pl.container}</td><td><span class="stock-badge bg-crate">${pl.crateNo}</span></td><td>${pl.profile}</td><td><span style="color:var(--info-color); font-weight:600;">${resolveMasterItemCode(pl.profile,pl.length,pl.itemCode)||pl.itemCode||'-'}</span></td><td>${pl.length} mm</td><td><span class="stock-badge bg-total">${pl.pcsQty} Pcs</span></td><td>${pl.netWeight} kg / ${pl.grossWeight} kg</td>
+            rawHTML += `<tr><td>${pl.date}</td><td><b>${pl.plNumber}</b></td><td>${pl.poNumber}</td><td>${pl.month}</td><td>${pl.container}</td><td><span class="stock-badge bg-crate">${pl.crateNo}</span></td><td>${pl.profile}</td><td><span style="color:var(--info-color); font-weight:600;">${pl.itemCode||'-'}</span></td><td>${pl.length} mm</td><td><span class="stock-badge bg-total">${pl.pcsQty} Pcs</span></td><td>${pl.netWeight} kg / ${pl.grossWeight} kg</td>
             <td>${currentUserRole === 'Admin' ? `
                 <button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="openGenericEdit('packing_list', ${pl.id}, {pcs_qty: '${pl.pcsQty}', crate_no: '${pl.crateNo}'})"><i class="fa-solid fa-pen"></i></button>
                 <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deletePackingListItem(${pl.id})"><i class="fa-solid fa-trash"></i></button>
@@ -3314,7 +3341,7 @@ function renderPoDetailsTable(){
 
 function renderShipmentHistoryTable(){
   const body=document.getElementById('shipmentHistoryTableBody'); if(!body)return;
-  body.innerHTML=shipmentList.length?shipmentList.map((s,i)=>{ const itemCode=resolveMasterItemCode(s.profile,s.length,s.itemCode)||s.itemCode||'-'; s.itemCode=itemCode; return `<tr><td>${s.date||'-'}</td><td>${s.poNumber||'-'}</td><td>${s.profile||'-'}</td><td>${itemCode}</td><td>${s.length||'-'} mm</td><td>${s.month||'-'}</td><td>${s.container||'-'}</td><td>${Number(s.shippedQty||0).toLocaleString()}</td><td>${Number(s.remainingBalance||0).toLocaleString()}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openShipmentEditModal(${i})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`; }).join(''):'<tr><td colspan="10" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No shipment records.</td></tr>';
+  body.innerHTML=shipmentList.length?shipmentList.map((s,i)=>`<tr><td>${s.date||'-'}</td><td>${s.poNumber||'-'}</td><td>${s.profile||'-'}</td><td>${s.itemCode||'-'}</td><td>${s.length||'-'} mm</td><td>${s.month||'-'}</td><td>${s.container||'-'}</td><td>${Number(s.shippedQty||0).toLocaleString()}</td><td>${Number(s.remainingBalance||0).toLocaleString()}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openShipmentEditModal(${i})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):'<tr><td colspan="10" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No shipment records.</td></tr>';
 }
 window.renderShipmentHistoryTable=renderShipmentHistoryTable;
 function renderDailyInstructions(){
