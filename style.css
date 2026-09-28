@@ -2028,3 +2028,29 @@ body.dark-mode .pl-progress-summary{background:rgba(15,23,42,.72);border-color:#
 .pl-box-kpi.complete{border-color:#a7f3d0;background:linear-gradient(135deg,rgba(236,253,245,.98),rgba(248,250,252,.98));color:#059669;}
 .pl-box-kpi.complete b{color:#065f46;}
 @media (max-width:600px){.pl-dashboard-box-summary{grid-template-columns:1fr;}}
+
+/* Active Packing List balance filters */
+.balance-filterbar{
+  display:flex;
+  align-items:end;
+  justify-content:space-between;
+  gap:14px;
+  flex-wrap:wrap;
+  margin:0 0 14px;
+  padding:12px 14px;
+  background:linear-gradient(135deg,rgba(240,253,250,.96),rgba(248,250,252,.98));
+  border:1px solid var(--emerald-border);
+  border-radius:12px;
+}
+.balance-filterbar label{display:block;font-size:11px;font-weight:800;color:var(--primary-dark);margin-bottom:5px;text-transform:uppercase;letter-spacing:.02em}
+.balance-filterbar select{min-width:230px;padding:9px 11px;border:1px solid var(--border-color);border-radius:9px;background:var(--card-bg);color:var(--text-color);font-weight:700}
+.balance-filter-info{font-size:11px;color:var(--text-muted);font-weight:700;line-height:1.45}
+.pl-balance-badge{display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border-radius:8px;font-weight:900;white-space:nowrap}
+.pl-balance-positive{background:#ecfdf5;color:#15803d;border:1px solid #bbf7d0}
+.pl-balance-negative{background:#fff7ed;color:#c2410c;border:1px solid #fed7aa}
+@media(max-width:700px){.balance-filterbar{align-items:stretch}.balance-filterbar>div{width:100%}.balance-filterbar select{width:100%;min-width:0}}
+@media print{
+  .balance-filterbar,.btn,.admin-restricted-area{display:none!important}
+  .balance-work-container,.table-container{overflow:visible!important}
+  table{font-size:9px!important}
+}
