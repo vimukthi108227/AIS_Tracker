@@ -1282,7 +1282,7 @@ function renderDashboard() {
 
   let dashCrateMap = {};
   let availStockForCrates = masterData.map(m => ({ ...m }));
-  let sortedPlsForCrates = [...packingLists].sort(sortCrates);
+  let sortedPlsForCrates = [...activePlRecords].sort(sortCrates);
   
   let domTotalPlReqBoxes = 0; 
   let domTotalPlCompletedBoxes = 0;
@@ -1331,7 +1331,13 @@ function renderDashboard() {
 
   if(document.getElementById('kpiShipCrates')) document.getElementById('kpiShipCrates').textContent = `${finalCompCrates} / ${finalTotCrates} Crates`;
   
-  if(document.getElementById('kpiTotalPlBoxes')) document.getElementById('kpiTotalPlBoxes').textContent = Math.ceil(domTotalPlReqBoxes).toLocaleString(); 
+  // Dashboard PL box KPIs are scoped to the currently active/latest Packing List container only.
+  const activeFullBoxQty = Math.ceil(domTotalPlReqBoxes);
+  const activeCompleteBoxQty = Math.floor(domTotalPlCompletedBoxes);
+  if(document.getElementById('dashPlFullBoxQty')) document.getElementById('dashPlFullBoxQty').textContent = activeFullBoxQty.toLocaleString();
+  if(document.getElementById('dashPlCompleteBoxQty')) document.getElementById('dashPlCompleteBoxQty').textContent = activeCompleteBoxQty.toLocaleString();
+
+  if(document.getElementById('kpiTotalPlBoxes')) document.getElementById('kpiTotalPlBoxes').textContent = activeFullBoxQty.toLocaleString(); 
   
   if(document.getElementById('kpiTotalPlCompletedBoxes')) {
       document.getElementById('kpiTotalPlCompletedBoxes').innerHTML = `${Math.floor(domTotalPlCompletedBoxes).toLocaleString()} <span style="font-size: 10.5px; font-weight: 700; color: #64748b;">(Box Stage: ${boxStagePlQty} | Crate Stage: ${crateStagePlQty})</span>`;
