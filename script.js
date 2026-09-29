@@ -2348,7 +2348,7 @@ function getReadyCrateRows(records) {
     return rows;
 }
 function getFilteredReadyCrateRows(records){
-    const status=(document.getElementById('plReadyStatusFilter')?.value||'Ready to Pack').trim();
+    const status=(document.getElementById('plReadyStatusFilter')?.value||'').trim();
     const search=(document.getElementById('plReadySearch')?.value||'').trim().toLowerCase();
     return getReadyCrateRows(records).filter(r=>{
         const statusOk=!status||r.status===status;
@@ -2706,7 +2706,7 @@ function renderPackingListTable() {
         if(readyHead && !readyHead.innerHTML.includes('Action')) readyHead.insertAdjacentHTML('beforeend', '<th style="width:120px;">Action</th>');
 
         const readyRows=getReadyCrateRows(filtered);
-        const statusFilter=document.getElementById('plReadyStatusFilter')?.value||'Ready to Pack';
+        const statusFilter=document.getElementById('plReadyStatusFilter')?.value||'';
         const searchFilter=(document.getElementById('plReadySearch')?.value||'').trim().toLowerCase();
         const readyFiltered=readyRows.filter(r=>{
             const statusOk=!statusFilter||r.status===statusFilter;
@@ -2960,24 +2960,37 @@ function calculatePlWeights() {
     updatePlExtrusionInfo();
 }
 
-async function savePackingListEntry(){
+async function savePackingListEntry(startNewCrate=false){
  if(isAppBusy)return; isAppBusy=true;
  try{
   if(currentUserRole!=='Admin')return;
   const plNum=document.getElementById('plNumber').value.trim(),poNum=document.getElementById('plSelectPo').value,container=normalizeContainerName(document.getElementById('plContainer').value),plDate=document.getElementById('plDate').value,profile=document.getElementById('plSelectProfile').value,itemCode=document.getElementById('plSelectItemCode').value,length=cleanLen(document.getElementById('plSelectLength').value),crateNo=document.getElementById('plBoxQty').value.trim()||'Crate 1',pcsQty=parseInt(document.getElementById('plPcsQty').value)||0,grossWeight=parseFloat(document.getElementById('plGrossWeight').value)||0;
   if(!plNum||!poNum||!profile||!itemCode||!length||pcsQty<=0)return showToast('Complete all Packing List fields.','warning');
+  if(!crateNo)return showToast('Enter a Crate Number / ID.','warning');
   const po=poList.find(p=>String(p.poNumber).trim()===String(poNum).trim()&&cleanLen(p.length)===length&&String(p.profile).trim()===String(profile).trim());
   if(!po)return showToast('Selected PO/profile/length was not found.','error');
-  const matched=masterData.find(m=>String(m.profile).trim()===String(profile).trim()&&cleanLen(m.length)===length&&m.itemCode===itemCode);
+  const matched=masterData.find(m=>String(m.profile).trim()===String(profile).trim()&&cleanLen(m.length)===length&&String(m.itemCode||'').trim()===String(itemCode).trim());
   if(!matched)return showToast('Selected catalog item was not found.','error');
   const alreadyPacked=packingLists.filter(x=>String(x.poNumber).trim()===String(poNum).trim()&&String(x.profile).trim()===String(profile).trim()&&cleanLen(x.length)===length).reduce((a,x)=>a+(Number(x.pcsQty)||0),0);
   if(alreadyPacked+pcsQty>Number(po.orderQty||0))return showToast(`Packing quantity exceeds PO quantity. Remaining: ${Math.max(0,Number(po.orderQty||0)-alreadyPacked)} Pcs.`,'error');
   const netWeight=parseFloat((pcsQty*(matched.unitWeight||0)).toFixed(2)),filterMonth=activePackingMonth||new Date().toLocaleString('en-US',{month:'long'});
   const newPl={pl_number:plNum,po_number:poNum,shipment_month:filterMonth,container,crate_no:crateNo,profile,item_code:itemCode,length,box_qty:1,pcs_qty:pcsQty,net_weight:netWeight,gross_weight:grossWeight,packing_date:plDate};
-  const {error}=await supabaseClient.from('packing_list').insert([newPl]);
+  const {data:inserted,error}=await supabaseClient.from('packing_list').insert([newPl]).select().single();
   if(error)throw new Error(`Packing List save failed: ${error.message}`);
-  packingLists.unshift({id:-Date.now(),plNumber:plNum,poNumber:poNum,month:filterMonth,container,crateNo,profile,itemCode,length,boxQty:1,pcsQty,netWeight,grossWeight,date:plDate});
-  showToast('Packing List record saved successfully.','success'); document.getElementById('packingListForm').reset(); renderPackingListTable();
+  packingLists.unshift({id:inserted?.id||-Date.now(),plNumber:plNum,poNumber:poNum,month:filterMonth,container,crateNo,profile,itemCode,length,boxQty:1,pcsQty,netWeight,grossWeight,date:plDate});
+  showToast(`${profile} added to ${crateNo}. You can add another profile to the same crate.`,'success');
+
+  // Keep the crate/header information so multiple profiles can be entered into one crate.
+  const keep={plNumber:plNum,container,plDate,crateNo};
+  ['plSelectPo','plSelectProfile','plSelectItemCode','plSelectLength','plPcsQty','plGrossWeight'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  ['plExLength','plPcsPerEx','plRequiredExtrusions','plNetWeight'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('plNumber').value=keep.plNumber;
+  document.getElementById('plContainer').value=keep.container;
+  document.getElementById('plDate').value=keep.plDate;
+  document.getElementById('plBoxQty').value=startNewCrate?'':keep.crateNo;
+  populatePlPoDropdown();
+  if(startNewCrate) showToast('Saved. Crate closed — ready for a new crate.','info');
+  renderPackingListTable();
  }catch(e){console.error(e);showToast(e.message||'Packing List save failed.','error');}finally{isAppBusy=false;}
 }
 async function processPlExcelUpload() {
