@@ -1861,9 +1861,26 @@ function renderProfileSummaryTable() {
     } catch(e) {}
 }
 
+function getActivePackingListSelection() {
+    const months = getPackingMonths();
+    const month = activePackingMonth && months.includes(activePackingMonth)
+        ? activePackingMonth
+        : (months[0] || new Date().toLocaleString('en-US',{month:'long'}));
+    const containers = getContainerList();
+    const withData = containers.filter(c => getPackingContainerRecords(month,c).length > 0);
+    // The active PL is always the latest PL with data that has not been completed.
+    // Older PLs (1st/2nd containers) are historical/shipped and must never affect
+    // the Balance Work PL calculation. If all available PLs are completed, use
+    // the latest one only as a safe fallback.
+    const incomplete = withData.filter(c => !isPackingShipmentComplete(month,c));
+    const pool = incomplete.length ? incomplete : withData;
+    const selected = pool.slice().sort((a,b)=>getContainerNumber(b)-getContainerNumber(a))[0] || containers[0] || '1st Container';
+    return { month, container: selected };
+}
+
 function getActivePlBalanceMap() {
-    ensurePackingSelection();
-    const records = getPackingContainerRecords(activePackingMonth, activePackingContainer);
+    const active = getActivePackingListSelection();
+    const records = getPackingContainerRecords(active.month, active.container);
     const map = new Map();
     records.forEach(pl => {
         const key = `${String(pl.profile).trim()}_${String(pl.itemCode).trim()}_${cleanLen(pl.length)}`;
@@ -1873,9 +1890,14 @@ function getActivePlBalanceMap() {
     });
     map.forEach(v => {
         const m = masterData.find(x => String(x.profile).trim() === String(v.profile).trim() && String(x.itemCode).trim() === String(v.itemCode).trim() && cleanLen(x.length) === cleanLen(v.length));
+        // Current production stock is the stock available now. Historical PLs
+        // are deliberately NOT added to this requirement. Their shipped quantities
+        // are already removed from Crate Stock by the shipment workflow.
         const currentStock = m ? ((m.cutQty||0)+(m.punchQty||0)+(m.wrapQty||0)+(m.boxQty||0)+(m.crateQty||0)) : 0;
         v.currentStock = currentStock;
         v.balance = currentStock - v.qty;
+        v.activeMonth = active.month;
+        v.activeContainer = active.container;
     });
     return map;
 }
@@ -1887,7 +1909,8 @@ function matchesBalanceFilter(balance, mode) {
 }
 function isProductionOrderBalanceMode(mode) { return mode === 'all_po' || mode === 'pending_po' || mode === 'available_po'; }
 function updateBalanceFilterInfo() {
-    const activeLabel = `${activePackingMonth || ''} • ${activePackingContainer || ''}`.replace(/^ • | • $/g,'');
+    const active = getActivePackingListSelection();
+    const activeLabel = `${active.month || ''} • ${active.container || ''}`.replace(/^ • | • $/g,'');
     const mode = getPlBalanceFilterValue('balancePlFilter');
     let text = 'Showing all active PL lines.';
     if (mode === 'pending') text = 'Showing only active PL lines with pending balance.';
