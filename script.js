@@ -1455,15 +1455,28 @@ function renderDashboard() {
   let grandPoOrderWt = 0, grandPoShippedWt = 0, grandPoReadyWt = 0;
   let hasOverdue = false;
   let overduePoCount = 0, overdueBalancePcs = 0, overdueBalanceWt = 0;
-  const poGroups = {};
+
+  // IMPORTANT: the 30-day Production Order reminder is a live operational alert.
+  // It must NOT disappear just because the user selected a different Dashboard Month.
+  // The month selector controls the monthly charts, while this alert always checks
+  // every PO against shipments recorded up to today.
   const selectedPoList = poList.filter(po=>{ const d=new Date(po.date); return !Number.isNaN(d.getTime()) && d.getFullYear()===cy && d.getMonth()===cm; });
+  const poGroups = {};
   selectedPoList.forEach(po => {
       const key = String(po.poNumber).trim();
       if (!poGroups[key]) poGroups[key] = { date: po.date, items: [] };
       poGroups[key].items.push(po);
   });
+  const overduePoGroups = {};
+  poList.forEach(po => {
+      const key = String(po.poNumber).trim();
+      if (!key) return;
+      if (!overduePoGroups[key]) overduePoGroups[key] = { date: po.date, items: [] };
+      overduePoGroups[key].items.push(po);
+  });
 
   const shipLookup = new Map();
+  const overdueShipLookup = new Map();
   // Shipment weights are kept in two views:
   // 1) cumulative-to-month-end for PO balance/overdue calculations, and
   // 2) selected-month-only for the dashboard production-order chart.
@@ -1487,6 +1500,14 @@ function renderDashboard() {
               selectedMonthShipmentWt += wt;
           }
       }
+  });
+
+  // Cumulative shipment quantities used only by the 30-day overdue alert.
+  const todayEnd = new Date(); todayEnd.setHours(23,59,59,999);
+  shipmentList.filter(s=>{ const d=new Date(s.date); return !Number.isNaN(d.getTime()) && d.getTime() <= todayEnd.getTime(); }).forEach(s=>{
+      const k=`${String(s.poNumber).trim()}_${String(s.profile).trim()}_${cleanLen(s.length)}`;
+      const qty=Math.max(0,parseInt(s.shippedQty)||0);
+      overdueShipLookup.set(k,(overdueShipLookup.get(k)||0)+qty);
   });
 
   // Month-to-month Production Order pool:
@@ -1522,8 +1543,8 @@ function renderDashboard() {
   const monthProductionBalanceWt = Math.max(0, monthProductionPoolWt - monthShipmentCompleteWt);
 
   let overdueHtml = '';
-  Object.keys(poGroups).forEach((poNumber) => {
-      const group = poGroups[poNumber];
+  Object.keys(overduePoGroups).forEach((poNumber) => {
+      const group = overduePoGroups[poNumber];
       let totalOrderWt = 0, totalShippedWt = 0, totalCompleteWt = 0;
       const overdueLines = [];
 
@@ -1536,7 +1557,7 @@ function renderDashboard() {
           totalOrderWt += orderWt;
 
           const shipKey = `${String(poNumber).trim()}_${String(poItem.profile).trim()}_${cleanLen(poItem.length)}`;
-          const shippedQty = Math.max(0, shipLookup.get(shipKey) || 0);
+          const shippedQty = Math.max(0, overdueShipLookup.get(shipKey) || 0);
           const shippedForLine = Math.min(orderQty, shippedQty);
           const shippedWt = shippedForLine * uw;
           totalShippedWt += shippedWt;
@@ -1574,7 +1595,7 @@ function renderDashboard() {
           : 0;
 
       /* Alert only when an actual PO balance remains AND the PO is older than 30 days. */
-      if (diffDays > 30 && overdueLines.length > 0) {
+      if (diffDays >= 30 && overdueLines.length > 0) {
           hasOverdue = true;
           overduePoCount++;
           const poBalancePcs = overdueLines.reduce((sum, x) => sum + x.qty, 0);
@@ -3464,8 +3485,14 @@ window.addEventListener('error', function(event){
 });
 window.addEventListener('unhandledrejection', function(event){
   const reason=event.reason; console.error('AIS Tracker unhandled promise rejection:',reason);
-  const msg = String(reason?.message || reason || 'Unexpected database error.');
-  if (document.getElementById('mainContent')?.style.display !== 'none') showToast(`Save/sync error: ${msg}`,'error');
+  const msg = String(reason?.message || reason || 'Unexpected background error.');
+  // Background realtime/chart/CDN promises must not be presented as a failed save.
+  // Actual save functions already catch and display their own database errors.
+  const lower=msg.toLowerCase();
+  const noisy = lower.includes('resizeobserver') || lower.includes('aborterror') || lower === 'script error.' || lower.includes('load failed');
+  const looksDatabase = lower.includes('supabase') || lower.includes('database') || lower.includes('row-level security') || lower.includes('permission denied') || lower.includes('violates') || lower.includes('relation') || lower.includes('column');
+  if(!noisy && looksDatabase && document.getElementById('mainContent')?.style.display !== 'none') showToast(`Database background sync issue: ${msg}`,'warning');
+  event.preventDefault();
 });
 
 // END OF SCRIPT
