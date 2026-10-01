@@ -2405,7 +2405,10 @@ async function saveShipmentEntry(){
 
   const newRemaining=remainingBefore-qtyToShip;
   const newShipment={shipment_date:shipDate,shipment_month:month,po_number:poNum,profile,length,container,shipped_qty:qtyToShip,remaining_balance:newRemaining};
-  const {data:shipInserted,error:shipError}=await supabaseClient.from('shipments').insert([newShipment]).select().single();
+  // RLS-safe shipment insert: do not request the inserted row back with .select().single().
+  // A policy can allow INSERT while denying SELECT/RETURNING, which previously made a
+  // successful shipment look like a save/sync error.
+  const {error:shipError}=await supabaseClient.from('shipments').insert([newShipment]);
   if(shipError)throw new Error(`Shipment save failed: ${shipError.message}`);
 
   try {
@@ -2414,11 +2417,22 @@ async function saveShipmentEntry(){
     if(stockError)throw new Error(`Shipment stock update failed: ${stockError.message}`);
     Object.assign(cat,after);
   } catch(stockErr) {
-    try { if(shipInserted?.id) await supabaseClient.from('shipments').delete().eq('id',shipInserted.id); } catch(rb){ console.error('Shipment rollback failed:',rb); }
+    // Best-effort rollback without requiring SELECT/RETURNING permissions.
+    try {
+      await supabaseClient.from('shipments')
+        .delete()
+        .eq('shipment_date', newShipment.shipment_date)
+        .eq('po_number', newShipment.po_number)
+        .eq('profile', newShipment.profile)
+        .eq('length', newShipment.length)
+        .eq('container', newShipment.container)
+        .eq('shipped_qty', newShipment.shipped_qty)
+        .eq('remaining_balance', newShipment.remaining_balance);
+    } catch(rb){ console.error('Shipment rollback failed:',rb); }
     throw stockErr;
   }
 
-  const shipmentLocalId=shipInserted?.id || -Date.now();
+  const shipmentLocalId=-Date.now();
   shipmentList.unshift({id:shipmentLocalId,date:shipDate,month,poNumber:poNum,profile,length,container,shippedQty:qtyToShip,remainingBalance:newRemaining});
   const deductionSummary=stages.filter(k=>(deduction[k]||0)>0).map(k=>`${k.replace('Qty','')}: ${deduction[k]} Pcs`).join(' • ');
   showToast(`Shipment saved. Stock deducted: ${deductionSummary}.`,'success');
