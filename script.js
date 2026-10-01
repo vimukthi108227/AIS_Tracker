@@ -16,6 +16,44 @@ let shipmentDeadline = null;
 
 const cleanLen = (val) => String(val || '').replace(/ mm/gi, '').trim();
 
+
+// Keep the user's last-used non-quantity selections for the current browser session.
+// This prevents the form from jumping back to the first option after each save/reload.
+const AIS_FORM_STATE_KEY = 'ais_tracker_form_state_v2';
+function getAISFormState(){ try { return JSON.parse(sessionStorage.getItem(AIS_FORM_STATE_KEY) || '{}') || {}; } catch(e){ return {}; } }
+function setAISFormState(key, value){ try { const st=getAISFormState(); st[key]=value; sessionStorage.setItem(AIS_FORM_STATE_KEY, JSON.stringify(st)); } catch(e){} }
+function clearAISFormState(){ try { sessionStorage.removeItem(AIS_FORM_STATE_KEY); } catch(e){} }
+function rememberFormField(id){ const el=document.getElementById(id); if(!el || el.dataset.aisRememberBound==='1') return; el.dataset.aisRememberBound='1'; const save=()=>setAISFormState(id, el.value); el.addEventListener('change',save); el.addEventListener('input',save); }
+function rememberAISFormFields(){
+  ['entryDate','shift','selectProfile','selectItemCode','selectLength','shipmentDate','shipmentMonth','shipmentContainer','shipSelectPo','shipSelectProfile','shipSelectItemCode','shipSelectLength'].forEach(rememberFormField);
+}
+function restoreAISShipmentSelections(){
+  const st=getAISFormState();
+  const setVal=(id,val)=>{ const el=document.getElementById(id); if(el && val!=null && [...el.options].some(o=>String(o.value)===String(val))) el.value=val; };
+  setVal('shipmentDate',st.shipmentDate); setVal('shipmentMonth',st.shipmentMonth); setVal('shipmentContainer',st.shipmentContainer);
+  const po=st.shipSelectPo;
+  if(po && document.getElementById('shipSelectPo') && [...document.getElementById('shipSelectPo').options].some(o=>String(o.value)===String(po))){
+    document.getElementById('shipSelectPo').value=po; onShipmentPoSelect();
+    setTimeout(()=>{ const prof=st.shipSelectProfile; if(prof && [...document.getElementById('shipSelectProfile').options].some(o=>String(o.value)===String(prof))){ document.getElementById('shipSelectProfile').value=prof; onShipmentProfileSelect(); }
+      setTimeout(()=>{ const ic=st.shipSelectItemCode; if(ic && [...document.getElementById('shipSelectItemCode').options].some(o=>String(o.value)===String(ic))){ document.getElementById('shipSelectItemCode').value=ic; onShipmentItemCodeSelect(); }
+        setTimeout(()=>{ const len=st.shipSelectLength; if(len && [...document.getElementById('shipSelectLength').options].some(o=>String(o.value)===String(len))){ document.getElementById('shipSelectLength').value=len; onShipmentLengthSelect(); } },0);
+      },0);
+    },0);
+  }
+}
+function restoreAISProductionSelections(){
+  const st=getAISFormState();
+  const setVal=(id,val)=>{ const el=document.getElementById(id); if(el && val!=null && [...el.options].some(o=>String(o.value)===String(val))) el.value=val; };
+  setVal('entryDate',st.entryDate); setVal('shift',st.shift);
+  const prof=st.selectProfile;
+  if(prof && document.getElementById('selectProfile') && [...document.getElementById('selectProfile').options].some(o=>String(o.value)===String(prof))){ document.getElementById('selectProfile').value=prof; onProfileSelect();
+    setTimeout(()=>{ const ic=st.selectItemCode; if(ic && [...document.getElementById('selectItemCode').options].some(o=>String(o.value)===String(ic))){ document.getElementById('selectItemCode').value=ic; onItemCodeSelect(); }
+      setTimeout(()=>{ const len=st.selectLength; if(len && [...document.getElementById('selectLength').options].some(o=>String(o.value)===String(len))){ document.getElementById('selectLength').value=len; onLengthSelect(); } },0);
+    },0);
+  }
+}
+function restoreAISFormSelections(){ rememberAISFormFields(); restoreAISProductionSelections(); restoreAISShipmentSelections(); }
+
 // Reliability layer: log unexpected runtime failures without turning browser/CDN
 // errors into repeated generic "Script error" popups. Cross-origin script failures
 // often expose only the text "Script error." and are not actionable to the user.
@@ -54,7 +92,7 @@ function selectRole(role) {
 }
 
 function resetRoleSelection() { document.getElementById('loginPassSection').style.display = 'none'; document.getElementById('roleSelectionArea').style.display = 'flex'; }
-document.addEventListener('DOMContentLoaded', () => { ensureLoginInputReady(); });
+document.addEventListener('DOMContentLoaded', () => { ensureLoginInputReady(); rememberAISFormFields(); });
 function verifyLogin() {
   const section=document.getElementById('loginPassSection'); const role=section?.dataset.role||''; const pass=(document.getElementById('rolePassInput')?.value||'').trim();
   if(role==='Admin' && pass==='Lr@108227') { enterAISApplication('Admin'); showToast('Admin access granted.','success'); return; }
@@ -63,7 +101,7 @@ function verifyLogin() {
   const box=document.querySelector('.ais-password-box'); if(box){ box.classList.remove('ais-shake'); void box.offsetWidth; box.classList.add('ais-shake'); }
 }
 
-function logoutUser() { currentUserRole = null; isAdminUnlocked = false; document.getElementById('mainContent').style.display = 'none'; document.getElementById('roleLoginOverlay').style.display = 'flex'; resetRoleSelection(); switchTab('dashboardTab', document.querySelector('.tab-btn')); showToast("Logged out successfully.", "success"); }
+function logoutUser() { clearAISFormState(); currentUserRole = null; isAdminUnlocked = false; document.getElementById('mainContent').style.display = 'none'; document.getElementById('roleLoginOverlay').style.display = 'flex'; resetRoleSelection(); switchTab('dashboardTab', document.querySelector('.tab-btn')); showToast("Logged out successfully.", "success"); }
 
 function updateRoleUI() {
   const roleBadge = document.getElementById('userRoleBadge'); if (roleBadge) { roleBadge.textContent = currentUserRole + " Mode"; roleBadge.style.background = currentUserRole === 'Admin' ? '#e11d48' : (currentUserRole === 'Planner' ? '#0369a1' : '#059669'); }
@@ -219,21 +257,35 @@ window.exportRecoverExcel = function() {
 
 function injectGenericEditModal() {
     if(document.getElementById('genericEditModal')) return;
-    const html = `<div id="genericEditModal" class="modal"><div class="modal-content" style="text-align:left; max-width:400px;"><h3 style="color:var(--primary-color); margin-top:0;"><i class="fa-solid fa-pen"></i> Admin Quick Edit</h3><p style="font-size:11.5px; color:var(--warning-color); margin-bottom:15px; font-weight:700;">Note: Edits here will change historical log values but will not auto-adjust Live Stock levels.</p><input type="hidden" id="genericEditTable"><input type="hidden" id="genericEditId"><div id="genericEditFields"></div><div style="display:flex; gap:10px; margin-top:16px;"><button class="btn btn-accent" style="flex:1;" onclick="saveGenericEdit()"><i class="fa-solid fa-check"></i> Save Changes</button><button class="btn btn-danger" style="flex:1; background:#64748b;" onclick="document.getElementById('genericEditModal').style.display='none'">Cancel</button></div></div></div>`;
+    const html = `<div id="genericEditModal" class="modal"><div class="modal-content" style="text-align:left; max-width:400px;"><h3 style="color:var(--primary-color); margin-top:0;"><i class="fa-solid fa-pen"></i> Admin Quick Edit</h3><p style="font-size:11.5px; color:var(--warning-color); margin-bottom:15px; font-weight:700;">Admin edits are saved to the selected record. Packing List Pcs Qty edits will also refresh the related weight and dashboard calculations.</p><input type="hidden" id="genericEditTable"><input type="hidden" id="genericEditId"><div id="genericEditFields"></div><div style="display:flex; gap:10px; margin-top:16px;"><button class="btn btn-accent" style="flex:1;" onclick="saveGenericEdit()"><i class="fa-solid fa-check"></i> Save Changes</button><button class="btn btn-danger" style="flex:1; background:#64748b;" onclick="document.getElementById('genericEditModal').style.display='none'">Cancel</button></div></div></div>`;
     document.body.insertAdjacentHTML('beforeend', html);
 }
 
 window.openGenericEdit = function(table, id, fieldsMap) {
     if(currentUserRole !== 'Admin') return;
     document.getElementById('genericEditTable').value = table; document.getElementById('genericEditId').value = id; const container = document.getElementById('genericEditFields'); container.innerHTML = '';
-    Object.keys(fieldsMap).forEach(key => { container.insertAdjacentHTML('beforeend', `<div class="form-group"><label style="text-transform:capitalize;">${key.replace(/_/g, ' ')}</label><input type="text" id="edit_field_${key}" value="${fieldsMap[key]}" data-col="${key}"></div>`); });
+    Object.keys(fieldsMap).forEach(key => { const isQty = /(^|_)(pcs_qty|qty|quantity)($|_)/i.test(key); container.insertAdjacentHTML('beforeend', `<div class="form-group"><label style="text-transform:capitalize;">${key.replace(/_/g, ' ')}</label><input type="${isQty?'number':'text'}" ${isQty?'min="0" step="1"':''} id="edit_field_${key}" value="${fieldsMap[key]}" data-col="${key}"></div>`); });
     document.getElementById('genericEditModal').style.display = 'flex';
 }
 
 window.saveGenericEdit = async function() {
     const table = document.getElementById('genericEditTable').value; const id = document.getElementById('genericEditId').value; const inputs = document.querySelectorAll('#genericEditFields input');
-    let updateObj = {}; inputs.forEach(input => { updateObj[input.dataset.col] = input.value; });
-    try { await supabaseClient.from(table).update(updateObj).eq('id', id); document.getElementById('genericEditModal').style.display = 'none'; showToast("Record updated successfully!", "success"); loadDataFromSupabase(true); } catch(e) { showToast("Update failed", "error"); }
+    let updateObj = {}; inputs.forEach(input => { updateObj[input.dataset.col] = /(^|_)(pcs_qty|qty|quantity)($|_)/i.test(input.dataset.col) ? Math.max(0, parseInt(input.value,10)||0) : input.value; });
+    try {
+        if(table === 'packing_list' && Object.prototype.hasOwnProperty.call(updateObj,'pcs_qty')) {
+            const rec = packingLists.find(x => String(x.id) === String(id));
+            if(rec) {
+                const cat = masterData.find(m => String(m.profile).trim()===String(rec.profile).trim() && String(m.itemCode).trim()===String(rec.itemCode).trim() && cleanLen(m.length)===cleanLen(rec.length))
+                    || masterData.find(m => String(m.profile).trim()===String(rec.profile).trim() && cleanLen(m.length)===cleanLen(rec.length));
+                if(cat) updateObj.net_weight = Number(updateObj.pcs_qty||0) * (Number(cat.unitWeight)||0);
+            }
+        }
+        const result = await supabaseClient.from(table).update(updateObj).eq('id', id);
+        if(result.error) throw result.error;
+        document.getElementById('genericEditModal').style.display = 'none';
+        showToast("Record updated successfully!", "success");
+        await loadDataFromSupabase(true);
+    } catch(e) { showToast(dbErrorMessage(e,'Update failed'), "error"); }
 }
 
 const INITIAL_CATALOG = [ {"profile": "1037", "length": "1727.2", "unit_weight": 1.601, "item_code": "RT-BT68", "material": "1234"} ];
@@ -563,6 +615,7 @@ async function loadDataFromSupabase(isSilent = false) {
   } catch (err) { console.error('Supabase data sync error:', err); setDbStatus(false, err?.message || 'Supabase data sync failed.'); if(!isSilent) showToast(`Database sync failed: ${err?.message || 'Unknown error'}`, 'error'); } finally { 
       isFetchingData = false;
       populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateShipmentPoDropdown(); populatePlPoDropdown(); populateCbProfileDropdown(); populateRejProfile(); populateRecProfile();
+      restoreAISFormSelections();
       if(currentUserRole) { 
           updateRoleUI(); 
           setTimeout(() => {
@@ -1105,7 +1158,7 @@ async function deleteRecoveryWrapItem(id){
   });
 }
 function renderRecoverTable(){
-  const now=new Date(),y=now.getFullYear(),m=now.getMonth();let monthlyReject=0,monthlyRecover=0;rejectLogs.forEach(r=>{const d=new Date(r.reject_date);if(d.getFullYear()===y&&d.getMonth()===m)monthlyReject+=Number(r.weight)||0;});recoveryWrapLogs.forEach(r=>{const d=new Date(r.wrap_date);if(d.getFullYear()===y&&d.getMonth()===m)monthlyRecover+=Number(r.wrap_weight)||0;});const net=Math.max(0,monthlyReject-monthlyRecover),rate=monthlyReject>0?Math.min(100,monthlyRecover/monthlyReject*100):0;const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('recMonthlyReject',`${monthlyReject.toFixed(2)} kg`);set('recMonthlyRecover',`${monthlyRecover.toFixed(2)} kg`);set('recMonthlyNet',`${net.toFixed(2)} kg`);set('recMonthlyRate',`${rate.toFixed(1)}%`);set('recMonthlyRateBadge',`${rate.toFixed(1)}% of reject recovered`);const bar=document.getElementById('recMonthlyRecoverBar');if(bar)bar.style.width=`${rate.toFixed(1)}%`;set('recoverySummaryMonth',now.toLocaleDateString('en-US',{month:'long',year:'numeric'}));
+  const now=new Date(),y=now.getFullYear(),m=now.getMonth();let monthlyReject=0,monthlyRecover=0;rejectLogs.forEach(r=>{const d=new Date(r.reject_date);if(d.getFullYear()===y&&d.getMonth()===m)monthlyReject+=Number(r.weight)||0;});recoveryWrapLogs.forEach(r=>{const d=new Date(r.wrap_date);if(d.getFullYear()===y&&d.getMonth()===m)monthlyRecover+=Number(r.wrap_weight)||0;});const net=Math.max(0,monthlyReject-monthlyRecover),rate=monthlyReject>0?Math.min(100,monthlyRecover/monthlyReject*100):0;const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('recMonthlyReject',`${monthlyReject.toFixed(2)} kg`);set('recMonthlyRecover',`${monthlyRecover.toFixed(2)} kg`);set('recMonthlyNet',`${net.toFixed(2)} kg`);set('recMonthlyRate',`${rate.toFixed(1)}%`);set('recMonthlyRateBadge',`${rate.toFixed(1)}% of reject recovered`);const bar=document.getElementById('recMonthlyRecoverBar');if(bar)bar.style.width=`${rate.toFixed(1)}%`;set('recoverySummaryMonth',dashboardMonthLabel(dashboardSelectedMonth));
   const cutTb=document.getElementById('recoveryCutTableBody');if(cutTb){if(!recoveryCutLogs.length)cutTb.innerHTML='<tr><td colspan="10" style="text-align:center;padding:24px;">No Recovery Cut Records Found.</td></tr>';else cutTb.innerHTML=recoveryCutLogs.slice(0,100).map(r=>`<tr><td>${r.cut_date}</td><td><b>${r.source_profile}</b></td><td>${r.source_item_code}</td><td>${r.original_length} mm</td><td><b>${r.new_profile}</b></td><td>${r.new_item_code}</td><td>${r.new_length} mm</td><td>${r.cut_pcs} Pcs</td><td>${Number(r.cut_weight||0).toFixed(2)} kg</td><td>${currentUserRole==='Admin'&&!r.legacy?`<button class="btn btn-danger" onclick="deleteRecoveryCutItem(${r.id})"><i class="fa-solid fa-trash"></i></button>`:'<i class="fa-solid fa-lock"></i>'}</td></tr>`).join('');}
   const wrapTb=document.getElementById('recoveryWrapTableBody');if(wrapTb){if(!recoveryWrapLogs.length)wrapTb.innerHTML='<tr><td colspan="8" style="text-align:center;padding:24px;">No Recovery Wrapping Records Found.</td></tr>';else wrapTb.innerHTML=recoveryWrapLogs.slice(0,100).map(r=>`<tr><td>${r.wrap_date}</td><td><b>${r.profile}</b></td><td>${r.item_code}</td><td>${r.length} mm</td><td>${r.available_cut_pcs} Pcs</td><td><b>${r.wrap_pcs} Pcs</b></td><td><b style="color:#047857">${Number(r.wrap_weight||0).toFixed(2)} kg</b></td><td>${currentUserRole==='Admin'?`<button class="btn btn-danger" onclick="deleteRecoveryWrapItem(${r.id})"><i class="fa-solid fa-trash"></i></button>`:'<i class="fa-solid fa-lock"></i>'}</td></tr>`).join('');}
   renderRecoveryCutStockTable();populateRecoverWrapProfile();
@@ -1231,6 +1284,33 @@ function dashboardDataPeriodFromMonthFields(values, fallback = 'Active data') {
   return `${months.length} active months`;
 }
 
+let dashboardSelectedMonth = '';
+function getDashboardMonthOptions() {
+  const keys = new Set();
+  const addDate = v => { if(!v) return; const d=new Date(v); if(!Number.isNaN(d.getTime())) keys.add(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`); };
+  poList.forEach(x=>addDate(x.date)); historyLogs.forEach(x=>addDate(x.date)); rejectLogs.forEach(x=>addDate(x.reject_date)); recoveryWrapLogs.forEach(x=>addDate(x.wrap_date)); shipmentList.forEach(x=>addDate(x.date)); packingLists.forEach(x=>addDate(x.date));
+  const now=new Date(); keys.add(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`);
+  return [...keys].sort().reverse();
+}
+function dashboardMonthLabel(key){ if(!key) return 'Current Month'; const [y,m]=String(key).split('-').map(Number); return new Date(y,(m||1)-1,1).toLocaleDateString('en-US',{month:'long',year:'numeric'}); }
+function ensureDashboardMonthControl(){
+  const host=document.getElementById('dashboardMonthControl'); if(!host) return;
+  const options=getDashboardMonthOptions();
+  if(!dashboardSelectedMonth || !options.includes(dashboardSelectedMonth)) dashboardSelectedMonth=options[0] || '';
+  host.innerHTML=`<label style="font-size:11px;font-weight:900;color:#475569;display:flex;align-items:center;gap:6px;"><i class="fa-solid fa-calendar-days" style="color:#0369a1;"></i> Dashboard Month <select id="dashboardMonthSelect" onchange="window.setDashboardMonth(this.value)" style="padding:8px 12px;border:1px solid #bae6fd;border-radius:9px;background:#fff;font-weight:800;color:#0f172a;min-width:155px;">${options.map(k=>`<option value="${k}" ${k===dashboardSelectedMonth?'selected':''}>${dashboardMonthLabel(k)}</option>`).join('')}</select></label>`;
+}
+window.setDashboardMonth=function(key){ dashboardSelectedMonth=key||''; renderDashboard(); };
+function getDashboardPackingSelection(monthKey){
+  const now=new Date(); const currentKey=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  if(monthKey===currentKey){ ensurePackingSelection(); return {month:activePackingMonth,container:activePackingContainer,records:getPackingContainerRecords(activePackingMonth,activePackingContainer)}; }
+  const rows=packingLists.filter(p=>{ const d=new Date(p.date); return !Number.isNaN(d.getTime()) && `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`===monthKey; });
+  if(!rows.length) return {month:'',container:'',records:[]};
+  const rank=c=>String(c||'').toLowerCase().includes('3rd')?3:String(c||'').toLowerCase().includes('2nd')?2:1;
+  rows.sort((a,b)=>new Date(b.date)-new Date(a.date) || rank(b.container)-rank(a.container));
+  const m=rows[0].month||dashboardMonthLabel(monthKey); const c=rows[0].container||'1st Container';
+  return {month:m,container:c,records:getPackingContainerRecords(m,c)};
+}
+
 function renderDashboard() {
   let totalStockPcs = 0, totalStockWt = 0;
   let totalCut = 0, totalPunch = 0, totalWrap = 0, totalBox = 0, totalCrate = 0;
@@ -1250,15 +1330,16 @@ function renderDashboard() {
   let latestDate = historyLogs.length > 0 ? historyLogs[0].date : '-';
   let todayPcs = 0, todayWt = 0;
 
-  const now = new Date(); const cm = now.getMonth(); const cy = now.getFullYear(); 
-  const currentMonthLabel = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const now = new Date(); ensureDashboardMonthControl(); const selectedMonthKey = dashboardSelectedMonth || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`; const [selY, selM] = selectedMonthKey.split('-').map(Number); const cm = (selM||1)-1; const cy = selY || now.getFullYear();
+  const currentMonthLabel = dashboardMonthLabel(selectedMonthKey);
   setDashboardPeriodBadge('factoryStockPeriod', 'LIVE SNAPSHOT');
-  setDashboardPeriodBadge('overallPoPeriod', dashboardDataPeriod(poList.map(p => p.date), 'No dated POs'));
-  // PL dashboard is intentionally scoped to the CURRENT ACTIVE shipment only.
-  // Completed/previous containers must not be included in this chart or its summary.
-  ensurePackingSelection();
-  const activePlRecords = getPackingContainerRecords(activePackingMonth, activePackingContainer);
-  setDashboardPeriodBadge('overallPlPeriod', `${activePackingMonth || 'Active month'} • ${activePackingContainer || 'Active container'}`, true);
+  const selectedPoDates = poList.filter(p=>{ const d=new Date(p.date); return !Number.isNaN(d.getTime()) && d.getFullYear()===cy && d.getMonth()===cm; }).map(p=>p.date);
+  setDashboardPeriodBadge('overallPoPeriod', currentMonthLabel || dashboardDataPeriod(selectedPoDates, 'No dated POs'));
+  const dashboardPlSel = getDashboardPackingSelection(selectedMonthKey);
+  const dashboardPlMonth = dashboardPlSel.month || activePackingMonth;
+  const dashboardPlContainer = dashboardPlSel.container || activePackingContainer;
+  const activePlRecords = dashboardPlSel.records || [];
+  setDashboardPeriodBadge('overallPlPeriod', `${dashboardPlMonth || currentMonthLabel} • ${dashboardPlContainer || 'No PL'}`, true);
   let mRejWt = 0, mRecWt = 0, mPlantRejWt = 0, mOtherRejWt = 0; 
   let mProdWrapWt = 0; 
   let profileRejMap = {}; 
@@ -1273,7 +1354,7 @@ function renderDashboard() {
       if(d.getMonth()===cm && d.getFullYear()===cy) { mProdWrapWt += wrapPcs * uw; }
   });
 
-  if(document.getElementById('latestOutputDate')) document.getElementById('latestOutputDate').textContent = latestDate;
+  if(document.getElementById('latestOutputDate')) document.getElementById('latestOutputDate').textContent = latestDate; if(document.getElementById('dashboardOutputLabel')) document.getElementById('dashboardOutputLabel').textContent = selectedMonthKey === `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}` ? 'Latest Output' : 'Month-End Output';
   if(document.getElementById('kpiTodayOutputPcs')) document.getElementById('kpiTodayOutputPcs').textContent = `${todayPcs.toLocaleString()} Pcs (Wrap)`;
   if(document.getElementById('kpiTodayOutputWt')) {
       document.getElementById('kpiTodayOutputWt').innerHTML = `${todayWt.toFixed(2)} kg <div style="font-size:11px; color:#059669; margin-top:4px; padding-top:4px; border-top:1px dashed #a7f3d0;"><i class="fa-solid fa-calendar-check"></i> Month Wrap Total: <b style="font-size:13px;">${mProdWrapWt.toFixed(2)} kg</b></div>`;
@@ -1340,7 +1421,7 @@ function renderDashboard() {
       let c = dashCrateMap[crateId];
       if (c.req > 0) {
           finalTotCrates++;
-          if (isManualCrateComplete(crateId, activePackingContainer, activePackingMonth)) finalCompCrates++;
+          if (isManualCrateComplete(crateId, dashboardPlContainer, dashboardPlMonth)) finalCompCrates++;
       }
   }
 
@@ -1375,25 +1456,70 @@ function renderDashboard() {
   let hasOverdue = false;
   let overduePoCount = 0, overdueBalancePcs = 0, overdueBalanceWt = 0;
   const poGroups = {};
-  poList.forEach(po => {
+  const selectedPoList = poList.filter(po=>{ const d=new Date(po.date); return !Number.isNaN(d.getTime()) && d.getFullYear()===cy && d.getMonth()===cm; });
+  selectedPoList.forEach(po => {
       const key = String(po.poNumber).trim();
       if (!poGroups[key]) poGroups[key] = { date: po.date, items: [] };
       poGroups[key].items.push(po);
   });
 
   const shipLookup = new Map();
+  // Shipment weights are kept in two views:
+  // 1) cumulative-to-month-end for PO balance/overdue calculations, and
+  // 2) selected-month-only for the dashboard production-order chart.
   const shipContainerWeights = {'1st Container': 0, '2nd Container': 0, '3rd Container': 0};
-  shipmentList.forEach(s => {
+  const shipContainerMonthWeights = {'1st Container': 0, '2nd Container': 0, '3rd Container': 0};
+  const selectedMonthStart = new Date(cy, cm, 1, 0, 0, 0, 0);
+  const selectedMonthEnd = new Date(cy, cm + 1, 0, 23, 59, 59, 999);
+  let selectedMonthShipmentWt = 0;
+  shipmentList.filter(s=>{ const d=new Date(s.date); return !Number.isNaN(d.getTime()) && d.getTime() <= selectedMonthEnd.getTime(); }).forEach(s => {
       const k = `${String(s.poNumber).trim()}_${String(s.profile).trim()}_${cleanLen(s.length)}`;
-      shipLookup.set(k, (shipLookup.get(k) || 0) + (parseInt(s.shippedQty) || 0));
+      const qty = Math.max(0, parseInt(s.shippedQty) || 0);
+      shipLookup.set(k, (shipLookup.get(k) || 0) + qty);
       const matchedCat = masterData.find(m => String(m.profile).trim() === String(s.profile).trim() && cleanLen(m.length) === cleanLen(s.length));
       if (matchedCat) {
+          const wt = qty * (Number(matchedCat.unitWeight) || 0);
           const cName = s.container || '1st Container';
-          if (shipContainerWeights[cName] !== undefined) {
-              shipContainerWeights[cName] += (parseInt(s.shippedQty) || 0) * (matchedCat.unitWeight || 0);
+          if (shipContainerWeights[cName] !== undefined) shipContainerWeights[cName] += wt;
+          const d = new Date(s.date);
+          if (d >= selectedMonthStart && d <= selectedMonthEnd) {
+              if (shipContainerMonthWeights[cName] !== undefined) shipContainerMonthWeights[cName] += wt;
+              selectedMonthShipmentWt += wt;
           }
       }
   });
+
+  // Month-to-month Production Order pool:
+  // selected month total = previous month ending PO balance + new POs created in selected month.
+  // This gives the true workload available at the start of the selected month's operations.
+  const priorMonthEnd = new Date(cy, cm, 0, 23, 59, 59, 999);
+  let priorPoBalanceWt = 0;
+  poList.forEach(poItem => {
+      const poDate = new Date(poItem.date);
+      if (Number.isNaN(poDate.getTime()) || poDate > priorMonthEnd) return;
+      const matchedItem = masterMap.get(`${String(poItem.profile).trim()}_${cleanLen(poItem.length)}_${poItem.itemCode}`)
+          || masterData.find(m => String(m.profile).trim() === String(poItem.profile).trim() && cleanLen(m.length) === cleanLen(poItem.length));
+      const uw = matchedItem ? (Number(matchedItem.unitWeight) || 0) : 0;
+      const orderQty = Math.max(0, parseInt(poItem.orderQty) || 0);
+      const shippedBeforeMonth = shipmentList.filter(sh => {
+          const sd = new Date(sh.date);
+          return !Number.isNaN(sd.getTime()) && sd <= priorMonthEnd
+              && String(sh.poNumber).trim() === String(poItem.poNumber).trim()
+              && String(sh.profile).trim() === String(poItem.profile).trim()
+              && cleanLen(sh.length) === cleanLen(poItem.length);
+      }).reduce((sum, sh) => sum + (Math.max(0, parseInt(sh.shippedQty) || 0)), 0);
+      priorPoBalanceWt += Math.max(0, orderQty - Math.min(orderQty, shippedBeforeMonth)) * uw;
+  });
+  let selectedMonthNewPoWt = 0;
+  selectedPoList.forEach(poItem => {
+      const matchedItem = masterMap.get(`${String(poItem.profile).trim()}_${cleanLen(poItem.length)}_${poItem.itemCode}`)
+          || masterData.find(m => String(m.profile).trim() === String(poItem.profile).trim() && cleanLen(m.length) === cleanLen(poItem.length));
+      const uw = matchedItem ? (Number(matchedItem.unitWeight) || 0) : 0;
+      selectedMonthNewPoWt += Math.max(0, parseInt(poItem.orderQty) || 0) * uw;
+  });
+  const monthProductionPoolWt = priorPoBalanceWt + selectedMonthNewPoWt;
+  const monthShipmentCompleteWt = selectedMonthShipmentWt;
+  const monthProductionBalanceWt = Math.max(0, monthProductionPoolWt - monthShipmentCompleteWt);
 
   let overdueHtml = '';
   Object.keys(poGroups).forEach((poNumber) => {
@@ -1508,13 +1634,13 @@ function renderDashboard() {
   if(document.getElementById('kpiTotalPoWeightSum')) document.getElementById('kpiTotalPoWeightSum').textContent = `${totalStockWt.toFixed(1)} kg`; 
   
   if(document.getElementById('kpiOverallPoTotal')) {
-      document.getElementById('kpiOverallPoTotal').textContent = `${grandPoOrderWt.toFixed(1)} kg`;
+      document.getElementById('kpiOverallPoTotal').textContent = `${monthProductionPoolWt.toFixed(1)} kg`;
       
       let poBreakdownHtml = `
       <div style="padding-top: 10px; border-top: 2px dashed #bae6fd; font-weight: 800; font-size: 12px; background: rgba(2, 132, 199, 0.05); border-radius: 8px; margin-top: auto; display:flex; flex-direction:column; gap:6px; padding-bottom:4px; padding-left: 8px; padding-right: 8px;">
-          <div style="display:flex; justify-content:space-between; color: var(--text-muted);"><span><i class="fa-solid fa-chart-bar"></i> Total Order:</span> <span style="color:#0369a1;">${grandPoOrderWt.toFixed(2)} kg</span></div>
-          <div style="display:flex; justify-content:space-between; color: #059669;"><span><i class="fa-solid fa-check-square"></i> Complete/Shipped:</span> <span>${(grandPoShippedWt + grandPoReadyWt).toFixed(2)} kg</span></div>
-          <div style="display:flex; justify-content:space-between; color: #e11d48;"><span><i class="fa-solid fa-hourglass-half"></i> Pending:</span> <span>${Math.max(0, grandPoOrderWt - (grandPoShippedWt + grandPoReadyWt)).toFixed(2)} kg</span></div>
+          <div style="display:flex; justify-content:space-between; color: var(--text-muted);"><span><i class="fa-solid fa-layer-group"></i> Previous Balance + New PO:</span> <span style="color:#0369a1;">${monthProductionPoolWt.toFixed(2)} kg</span></div>
+          <div style="display:flex; justify-content:space-between; color: #059669;"><span><i class="fa-solid fa-truck-fast"></i> Shipment Complete:</span> <span>${monthShipmentCompleteWt.toFixed(2)} kg</span></div>
+          <div style="display:flex; justify-content:space-between; color: #e11d48;"><span><i class="fa-solid fa-hourglass-half"></i> Production Balance:</span> <span>${monthProductionBalanceWt.toFixed(2)} kg</span></div>
       </div>`;
       
       const parent = document.getElementById('kpiOverallPoTotal').parentElement;
@@ -1530,7 +1656,7 @@ function renderDashboard() {
   let manualCompleteCrateQtySum = 0;
   Object.entries(globalManualCrates || {}).forEach(([k,v]) => {
       const parts = String(k).split('::');
-      if (parts.length === 3 && parts[0] === String(activePackingMonth||'').trim() && parts[1] === String(activePackingContainer||'').trim()) {
+      if (parts.length === 3 && parts[0] === String(dashboardPlMonth||'').trim() && parts[1] === String(dashboardPlContainer||'').trim()) {
           manualCompleteCrateQtySum += (parseInt(v?.qty,10) || 0);
       }
   });
@@ -1625,10 +1751,16 @@ function renderDashboard() {
           
           if(document.getElementById('overallPoChart')) { 
               safeChartDestroy(overallPoChartInstance, 'overallPoChart'); 
-              let remainingPendingPo = Math.max(0, grandPoOrderWt - (grandPoShippedWt+grandPoReadyWt));
-              let poDataArr = [ shipContainerWeights['1st Container'], shipContainerWeights['2nd Container'], shipContainerWeights['3rd Container'], grandPoReadyWt, remainingPendingPo ]; 
-              if (poDataArr.every(v => v === 0)) poDataArr = [1]; 
-              overallPoChartInstance = new Chart(document.getElementById('overallPoChart'), { type: 'doughnut', data: { labels: poDataArr.length === 1 ? ['No Orders'] : ['1st Container', '2nd Container', '3rd Container', 'Ready', 'Pending'], datasets: [{ hoverOffset: 10, data: poDataArr, backgroundColor: poDataArr.length === 1 ? ['#e2e8f0'] : ['#3b82f6', '#ec4899', '#a855f7', '#10b981', '#fb7185'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, poDataArr.length > 1), cutout: '65%' } }); 
+              // Monthly PO workload chart: previous month's ending balance + new POs,
+              // then show the selected month's shipment completion by container and the remaining balance.
+              let poDataArr = [
+                  shipContainerMonthWeights['1st Container'],
+                  shipContainerMonthWeights['2nd Container'],
+                  shipContainerMonthWeights['3rd Container'],
+                  monthProductionBalanceWt
+              ];
+              if (poDataArr.every(v => v === 0)) poDataArr = [1];
+              overallPoChartInstance = new Chart(document.getElementById('overallPoChart'), { type: 'doughnut', data: { labels: poDataArr.length === 1 ? ['No Orders'] : ['1st Shipment', '2nd Shipment', '3rd Shipment', 'Production Balance'], datasets: [{ hoverOffset: 10, data: poDataArr, backgroundColor: poDataArr.length === 1 ? ['#e2e8f0'] : ['#3b82f6', '#ec4899', '#a855f7', '#fb7185'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, poDataArr.length > 1), cutout: '65%' } }); 
           }
           
           if(document.getElementById('overallPlChart')) { 
@@ -1734,7 +1866,7 @@ function renderDashboard() {
 function renderMonthlyShiftChart() {
     const ctx = document.getElementById('monthlyShiftChart'); if(!ctx || typeof Chart === 'undefined') return;
     safeChartDestroy(monthlyShiftChartInstance, 'monthlyShiftChart');
-    const now = new Date(); const currentYear = now.getFullYear(); const currentMonth = now.getMonth();
+    const now = new Date(); const key = dashboardSelectedMonth || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`; const [selectedYear, selectedMonthNum] = key.split('-').map(Number); const currentYear = selectedYear || now.getFullYear(); const currentMonth = (selectedMonthNum||now.getMonth()+1)-1;
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const labels = [], dayWrapData = [], nightWrapData = [], dayRejectData = [], nightRejectData = [], dayNetRejectData = [], nightNetRejectData = [];
     const lookupMap = new Map();
@@ -1814,8 +1946,8 @@ function renderMonthlyShiftChart() {
       <div class="prod-summary-title"><i class="fa-solid fa-gauge-high"></i> Production Performance — ${now.toLocaleDateString('en-US',{month:'long',year:'numeric'})}</div>
       <div class="prod-summary-grid">
         <div class="prod-metric daily"><span>Today Wrapping</span><b id="dashDailyWrapWeight">${today.wrap.toFixed(2)} kg</b><small>${today.wrapPcs.toLocaleString()} Pcs • Wrap/Cut <span id="dashDailyWrapEfficiencyPct">${todayWrapEfficiencyPct.toFixed(1)}%</span></small></div>
-        <div class="prod-metric monthly"><span>Monthly Wrapping</span><b id="dashMonthlyWrapWeight">${monthWrapWeight.toFixed(2)} kg</b><small>${monthWrapPcs.toLocaleString()} Pcs • Wrap/Cut ${monthWrapEfficiencyPct.toFixed(1)}%</small></div>
-        <div class="prod-metric reject"><span>Monthly Reject</span><b id="dashMonthlyRejectWeight">${monthRejectWeight.toFixed(2)} kg</b><small>${monthRejectPct.toFixed(1)}% of wrapping</small></div>
+        <div class="prod-metric monthly"><span id="dashMonthlyWrapLabel">Monthly Wrapping</span><b id="dashMonthlyWrapWeight">${monthWrapWeight.toFixed(2)} kg</b><small>${monthWrapPcs.toLocaleString()} Pcs • Wrap/Cut ${monthWrapEfficiencyPct.toFixed(1)}%</small></div>
+        <div class="prod-metric reject"><span id="dashMonthlyRejectLabel">Monthly Reject</span><b id="dashMonthlyRejectWeight">${monthRejectWeight.toFixed(2)} kg</b><small>${monthRejectPct.toFixed(1)}% of wrapping</small></div>
         <div class="prod-metric recover"><span>Monthly Recover</span><b id="dashMonthlyRecoverWeight">${monthRecoverWeight.toFixed(2)} kg</b><small>${monthRecoveryPct.toFixed(1)}% of reject</small></div>
         <div class="prod-metric net"><span>Net Reject</span><b id="dashMonthlyNetRejectWeight">${monthNetRejectWeight.toFixed(2)} kg</b><small>${monthNetRejectPct.toFixed(1)}% of wrapping</small></div>
       </div>`;
@@ -2252,22 +2384,50 @@ async function saveShipmentEntry(){
   const po=poList.find(p=>String(p.poNumber).trim()===String(poNum).trim()&&cleanLen(p.length)===length&&String(p.profile).trim()===String(profile).trim());
   if(!po)return showToast('Selected PO/profile/length was not found.','error');
   let shippedSoFar=shipmentList.filter(s=>String(s.poNumber).trim()===String(poNum).trim()&&String(s.profile).trim()===String(profile).trim()&&cleanLen(s.length)===length).reduce((a,s)=>a+(Number(s.shippedQty)||0),0);
-  const remainingBefore=Math.max(0,Number(po.orderQty)||0-shippedSoFar);
+  const remainingBefore=Math.max(0,(Number(po.orderQty)||0)-shippedSoFar);
   if(qtyToShip>remainingBefore)return showToast(`Shipment exceeds PO balance. Available: ${remainingBefore} Pcs.`,'error');
-  const cat=masterData.find(m=>String(m.profile).trim()===String(profile).trim()&&cleanLen(m.length)===length&&m.itemCode===itemCode);
+
+  const cat=masterData.find(m=>String(m.profile).trim()===String(profile).trim()&&cleanLen(m.length)===length&&String(m.itemCode||'').trim()===String(itemCode).trim());
   if(!cat||!cat.db_id)return showToast('Selected item is not linked to Master Catalog.','error');
-  if((cat.crateQty||0)<qtyToShip)return showToast(`Insufficient Crate Stock. Available: ${cat.crateQty||0} Pcs.`,'error');
+
+  // Shipment consumes the highest available stock stage first. If that stage does not
+  // have enough, continue backwards through Box -> Wrapping -> Punch -> Cut.
+  const stages=['crateQty','boxQty','wrapQty','punchQty','cutQty'];
+  const before={}; stages.forEach(k=>before[k]=Math.max(0,Number(cat[k])||0));
+  const totalAvailable=stages.reduce((sum,k)=>sum+before[k],0);
+  if(qtyToShip>totalAvailable){
+    return showToast(`Insufficient stock for shipment. Available across Crate/Box/Wrap/Punch/Cut: ${totalAvailable} Pcs.`,'error');
+  }
+  let remainingToDeduct=qtyToShip; const deduction={};
+  stages.forEach(k=>{ const take=Math.min(before[k],remainingToDeduct); deduction[k]=take; remainingToDeduct-=take; });
+  if(remainingToDeduct>0) throw new Error('Stock allocation failed. Please refresh and try again.');
+  const after={}; stages.forEach(k=>after[k]=before[k]-(deduction[k]||0));
+
   const newRemaining=remainingBefore-qtyToShip;
   const newShipment={shipment_date:shipDate,shipment_month:month,po_number:poNum,profile,length,container,shipped_qty:qtyToShip,remaining_balance:newRemaining};
-  const {error:shipError}=await supabaseClient.from('shipments').insert([newShipment]);
+  const {data:shipInserted,error:shipError}=await supabaseClient.from('shipments').insert([newShipment]).select().single();
   if(shipError)throw new Error(`Shipment save failed: ${shipError.message}`);
-  const shipmentLocalId=-Date.now();
-  const nextCrate=cat.crateQty-qtyToShip;
-  const {error:stockError}=await supabaseClient.from('master_catalog').update({crate_qty:nextCrate}).eq('id',cat.db_id);
-  if(stockError){throw new Error(`Shipment stock update failed: ${stockError.message}`);}
-  cat.crateQty=nextCrate; shipmentList.unshift({id:shipmentLocalId,date:shipDate,month,poNumber:poNum,profile,length,container,shippedQty:qtyToShip,remainingBalance:newRemaining});
-  showToast('Shipment saved successfully.','success'); document.getElementById('shipmentEntryForm').reset(); window.renderShipmentHistoryTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable(); updatePoFilters(); renderPoDetailsTable();
- }catch(e){console.error(e);showToast(e.message||'Shipment save failed.','error');}finally{isAppBusy=false;}
+
+  try {
+    const stockPayload={cut_qty:after.cutQty,punch_qty:after.punchQty,wrap_qty:after.wrapQty,box_qty:after.boxQty,crate_qty:after.crateQty};
+    const {error:stockError}=await supabaseClient.from('master_catalog').update(stockPayload).eq('id',cat.db_id);
+    if(stockError)throw new Error(`Shipment stock update failed: ${stockError.message}`);
+    Object.assign(cat,after);
+  } catch(stockErr) {
+    try { if(shipInserted?.id) await supabaseClient.from('shipments').delete().eq('id',shipInserted.id); } catch(rb){ console.error('Shipment rollback failed:',rb); }
+    throw stockErr;
+  }
+
+  const shipmentLocalId=shipInserted?.id || -Date.now();
+  shipmentList.unshift({id:shipmentLocalId,date:shipDate,month,poNumber:poNum,profile,length,container,shippedQty:qtyToShip,remainingBalance:newRemaining});
+  const deductionSummary=stages.filter(k=>(deduction[k]||0)>0).map(k=>`${k.replace('Qty','')}: ${deduction[k]} Pcs`).join(' • ');
+  showToast(`Shipment saved. Stock deducted: ${deductionSummary}.`,'success');
+
+  // Keep the user's last selections. Only the shipment quantity is cleared.
+  document.getElementById('shipmentQty').value='';
+  rememberAISFormFields();
+  renderShipmentHistoryTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable(); updatePoFilters(); renderPoDetailsTable();
+ }catch(e){console.error('Shipment save error:',e);showToast(e.message||'Shipment save failed.','error');}finally{isAppBusy=false;}
 }
 
 function deleteShipmentItem(id) { if (currentUserRole !== 'Admin') return; showConfirm("Delete this Shipment?", async () => { await supabaseClient.from('shipments').delete().eq('id', id); shipmentList = shipmentList.filter(s => s.id !== id); window.renderShipmentHistoryTable(); renderDashboard(); renderBalanceWorkTable(); updatePoFilters(); renderPoDetailsTable(); showToast("Deleted", "success"); }); }
@@ -2774,7 +2934,7 @@ function renderPackingListTable() {
                     <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Cut L</div><b>${i.length} mm</b></div>
                     <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Ex L</div><b style="color:#047857;">${i.exLength ? i.exLength+' mm' : '-'}</b></div>
                     <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Pcs / Ex</div><span class="stock-badge" style="background:#eff6ff;color:#0369a1;">${i.pcsPerEx || '-'}</span></div>
-                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">PL Req</div><span class="stock-badge bg-total">${i.pcsQty}</span></div>
+                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">PL Req</div>${currentUserRole==='Admin' ? `<button type="button" class="stock-badge bg-total" style="border:0;cursor:pointer;min-width:58px;" title="Admin: click to edit Pcs Qty" onclick="openGenericEdit('packing_list', ${i.id}, {pcs_qty: '${i.pcsQty}'})">${i.pcsQty}</button>` : `<span class="stock-badge bg-total">${i.pcsQty}</span>`}</div>
                     <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Req Ex</div><span class="stock-badge" style="background:#fff7ed;color:#c2410c;">${i.requiredExtrusions || '-'}</span></div>
                     <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Box / Status</div><span class="stock-badge" style="background:#ecfdf5;color:#10b981;">${i.availableBox}</span> ${lineStatusHtml(i.status)}</div>
                 </div>`;
