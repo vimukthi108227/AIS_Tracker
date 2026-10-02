@@ -1311,7 +1311,158 @@ function getDashboardPackingSelection(monthKey){
   return {month:m,container:c,records:getPackingContainerRecords(m,c)};
 }
 
+
+/* -------------------------------------------------------------------------
+ * Dashboard: All Pending Production Orders
+ * -------------------------------------------------------------------------
+ * This block is intentionally independent of the Dashboard Month selector.
+ * It calculates ALL currently outstanding PO demand, then allocates the
+ * CURRENT master stock against that demand once per Profile + Item Code +
+ * Length key. It does not mutate masterData, PO data, shipments, or Supabase.
+ */
+function dashboardQty(value) {
+  const n = Number(String(value ?? 0).replace(/,/g, '').trim());
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+function getDashboardCatalogItemForPo(po) {
+  const profile = String(po?.profile ?? '').trim();
+  const itemCode = String(po?.itemCode ?? '').trim();
+  const length = cleanLen(po?.length);
+  if (!profile || !length) return null;
+
+  if (itemCode) {
+    const exact = masterData.find(m =>
+      String(m.profile ?? '').trim() === profile &&
+      String(m.itemCode ?? '').trim() === itemCode &&
+      cleanLen(m.length) === length
+    );
+    if (exact) return exact;
+  }
+
+  return masterData.find(m =>
+    String(m.profile ?? '').trim() === profile &&
+    cleanLen(m.length) === length
+  ) || null;
+}
+
+function calculateAllPendingProductionOrderDashboard() {
+  const result = {
+    totalPendingWt: 0,
+    completeWt: 0,
+    processingWt: 0,
+    stillPendingWt: 0,
+    pendingQty: 0,
+    lineCount: 0
+  };
+
+  if (!Array.isArray(poList) || !Array.isArray(masterData)) return result;
+
+  // Shipments are matched using the same PO/Profile/Length identity already
+  // used elsewhere in AIS Tracker. This keeps this dashboard card consistent
+  // with the Production Orders / Shipment balance logic.
+  const shippedByLine = new Map();
+  (shipmentList || []).forEach(s => {
+    const key = `${String(s?.poNumber ?? '').trim()}_${String(s?.profile ?? '').trim()}_${cleanLen(s?.length)}`;
+    const qty = dashboardQty(s?.shippedQty);
+    if (qty > 0) shippedByLine.set(key, (shippedByLine.get(key) || 0) + qty);
+  });
+
+  // Aggregate outstanding demand by the canonical Master Catalog key.
+  // This prevents current stock from being counted repeatedly when multiple
+  // pending PO lines require the same profile/length.
+  const demandByKey = new Map();
+
+  (poList || []).forEach(po => {
+    const orderQty = dashboardQty(po?.orderQty);
+    if (orderQty <= 0) return;
+
+    const profile = String(po?.profile ?? '').trim();
+    const length = cleanLen(po?.length);
+    const poNumber = String(po?.poNumber ?? '').trim();
+    if (!profile || !length) return;
+
+    const shipKey = `${poNumber}_${profile}_${length}`;
+    const shippedQty = Math.min(orderQty, shippedByLine.get(shipKey) || 0);
+    const remainingQty = Math.max(0, orderQty - shippedQty);
+    if (remainingQty <= 0) return;
+
+    const catalog = getDashboardCatalogItemForPo(po);
+    if (!catalog) return;
+
+    const itemCode = String(catalog.itemCode ?? po?.itemCode ?? '').trim();
+    const key = `${profile}_${itemCode}_${length}`;
+    const existing = demandByKey.get(key) || {
+      profile,
+      itemCode,
+      length,
+      remainingQty: 0,
+      unitWeight: dashboardQty(catalog.unitWeight),
+      master: catalog
+    };
+
+    existing.remainingQty += remainingQty;
+    demandByKey.set(key, existing);
+  });
+
+  demandByKey.forEach(line => {
+    const demandQty = line.remainingQty;
+    const m = line.master;
+    const unitWeight = dashboardQty(line.unitWeight);
+
+    // Current stock is read-only here. Nothing is deducted or changed.
+    const completeStockQty =
+      dashboardQty(m.wrapQty) +
+      dashboardQty(m.boxQty) +
+      dashboardQty(m.crateQty);
+
+    const processingStockQty =
+      dashboardQty(m.cutQty) +
+      dashboardQty(m.punchQty);
+
+    // Allocate higher-stage stock first because those pieces can satisfy the
+    // pending PO immediately. Then allocate Cut + Punch as waiting/processing.
+    const completeQty = Math.min(demandQty, completeStockQty);
+    const afterComplete = Math.max(0, demandQty - completeQty);
+    const processingQty = Math.min(afterComplete, processingStockQty);
+    const stillPendingQty = Math.max(0, afterComplete - processingQty);
+
+    result.pendingQty += demandQty;
+    result.lineCount += 1;
+    result.totalPendingWt += demandQty * unitWeight;
+    result.completeWt += completeQty * unitWeight;
+    result.processingWt += processingQty * unitWeight;
+    result.stillPendingWt += stillPendingQty * unitWeight;
+  });
+
+  return result;
+}
+
+function renderPendingProductionOrderDashboardCard() {
+  const summary = calculateAllPendingProductionOrderDashboard();
+
+  const setText = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = `${Number(value || 0).toFixed(2)} kg`;
+  };
+
+  setText('dashPendingPoTotalWt', summary.totalPendingWt);
+  setText('dashPendingPoCompleteWt', summary.completeWt);
+  setText('dashPendingPoProcessingWt', summary.processingWt);
+  setText('dashPendingPoStillWt', summary.stillPendingWt);
+
+  const card = document.getElementById('pendingProductionOrdersCard');
+  if (card) {
+    card.dataset.pendingLines = String(summary.lineCount);
+    card.dataset.pendingQty = String(summary.pendingQty);
+  }
+
+  return summary;
+}
+
 function renderDashboard() {
+  // All-pending-PO card is independent of the selected dashboard month.
+  renderPendingProductionOrderDashboardCard();
   let totalStockPcs = 0, totalStockWt = 0;
   let totalCut = 0, totalPunch = 0, totalWrap = 0, totalBox = 0, totalCrate = 0;
   

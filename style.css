@@ -1804,7 +1804,7 @@ body.dark-mode #dashboardTab .chart-val-label{color:#8ca2ac!important;}
   .dashboard-merged-header .header-clock-slot{justify-content:center!important;}
   .dashboard-merged-header .header-clock-slot .live-clock-badge{width:200px!important;min-width:200px!important;height:56px!important;}
   .dashboard-merged-header .header-actions-group{justify-content:center!important;flex-wrap:wrap!important;overflow:visible!important;}
-  .dashboard-merged-header .header-actions-group .btn{min-height:34px!important;padding:6px 7px!important;font-size:8px!important;}
+  .dashboard-merged-header .header-actions-group .btn{min-height:34px!important;padding:7px 8px!important;font-size:8px!important;}
   #dashboardTab .dashboard-shipment-handover{width:94%!important;bottom:8px!important;min-height:58px!important;padding:5px!important;gap:5px!important;}
   #dashboardTab .dashboard-shipment-icon{width:34px!important;height:34px!important;min-width:34px!important;}
   #dashboardTab .dashboard-shipment-handover h4{font-size:6px!important;}
@@ -2053,4 +2053,293 @@ body.dark-mode .pl-progress-summary{background:rgba(15,23,42,.72);border-color:#
   .balance-filterbar,.btn,.admin-restricted-area{display:none!important}
   .balance-work-container,.table-container{overflow:visible!important}
   table{font-size:9px!important}
+}
+
+
+/* ========================================================================
+   AIS DASHBOARD - ALL PENDING PRODUCTION ORDERS CARD
+   ======================================================================== */
+#dashboardTab .pending-po-dashboard-card{
+  position:relative;
+  overflow:hidden;
+  text-align:left;
+  border-color:#f0c9d2!important;
+  background:linear-gradient(145deg,rgba(255,255,255,.985),rgba(255,248,250,.96))!important;
+}
+#dashboardTab .pending-po-dashboard-card::before{
+  content:'';
+  position:absolute;
+  left:0;
+  top:0;
+  right:0;
+  height:3px;
+  border-radius:17px 17px 0 0;
+  background:linear-gradient(90deg,#e11d48,#f59e0b,#10b981);
+  opacity:.82;
+}
+#dashboardTab .pending-po-dashboard-head{
+  margin-bottom:7px;
+}
+#dashboardTab .pending-po-dashboard-head h4{
+  color:#9f1239!important;
+}
+#dashboardTab .pending-po-period-badge{
+  background:#fff1f2!important;
+  border-color:#fecdd3!important;
+  color:#be123c!important;
+}
+#dashboardTab .pending-po-dashboard-subtitle{
+  margin:0 0 12px;
+  font-size:10.5px;
+  line-height:1.45;
+  color:#64748b;
+  font-weight:700;
+}
+#dashboardTab .pending-po-metrics{
+  display:flex;
+  flex-direction:column;
+  gap:7px;
+}
+#dashboardTab .pending-po-metric{
+  display:grid;
+  grid-template-columns:30px minmax(0,1fr) auto;
+  align-items:center;
+  gap:9px;
+  min-height:48px;
+  padding:8px 9px;
+  border:1px solid #e5e7eb;
+  border-radius:11px;
+  background:#fff;
+}
+#dashboardTab .pending-po-metric-icon{
+  width:30px;
+  height:30px;
+  border-radius:9px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:12px;
+}
+#dashboardTab .pending-po-metric-copy{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+#dashboardTab .pending-po-metric-copy span{
+  font-size:10.5px;
+  line-height:1.2;
+  font-weight:900;
+  color:#334155;
+}
+#dashboardTab .pending-po-metric-copy small{
+  font-size:8.8px;
+  line-height:1.25;
+  color:#7a8794;
+  font-weight:700;
+}
+#dashboardTab .pending-po-metric strong{
+  font-size:14px;
+  line-height:1;
+  white-space:nowrap;
+  font-weight:950;
+  font-variant-numeric:tabular-nums;
+}
+#dashboardTab .pending-po-metric.pending{
+  border-color:#fecdd3;
+  background:linear-gradient(90deg,#fff7f8,#fff);
+}
+#dashboardTab .pending-po-metric.pending .pending-po-metric-icon{
+  color:#be123c;
+  background:#ffe4e6;
+}
+#dashboardTab .pending-po-metric.pending strong{color:#be123c;}
+#dashboardTab .pending-po-metric.complete{
+  border-color:#bbf7d0;
+  background:linear-gradient(90deg,#f0fdf4,#fff);
+}
+#dashboardTab .pending-po-metric.complete .pending-po-metric-icon{
+  color:#047857;
+  background:#dcfce7;
+}
+#dashboardTab .pending-po-metric.complete strong{color:#047857;}
+#dashboardTab .pending-po-metric.processing{
+  border-color:#fed7aa;
+  background:linear-gradient(90deg,#fff7ed,#fff);
+}
+#dashboardTab .pending-po-metric.processing .pending-po-metric-icon{
+  color:#c2410c;
+  background:#ffedd5;
+}
+#dashboardTab .pending-po-metric.processing strong{color:#c2410c;}
+#dashboardTab .pending-po-metric.still{
+  border-color:#fecdd3;
+  background:linear-gradient(90deg,#fff1f2,#fff);
+}
+#dashboardTab .pending-po-metric.still .pending-po-metric-icon{
+  color:#e11d48;
+  background:#ffe4e6;
+}
+#dashboardTab .pending-po-metric.still strong{color:#e11d48;}
+
+body.dark-mode #dashboardTab .pending-po-dashboard-card{
+  border-color:#5b3040!important;
+  background:linear-gradient(145deg,rgba(21,28,39,.97),rgba(39,23,31,.94))!important;
+}
+body.dark-mode #dashboardTab .pending-po-dashboard-subtitle{color:#9aabb7;}
+body.dark-mode #dashboardTab .pending-po-metric{
+  border-color:#354252;
+  background:#142231;
+}
+body.dark-mode #dashboardTab .pending-po-metric-copy span{color:#e5edf2;}
+body.dark-mode #dashboardTab .pending-po-metric-copy small{color:#93a4b1;}
+body.dark-mode #dashboardTab .pending-po-metric.pending{background:#2a1c26;border-color:#5b3040;}
+body.dark-mode #dashboardTab .pending-po-metric.complete{background:#142a24;border-color:#275842;}
+body.dark-mode #dashboardTab .pending-po-metric.processing{background:#2a2118;border-color:#654322;}
+body.dark-mode #dashboardTab .pending-po-metric.still{background:#2a1c26;border-color:#5b3040;}
+
+@media(max-width:700px){
+  #dashboardTab .pending-po-metric{
+    grid-template-columns:28px minmax(0,1fr);
+    gap:8px;
+    min-height:47px;
+  }
+  #dashboardTab .pending-po-metric strong{
+    grid-column:2;
+    font-size:13px;
+    margin-top:-2px;
+  }
+  #dashboardTab .pending-po-metric-copy small{font-size:8.5px;}
+}
+
+/* ========================================================================
+   COMPACT PENDING PO SUMMARY - placed inside Factory Stock Breakdown
+   ======================================================================== */
+#dashboardTab .chart-card-animated > .pending-po-dashboard-card{
+  margin-top:12px!important;
+  margin-bottom:0!important;
+  padding:10px!important;
+  border-radius:12px!important;
+  border:1px solid #f3c6cf!important;
+  background:linear-gradient(145deg,rgba(255,255,255,.98),rgba(255,248,250,.96))!important;
+  box-shadow:0 4px 12px rgba(15,39,66,.055)!important;
+  position:relative;
+}
+#dashboardTab .chart-card-animated > .pending-po-dashboard-card::before{
+  height:2px;
+  border-radius:12px 12px 0 0;
+}
+#dashboardTab .pending-po-dashboard-card .pending-po-dashboard-head{
+  margin-bottom:5px!important;
+  padding-bottom:5px!important;
+}
+#dashboardTab .pending-po-dashboard-card .pending-po-dashboard-head h4{
+  font-size:11.2px!important;
+  line-height:1.2!important;
+  border:0!important;
+  padding:0!important;
+  margin:0!important;
+}
+#dashboardTab .pending-po-dashboard-card .pending-po-period-badge{
+  font-size:7.5px!important;
+  padding:3px 6px!important;
+  line-height:1!important;
+}
+#dashboardTab .pending-po-dashboard-card .pending-po-dashboard-subtitle{
+  margin:0 0 7px!important;
+  font-size:8.2px!important;
+  line-height:1.25!important;
+  color:#7a8794!important;
+}
+#dashboardTab .pending-po-dashboard-card .pending-po-metrics{
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:5px!important;
+}
+#dashboardTab .pending-po-dashboard-card .pending-po-metric{
+  display:grid!important;
+  grid-template-columns:22px minmax(0,1fr)!important;
+  grid-template-rows:auto auto!important;
+  column-gap:6px!important;
+  min-height:46px!important;
+  padding:7px 8px!important;
+  border-radius:8px!important;
+}
+#dashboardTab .pending-po-dashboard-card .pending-po-metric-icon{
+  grid-row:1 / span 2;
+  width:22px!important;
+  height:22px!important;
+  border-radius:6px!important;
+  font-size:9.5px!important;
+  align-self:center;
+}
+#dashboardTab .pending-po-dashboard-card .pending-po-metric-copy{
+  gap:1px!important;
+  min-width:0;
+}
+#dashboardTab .pending-po-dashboard-card .pending-po-metric-copy span{
+  font-size:8.5px!important;
+  line-height:1.15!important;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+#dashboardTab .pending-po-dashboard-card .pending-po-metric-copy small{
+  font-size:7.2px!important;
+  line-height:1.1!important;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+#dashboardTab .pending-po-dashboard-card .pending-po-metric strong{
+  grid-column:2;
+  font-size:12.4px!important;
+  line-height:1.05!important;
+  text-align:left!important;
+  margin-top:1px;
+}
+@media(max-width:1100px){
+  #dashboardTab .chart-card-animated > .pending-po-dashboard-card .pending-po-metrics{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+@media(max-width:700px){
+  #dashboardTab .chart-card-animated > .pending-po-dashboard-card{
+    padding:9px!important;
+  }
+  #dashboardTab .chart-card-animated > .pending-po-dashboard-card .pending-po-metrics{
+    grid-template-columns:1fr 1fr!important;
+  }
+  #dashboardTab .pending-po-dashboard-card .pending-po-metric-copy span{
+    font-size:8px!important;
+  }
+  #dashboardTab .pending-po-dashboard-card .pending-po-metric strong{
+    font-size:11.8px!important;
+  }
+}
+@media(max-width:420px){
+  #dashboardTab .chart-card-animated > .pending-po-dashboard-card .pending-po-metrics{
+    grid-template-columns:1fr!important;
+  }
+}
+
+/* Compact Pending PO card - readability refinement */
+#dashboardTab .chart-card-animated > .pending-po-dashboard-card .pending-po-metric-copy span{
+  font-size:8.5px!important;
+  font-weight:950!important;
+  color:#243447!important;
+}
+#dashboardTab .chart-card-animated > .pending-po-dashboard-card .pending-po-metric-copy small{
+  font-size:7.3px!important;
+  font-weight:750!important;
+  color:#667788!important;
+}
+#dashboardTab .chart-card-animated > .pending-po-dashboard-card .pending-po-metric strong{
+  font-size:12.8px!important;
+  font-weight:950!important;
+  letter-spacing:-.15px;
+}
+#dashboardTab .chart-card-animated > .pending-po-dashboard-card .pending-po-metric{
+  min-height:48px!important;
+  padding:7px 8px!important;
 }
