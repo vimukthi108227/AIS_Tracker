@@ -13,8 +13,6 @@ let shipmentStates = {};
 let activePackingMonth = null;
 let activePackingContainer = null;
 let shipmentDeadline = null;
-let aisDbReadCache = {};
-let aisDbReadWarnings = {};
 
 const cleanLen = (val) => String(val || '').replace(/ mm/gi, '').trim();
 
@@ -175,12 +173,56 @@ function startLiveClock() {
 
 /* --- EXCEL EXPORT FUNCTIONS --- */
 function exportTableToExcel(dataArray, filename, sheetName) {
-    if(!dataArray || dataArray.length === 0) { showToast("No data to export!", "warning"); return; }
-    if (typeof XLSX === 'undefined') { showToast("Excel library not loaded! Please check internet connection.", "error"); return; }
-    const ws = XLSX.utils.json_to_sheet(dataArray); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, sheetName); XLSX.writeFile(wb, `${filename}.xlsx`);
+    if(!dataArray || dataArray.length === 0) {
+        showToast("No data to export!", "warning");
+        return;
+    }
+
+    // Preferred: real XLSX when SheetJS is available.
+    if (typeof XLSX !== 'undefined' && XLSX.utils && XLSX.writeFile) {
+        try {
+            const ws = XLSX.utils.json_to_sheet(dataArray);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
+            XLSX.writeFile(wb, `${filename}.xlsx`);
+            showToast("Excel downloaded successfully.", "success");
+            return;
+        } catch (e) {
+            console.warn("XLSX export failed; using Excel-compatible fallback.", e);
+        }
+    }
+
+    // Offline fallback: Excel-compatible HTML .xls.
+    const columns = Object.keys(dataArray[0] || {});
+    const esc = (v) => String(v ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const headerHtml = columns.map(c => `<th>${esc(c)}</th>`).join('');
+    const bodyHtml = dataArray.map(row =>
+        `<tr>${columns.map(c => `<td>${esc(row[c])}</td>`).join('')}</tr>`
+    ).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <style>body{font-family:Arial,sans-serif;font-size:10pt}
+    table{border-collapse:collapse}th,td{border:1px solid #999;padding:5px 8px;white-space:nowrap}
+    th{font-weight:bold;background:#d9eaf7}</style></head><body>
+    <table><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
+    </body></html>`;
+
+    const blob = new Blob([html], {type:'application/vnd.ms-excel;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}.xls`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast("Excel downloaded successfully.", "success");
 }
-
-
 /* --- PDF EXPORT FUNCTIONS (AIS Tracker v2.0) --- */
 function exportDataToPdf(dataArray, filename, title, subtitle='') {
     if(!dataArray || dataArray.length === 0) { showToast('No data to export!', 'warning'); return; }
@@ -215,8 +257,28 @@ window.exportDashboardPdf=function(){
 };
 window.exportStockPdf=window.exportDashboardPdf;
 window.exportPoPdf=function(){
-    const data=poList.map(po=>({'PO Date':po.date,'PO Number':po.poNumber,'Profile':po.profile,'Length (mm)':po.length,'Required Qty':po.orderQty}));
-    exportDataToPdf(data,'AIS_Production_Orders','AIS Tracker - Production Orders','Production Orders');
+    const data=poList.map(po=>{
+        const requiredQty = Math.max(0, Number(po.orderQty)||0);
+        const shippedQty = shipmentList
+          .filter(s => String(s.poNumber||'').trim()===String(po.poNumber||'').trim()
+            && String(s.profile||'').trim()===String(po.profile||'').trim()
+            && cleanLen(s.length)===cleanLen(po.length))
+          .reduce((sum,s)=>sum+(Number(s.shippedQty)||0),0);
+        const remainingQty = Math.max(0, requiredQty-shippedQty);
+        return {
+          'PO Date':po.date,
+          'PO Number':po.poNumber,
+          'Profile':po.profile,
+          'Item Code':(typeof resolveMasterItemCode==='function'?resolveMasterItemCode(po.profile,po.length,po.itemCode):po.itemCode)||'-',
+          'Length (mm)':po.length,
+          'Unit Wt':(()=>{const m=masterData.find(x=>String(x.profile||'').trim()===String(po.profile||'').trim() && cleanLen(x.length)===cleanLen(po.length)); return m?Number(m.unitWeight||0).toFixed(4):'-';})(),
+          'Required Qty':requiredQty,
+          'Shipped Qty':shippedQty,
+          'Remaining Qty':remainingQty,
+          'Status':remainingQty>0?'Pending':'Complete'
+        };
+    });
+    exportDataToPdf(data,'AIS_Production_Orders','AIS Tracker - Production Orders','Complete Production Order Balance');
 };
 window.exportCardboardPdf=function(){
     const data=cardboardStockList.map(c=>({'Date':c.date,'Transaction Type':c.type,'Incoming':c.incoming,'Consumed':c.used}));
@@ -244,7 +306,34 @@ window.exportRecoverPdf=function(){
 
 window.exportDashboardExcel = function() { const data = masterData.map(item => ({ "Profile": item.profile, "Item Code": item.itemCode, "Length (mm)": item.length, "Unit Wt": item.unitWeight, "Cut Qty": item.cutQty, "Punch Qty": item.punchQty, "Wrap Qty": item.wrapQty, "Box Qty": item.boxQty, "Crate Qty": item.crateQty, "Total Stock (Pcs)": (item.cutQty||0) + (item.punchQty||0) + (item.wrapQty||0) + (item.boxQty||0) + (item.crateQty||0) })); exportTableToExcel(data, "AIS_Dashboard_Stock", "Stock Summary"); };
 window.exportStockExcel = window.exportDashboardExcel;
-window.exportPoExcel = function() { const data = poList.map(po => ({ "PO Date": po.date, "PO Number": po.poNumber, "Profile": po.profile, "Item Code": (typeof resolveMasterItemCode==='function'?resolveMasterItemCode(po.profile,po.length,po.itemCode):po.itemCode)||'-', "Length (mm)": po.length, "Required Qty": po.orderQty })); exportTableToExcel(data, "AIS_Production_Orders", "Orders"); };
+window.exportPoExcel = function() {
+    const data = poList.map(po => {
+        const requiredQty = Math.max(0, Number(po.orderQty)||0);
+        const shippedQty = shipmentList
+          .filter(s => String(s.poNumber||'').trim()===String(po.poNumber||'').trim()
+            && String(s.profile||'').trim()===String(po.profile||'').trim()
+            && cleanLen(s.length)===cleanLen(po.length))
+          .reduce((sum,s)=>sum+(Number(s.shippedQty)||0),0);
+        const remainingQty = Math.max(0, requiredQty-shippedQty);
+        const m = masterData.find(x =>
+          String(x.profile||'').trim()===String(po.profile||'').trim() &&
+          cleanLen(x.length)===cleanLen(po.length)
+        );
+        return {
+          "PO Date":po.date,
+          "PO Number":po.poNumber,
+          "Profile":po.profile,
+          "Item Code":(typeof resolveMasterItemCode==='function'?resolveMasterItemCode(po.profile,po.length,po.itemCode):po.itemCode)||'-',
+          "Length (mm)":po.length,
+          "Unit Wt":m?Number(m.unitWeight||0).toFixed(4):'-',
+          "Required Qty":requiredQty,
+          "Shipped Qty":shippedQty,
+          "Remaining Qty":remainingQty,
+          "Status":remainingQty>0?"Pending":"Complete"
+        };
+    });
+    exportTableToExcel(data, "AIS_Production_Orders", "Production Orders");
+};
 window.exportCardboardExcel = function() { const data = cardboardStockList.map(c => ({ "Date": c.date, "Transaction Type": c.type, "Incoming": c.incoming, "Consumed": c.used })); exportTableToExcel(data, "AIS_Cardboard_History", "Cardboard"); };
 window.exportShipmentsExcel = function() { const data = shipmentList.map(s => ({ "Shipment Date": s.date, "PO Number": s.poNumber, "Profile": s.profile, "Length (mm)": s.length, "Container No": s.container, "Shipped Qty": s.shippedQty, "Remaining": s.remainingBalance })); exportTableToExcel(data, "AIS_Shipment_History", "Shipments"); };
 window.exportHistoryExcel = function() { const data = historyLogs.map(h => ({ "Date": h.date, "Time": h.timestamp, "Shift": h.shift, "Profile": h.profile, "Length (mm)": h.length, "Cut Qty": h.cutQty, "Punch Qty": h.punchQty, "Wrap Qty": h.wrapQty, "Box Qty": h.boxQty, "Crate Qty": h.crateQty })); exportTableToExcel(data, "AIS_Production_History", "History"); };
@@ -494,18 +583,7 @@ async function loadDataFromSupabase(isSilent = false) {
       }
     };
 
-    const safeFetchOptional = async (table, options={}) => {
-      try {
-        const rows = await safeFetch(table, options, true);
-        aisDbReadCache[table] = rows;
-        delete aisDbReadWarnings[table];
-        return rows;
-      } catch(e) {
-        console.warn(`Optional DB table unavailable: ${table}`, e);
-        aisDbReadWarnings[table] = e?.message || 'Database read failed';
-        return Array.isArray(aisDbReadCache[table]) ? aisDbReadCache[table] : [];
-      }
-    };
+    const safeFetchOptional = async (table, options={}) => { try { return await safeFetch(table, options, true); } catch(e) { console.warn(`Optional DB table unavailable: ${table}`, e); return []; } };
     const results = await Promise.all([
         safeFetch('master_catalog'),
         safeFetchOptional('production_orders', { order: {col: 'id', asc: false} }),
@@ -863,10 +941,8 @@ async function saveRejectEntry() {
     if(!matched) return showToast('Selected profile/length is not in Master Catalog.','error');
     const wt=parseFloat((pcs*(matched.unitWeight||0)).toFixed(2));
     const punchStage=String(stg).toLowerCase().includes('punch'), wrapStage=String(stg).toLowerCase().includes('wrap');
-    if(punchStage && pcs>(Number(matched.cutQty)||0)) return showToast(`Insufficient Cut Stock for Reject. Available: ${Number(matched.cutQty)||0} Pcs.`, 'error');
-    if(wrapStage && pcs>(Number(matched.punchQty)||0)) return showToast(`Insufficient Punch Stock for Reject. Available: ${Number(matched.punchQty)||0} Pcs.`, 'error');
-    const nextCut=(Number(matched.cutQty)||0)-(punchStage?pcs:0);
-    const nextPunch=(Number(matched.punchQty)||0)-(wrapStage?pcs:0);
+    const nextCut=Math.max(0,(matched.cutQty||0)-(punchStage?pcs:0));
+    const nextPunch=Math.max(0,(matched.punchQty||0)-(wrapStage?pcs:0));
     const entry={reject_date:d,shift:sh,team:tm,location:loc,stage:stg,profile:p,item_code:ic,length:l,pcs,weight:wt};
     let stockChanged=false;
     try {
@@ -1197,7 +1273,7 @@ function dashboardChartOptions(textColor, showLegend = true) {
         callbacks: {
           label: function(context) {
             const value = Number(context.raw || 0);
-            return ` ${context.label || ''}: ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+            return ` ${context.label || ''}: ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} kg`;
           }
         }
       }
@@ -1339,56 +1415,83 @@ function dashboardQty(value) {
   const n = Number(String(value ?? 0).replace(/,/g, '').trim());
   return Number.isFinite(n) ? Math.max(0, n) : 0;
 }
-function dashboardKey(value) {
-  return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
-}
+
 function getDashboardCatalogItemForPo(po) {
-  const profile = dashboardKey(po?.profile);
-  const itemCode = dashboardKey(po?.itemCode);
+  const profile = String(po?.profile ?? '').trim();
+  const itemCode = String(po?.itemCode ?? '').trim();
   const length = cleanLen(po?.length);
   if (!profile || !length) return null;
+
   if (itemCode) {
     const exact = masterData.find(m =>
-      dashboardKey(m.profile) === profile &&
-      dashboardKey(m.itemCode) === itemCode &&
+      String(m.profile ?? '').trim() === profile &&
+      String(m.itemCode ?? '').trim() === itemCode &&
       cleanLen(m.length) === length
     );
     if (exact) return exact;
   }
+
   return masterData.find(m =>
-    dashboardKey(m.profile) === profile && cleanLen(m.length) === length
+    String(m.profile ?? '').trim() === profile &&
+    cleanLen(m.length) === length
   ) || null;
 }
+
 function calculateAllPendingProductionOrderDashboard() {
-  const result = { totalPendingWt: 0, completeWt: 0, processingWt: 0, stillPendingWt: 0, pendingQty: 0, lineCount: 0, unresolvedLines: 0 };
+  const result = {
+    totalPendingWt: 0,
+    completeWt: 0,
+    processingWt: 0,
+    stillPendingWt: 0,
+    pendingQty: 0,
+    lineCount: 0
+  };
+
   if (!Array.isArray(poList) || !Array.isArray(masterData)) return result;
 
+  // Shipments are matched using the same PO/Profile/Length identity already
+  // used elsewhere in AIS Tracker. This keeps this dashboard card consistent
+  // with the Production Orders / Shipment balance logic.
   const shippedByLine = new Map();
-  (shipmentList || []).forEach(sh => {
-    const key = `${dashboardKey(sh?.poNumber)}_${dashboardKey(sh?.profile)}_${cleanLen(sh?.length)}`;
-    const qty = dashboardQty(sh?.shippedQty);
+  (shipmentList || []).forEach(s => {
+    const key = `${String(s?.poNumber ?? '').trim()}_${String(s?.profile ?? '').trim()}_${cleanLen(s?.length)}`;
+    const qty = dashboardQty(s?.shippedQty);
     if (qty > 0) shippedByLine.set(key, (shippedByLine.get(key) || 0) + qty);
   });
 
+  // Aggregate outstanding demand by the canonical Master Catalog key.
+  // This prevents current stock from being counted repeatedly when multiple
+  // pending PO lines require the same profile/length.
   const demandByKey = new Map();
+
   (poList || []).forEach(po => {
     const orderQty = dashboardQty(po?.orderQty);
     if (orderQty <= 0) return;
+
     const profile = String(po?.profile ?? '').trim();
     const length = cleanLen(po?.length);
     const poNumber = String(po?.poNumber ?? '').trim();
     if (!profile || !length) return;
 
-    const shipKey = `${dashboardKey(poNumber)}_${dashboardKey(profile)}_${length}`;
+    const shipKey = `${poNumber}_${profile}_${length}`;
     const shippedQty = Math.min(orderQty, shippedByLine.get(shipKey) || 0);
     const remainingQty = Math.max(0, orderQty - shippedQty);
     if (remainingQty <= 0) return;
 
     const catalog = getDashboardCatalogItemForPo(po);
-    if (!catalog) { result.unresolvedLines += 1; return; }
+    if (!catalog) return;
+
     const itemCode = String(catalog.itemCode ?? po?.itemCode ?? '').trim();
-    const key = `${dashboardKey(profile)}_${dashboardKey(itemCode)}_${length}`;
-    const existing = demandByKey.get(key) || { profile, itemCode, length, remainingQty: 0, unitWeight: dashboardQty(catalog.unitWeight), master: catalog };
+    const key = `${profile}_${itemCode}_${length}`;
+    const existing = demandByKey.get(key) || {
+      profile,
+      itemCode,
+      length,
+      remainingQty: 0,
+      unitWeight: dashboardQty(catalog.unitWeight),
+      master: catalog
+    };
+
     existing.remainingQty += remainingQty;
     demandByKey.set(key, existing);
   });
@@ -1397,12 +1500,24 @@ function calculateAllPendingProductionOrderDashboard() {
     const demandQty = line.remainingQty;
     const m = line.master;
     const unitWeight = dashboardQty(line.unitWeight);
-    const completeStockQty = dashboardQty(m.wrapQty) + dashboardQty(m.boxQty) + dashboardQty(m.crateQty);
-    const processingStockQty = dashboardQty(m.cutQty) + dashboardQty(m.punchQty);
+
+    // Current stock is read-only here. Nothing is deducted or changed.
+    const completeStockQty =
+      dashboardQty(m.wrapQty) +
+      dashboardQty(m.boxQty) +
+      dashboardQty(m.crateQty);
+
+    const processingStockQty =
+      dashboardQty(m.cutQty) +
+      dashboardQty(m.punchQty);
+
+    // Allocate higher-stage stock first because those pieces can satisfy the
+    // pending PO immediately. Then allocate Cut + Punch as waiting/processing.
     const completeQty = Math.min(demandQty, completeStockQty);
     const afterComplete = Math.max(0, demandQty - completeQty);
     const processingQty = Math.min(afterComplete, processingStockQty);
     const stillPendingQty = Math.max(0, afterComplete - processingQty);
+
     result.pendingQty += demandQty;
     result.lineCount += 1;
     result.totalPendingWt += demandQty * unitWeight;
@@ -1410,6 +1525,7 @@ function calculateAllPendingProductionOrderDashboard() {
     result.processingWt += processingQty * unitWeight;
     result.stillPendingWt += stillPendingQty * unitWeight;
   });
+
   return result;
 }
 
@@ -1440,6 +1556,7 @@ function renderDashboard() {
   renderPendingProductionOrderDashboardCard();
   let totalStockPcs = 0, totalStockWt = 0;
   let totalCut = 0, totalPunch = 0, totalWrap = 0, totalBox = 0, totalCrate = 0;
+  let totalCutWt = 0, totalPunchWt = 0, totalWrapWt = 0, totalBoxWt = 0, totalCrateWt = 0;
   
   let masterMap = new Map();
   masterData.forEach(m => {
@@ -1448,22 +1565,31 @@ function renderDashboard() {
       totalStockPcs += pcs; 
       totalStockWt += pcs * (m.unitWeight||0);
       totalCut += m.cutQty||0; totalPunch += m.punchQty||0; totalWrap += m.wrapQty||0; totalBox += m.boxQty||0; totalCrate += m.crateQty||0;
+      const uw = Number(m.unitWeight)||0;
+      totalCutWt += (Number(m.cutQty)||0) * uw;
+      totalPunchWt += (Number(m.punchQty)||0) * uw;
+      totalWrapWt += (Number(m.wrapQty)||0) * uw;
+      totalBoxWt += (Number(m.boxQty)||0) * uw;
+      totalCrateWt += (Number(m.crateQty)||0) * uw;
   });
   
   if(document.getElementById('kpiTotalStockPcs')) document.getElementById('kpiTotalStockPcs').textContent = `${totalStockPcs.toLocaleString()} Pcs`; 
   if(document.getElementById('kpiTotalStockWt')) document.getElementById('kpiTotalStockWt').textContent = `${totalStockWt.toFixed(2)} kg`;
 
-  // Last day with wrapping output: do not depend on Supabase/history array order.
-  // The KPI is specifically the latest day that has a Daily Production WRAP entry.
-  const latestWrapDateMs = (historyLogs || []).reduce((max, h) => {
-      const wrapPcs = Number(h?.wrapQty) || 0;
-      if (wrapPcs <= 0) return max;
-      const ms = Date.parse(String(h?.date || ''));
-      return Number.isFinite(ms) && ms > max ? ms : max;
-  }, -Infinity);
-  let latestDate = Number.isFinite(latestWrapDateMs)
-      ? new Date(latestWrapDateMs).toISOString().slice(0,10)
-      : '-';
+  // Last Day Output = the most recent date on which Wrap Qty was actually entered.
+  // Do not use historyLogs[0], because the latest log can be a Cut/Punch/Box/Crate
+  // entry with zero Wrap Qty.
+  let latestDate = '-';
+  let lastWrapOutputKey = '';
+  historyLogs.forEach(h => {
+      const wrapPcs = Number(h.wrapQty) || 0;
+      const dStr = String(h.date || '').trim();
+      if (wrapPcs > 0 && /^\d{4}-\d{2}-\d{2}$/.test(dStr) && dStr > lastWrapOutputKey) {
+          lastWrapOutputKey = dStr;
+      }
+  });
+  latestDate = lastWrapOutputKey || (historyLogs.length > 0 ? String(historyLogs[0].date || '-') : '-');
+
   let todayPcs = 0, todayWt = 0;
 
   const now = new Date(); ensureDashboardMonthControl(); const selectedMonthKey = dashboardSelectedMonth || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`; const [selY, selM] = selectedMonthKey.split('-').map(Number); const cm = (selM||1)-1; const cy = selY || now.getFullYear();
@@ -1490,7 +1616,7 @@ function renderDashboard() {
       if(d.getMonth()===cm && d.getFullYear()===cy) { mProdWrapWt += wrapPcs * uw; }
   });
 
-  if(document.getElementById('latestOutputDate')) document.getElementById('latestOutputDate').textContent = latestDate; if(document.getElementById('dashboardOutputLabel')) document.getElementById('dashboardOutputLabel').textContent = 'Last Day Output';
+  if(document.getElementById('latestOutputDate')) document.getElementById('latestOutputDate').textContent = latestDate; if(document.getElementById('dashboardOutputLabel')) document.getElementById('dashboardOutputLabel').textContent = selectedMonthKey === `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}` ? 'Latest Output' : 'Month-End Output';
   if(document.getElementById('kpiTodayOutputPcs')) document.getElementById('kpiTodayOutputPcs').textContent = `${todayPcs.toLocaleString()} Pcs (Wrap)`;
   if(document.getElementById('kpiTodayOutputWt')) {
       document.getElementById('kpiTodayOutputWt').innerHTML = `${todayWt.toFixed(2)} kg <div style="font-size:11px; color:#059669; margin-top:4px; padding-top:4px; border-top:1px dashed #a7f3d0;"><i class="fa-solid fa-calendar-check"></i> Month Wrap Total: <b style="font-size:13px;">${mProdWrapWt.toFixed(2)} kg</b></div>`;
@@ -1904,52 +2030,7 @@ function renderDashboard() {
   try {
       if(typeof Chart !== 'undefined') {
           const textColor = isDarkMode ? '#f8fafc' : '#0f172a'; 
-          if(document.getElementById('masterWeightChart')) {
-              safeChartDestroy(masterChartInstance, 'masterWeightChart');
-              // Factory Stock Breakdown is a weight view. Convert each live stage
-              // quantity to kg using the Master Catalog unit weight.
-              let stockWeightData = [0, 0, 0, 0, 0];
-              masterData.forEach(m => {
-                  const uw = Number(m.unitWeight) || 0;
-                  stockWeightData[0] += (Number(m.cutQty) || 0) * uw;
-                  stockWeightData[1] += (Number(m.punchQty) || 0) * uw;
-                  stockWeightData[2] += (Number(m.wrapQty) || 0) * uw;
-                  stockWeightData[3] += (Number(m.boxQty) || 0) * uw;
-                  stockWeightData[4] += (Number(m.crateQty) || 0) * uw;
-              });
-              stockWeightData = stockWeightData.map(v => Number(v.toFixed(2)));
-              const stockHasData = stockWeightData.some(v => v > 0);
-              const stockChartData = stockHasData ? stockWeightData : [1];
-              masterChartInstance = new Chart(document.getElementById('masterWeightChart'), {
-                  type: 'doughnut',
-                  data: {
-                      labels: stockHasData ? ['Cut', 'Punch', 'Wrap', 'Box', 'Crate'] : ['No Stock'],
-                      datasets: [{
-                          hoverOffset: 10,
-                          data: stockChartData,
-                          backgroundColor: stockHasData ? ['#0ea5e9', '#ea580c', '#d946ef', '#10b981', '#f59e0b'] : ['#e2e8f0'],
-                          borderWidth: isDarkMode ? 3 : 2,
-                          borderColor: isDarkMode ? '#1e293b' : '#fff'
-                      }]
-                  },
-                  options: {
-                      ...dashboardChartOptions(textColor, stockHasData),
-                      cutout: '65%',
-                      plugins: {
-                          ...dashboardChartOptions(textColor, stockHasData).plugins,
-                          tooltip: {
-                              enabled: true,
-                              callbacks: {
-                                  label: function(context) {
-                                      const value = Number(context.raw || 0);
-                                      return ` ${context.label || ''}: ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
-                                  }
-                              }
-                          }
-                      }
-                  }
-              });
-          }
+          if(document.getElementById('masterWeightChart')) { safeChartDestroy(masterChartInstance, 'masterWeightChart'); let mData = [ Number(totalCutWt.toFixed(2)), Number(totalPunchWt.toFixed(2)), Number(totalWrapWt.toFixed(2)), Number(totalBoxWt.toFixed(2)), Number(totalCrateWt.toFixed(2)) ]; if (mData.every(v => v === 0)) mData = [1]; masterChartInstance = new Chart(document.getElementById('masterWeightChart'), { type: 'doughnut', data: { labels: mData.length === 1 ? ['No Stock'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Crate'], datasets: [{ hoverOffset: 10, data: mData, backgroundColor: mData.length === 1 ? ['#e2e8f0'] : ['#0ea5e9', '#ea580c', '#d946ef', '#10b981', '#f59e0b'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, mData.length > 1), cutout: '65%' } }); }
           
           if(document.getElementById('overallPoChart')) { 
               safeChartDestroy(overallPoChartInstance, 'overallPoChart'); 
@@ -2486,49 +2567,35 @@ async function submitDailyEntry() {
     if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return;
     const dateVal=document.getElementById('entryDate').value, shiftVal=document.getElementById('shift').value,
       profileVal=document.getElementById('selectProfile').value, itemCodeVal=document.getElementById('selectItemCode').value,
-      lengthVal=document.getElementById('selectLength').value, cutQty=Math.max(0,parseInt(document.getElementById('cutQty').value)||0),
-      punchQty=Math.max(0,parseInt(document.getElementById('punchQty').value)||0), wrapQty=Math.max(0,parseInt(document.getElementById('wrapQty').value)||0),
-      enteredBoxes=Math.max(0,parseInt(document.getElementById('boxQty').value)||0), crateQty=Math.max(0,parseInt(document.getElementById('crateQty').value)||0);
+      lengthVal=document.getElementById('selectLength').value, cutQty=parseInt(document.getElementById('cutQty').value)||0,
+      punchQty=parseInt(document.getElementById('punchQty').value)||0, wrapQty=parseInt(document.getElementById('wrapQty').value)||0,
+      enteredBoxes=Math.max(0,parseInt(document.getElementById('boxQty').value)||0), crateQty=parseInt(document.getElementById('crateQty').value)||0;
     const availableCardboard=Math.max(0,Number(getAvailableCardboard(profileVal,itemCodeVal,lengthVal))||0);
+    // Do not block production when cardboard is insufficient. The production Box Qty is
+    // recorded as entered, while actual cardboard stock consumption is capped at what is available.
     if(!dateVal||!profileVal||!itemCodeVal||!lengthVal) return showToast('Please select correctly.','warning');
     const item=masterData.find(m=>String(m.profile).trim()===profileVal&&m.itemCode===itemCodeVal&&cleanLen(m.length)===cleanLen(lengthVal));
     if(!item) return showToast('Selected catalog item was not found.','error');
 
     const previous={cutQty:Number(item.cutQty)||0,punchQty:Number(item.punchQty)||0,wrapQty:Number(item.wrapQty)||0,boxQty:Number(item.boxQty)||0,crateQty:Number(item.crateQty)||0};
     let next={...previous};
-    const boxPcs=enteredBoxes*(Number(item.boxCapacity)||100);
-
-    // All transfers are validated before any database write. A single entry may
-    // still use its newly-entered Cut Qty to feed Punch/Wrap in the same save.
-    next.cutQty += cutQty;
-    if(punchQty>0){
-      if(punchQty>next.cutQty) return showToast(`Insufficient Cut Stock for Punch. Available: ${next.cutQty} Pcs.`, 'error');
-      next.cutQty-=punchQty; next.punchQty+=punchQty;
-    }
+    const boxPcs=enteredBoxes*(item.boxCapacity||100);
+    next.cutQty+=cutQty;
+    if(punchQty>0){ next.cutQty=Math.max(0,next.cutQty-punchQty); next.punchQty+=punchQty; }
     if(wrapQty>0){
-      if(isPunchBypassed(profileVal,lengthVal)){
-        if(wrapQty>next.cutQty) return showToast(`Insufficient Cut Stock for Wrapping. Available: ${next.cutQty} Pcs.`, 'error');
-        next.cutQty-=wrapQty;
-      } else {
-        const availableForWrap=next.punchQty+next.cutQty;
-        if(wrapQty>availableForWrap) return showToast(`Insufficient Punch + Cut Stock for Wrapping. Available: ${availableForWrap} Pcs.`, 'error');
-        const fromPunch=Math.min(next.punchQty,wrapQty), rem=wrapQty-fromPunch;
-        next.punchQty-=fromPunch; next.cutQty-=rem;
-      }
+      if(isPunchBypassed(profileVal,lengthVal)||next.punchQty<=0) next.cutQty=Math.max(0,next.cutQty-wrapQty);
+      else if(next.punchQty>=wrapQty) next.punchQty-=wrapQty;
+      else { const rem=wrapQty-next.punchQty; next.punchQty=0; next.cutQty=Math.max(0,next.cutQty-rem); }
       next.wrapQty+=wrapQty;
     }
-    if(boxPcs>0){
-      if(boxPcs>next.wrapQty) return showToast(`Insufficient Wrapping Stock for Box. Available: ${next.wrapQty} Pcs.`, 'error');
-      next.wrapQty-=boxPcs; next.boxQty+=boxPcs;
-    }
-    if(crateQty>0){
-      if(crateQty>next.boxQty) return showToast(`Insufficient Box Stock for Crate. Available: ${next.boxQty} Pcs.`, 'error');
-      next.boxQty-=crateQty; next.crateQty+=crateQty;
-    }
+    if(boxPcs>0){ next.wrapQty=Math.max(0,next.wrapQty-boxPcs); next.boxQty+=boxPcs; }
+    if(crateQty>0){ next.boxQty=Math.max(0,next.boxQty-crateQty); next.crateQty+=crateQty; }
 
     const newLog={log_date:dateVal,shift:shiftVal,profile:profileVal,length:cleanLen(lengthVal),cut_qty:cutQty,punch_qty:punchQty,wrap_qty:wrapQty,box_qty:boxPcs,crate_qty:crateQty,log_time:new Date().toLocaleTimeString()};
     let stockUpdated=false, insertedLog=null, cardboardDeducted=null;
     try {
+      // Reserve only the cardboard that actually exists. If production needs more boxes,
+      // the remaining production quantity is still recorded, but cardboard stock bottoms at 0.
       const cardboardToDeduct=Math.min(enteredBoxes,availableCardboard);
       if(cardboardToDeduct>0) cardboardDeducted=await deductCardboardBoxesForProduction(profileVal,itemCodeVal,lengthVal,cardboardToDeduct);
       if(item.db_id){
@@ -2538,8 +2605,10 @@ async function submitDailyEntry() {
       insertedLog=await dbInsert('history_logs',newLog,'Production history save failed');
     } catch(err) {
       if(stockUpdated&&item.db_id){ try{ await dbUpdate('master_catalog',previousToDb(previous),item.db_id,'Production rollback failed'); }catch(rb){ console.error(rb); } }
+      // If later production save failed, reverse the cardboard transaction we just made.
       if(cardboardDeducted){
         try {
+          // The insert helper intentionally does not request SELECT/RETURNING; remove the most recent matching local transaction if possible.
           const idx=cardboardStockList.indexOf(cardboardDeducted); if(idx>=0){cardboardStockList.splice(idx,1);saveCardboardLocally();}
           const q=await supabaseClient.from('cardboard_stock').delete().eq('cb_date',cardboardDeducted.date).eq('cb_type',cardboardDeducted.type).eq('used',cardboardToDeduct);
           if(q.error) console.warn('Cardboard rollback warning:',q.error);
@@ -3386,8 +3455,9 @@ async function savePackingListEntry(startNewCrate=false){
   if(alreadyPacked+pcsQty>Number(po.orderQty||0))return showToast(`Packing quantity exceeds PO quantity. Remaining: ${Math.max(0,Number(po.orderQty||0)-alreadyPacked)} Pcs.`,'error');
   const netWeight=parseFloat((pcsQty*(matched.unitWeight||0)).toFixed(2)),filterMonth=activePackingMonth||new Date().toLocaleString('en-US',{month:'long'});
   const newPl={pl_number:plNum,po_number:poNum,shipment_month:filterMonth,container,crate_no:crateNo,profile,item_code:itemCode,length,box_qty:1,pcs_qty:pcsQty,net_weight:netWeight,gross_weight:grossWeight,packing_date:plDate};
-  const inserted=await dbInsert('packing_list',newPl,'Packing List save failed');
-  packingLists.unshift({id:inserted.id||-Date.now(),plNumber:plNum,poNumber:poNum,month:filterMonth,container,crateNo,profile,itemCode,length,boxQty:1,pcsQty,netWeight,grossWeight,date:plDate});
+  const {data:inserted,error}=await supabaseClient.from('packing_list').insert([newPl]).select().single();
+  if(error)throw new Error(`Packing List save failed: ${error.message}`);
+  packingLists.unshift({id:inserted?.id||-Date.now(),plNumber:plNum,poNumber:poNum,month:filterMonth,container,crateNo,profile,itemCode,length,boxQty:1,pcsQty,netWeight,grossWeight,date:plDate});
   showToast(`${profile} added to ${crateNo}. You can add another profile to the same crate.`,'success');
 
   // Keep the crate/header information so multiple profiles can be entered into one crate.
@@ -3546,59 +3616,153 @@ function renderMasterCatalog() {
 
 function openMasterEditModal(index) { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editMasterIndex').value = index; document.getElementById('editMasterProfile').value = item.profile; document.getElementById('editMasterItemCode').value = item.itemCode || ''; document.getElementById('editMasterMaterial').value = item.material || ''; document.getElementById('editMasterLength').value = item.length; document.getElementById('editMasterExLength').value = item.exLength || ''; document.getElementById('editMasterUnitWeight').value = item.unitWeight; document.getElementById('editMasterBoxCapacity').value = item.boxCapacity || 100; document.getElementById('masterEditModal').style.display = 'flex'; }
 function closeMasterEditModal() { document.getElementById('masterEditModal').style.display = 'none'; }
-async function saveMasterCatalogEdit() {
-  if(isAppBusy) return; isAppBusy=true;
-  try {
-    const index=parseInt(document.getElementById('editMasterIndex').value);
-    if(isNaN(index)) return;
-    const item=masterData[index];
-    if(!item) return;
-    const profile=document.getElementById('editMasterProfile').value.trim();
-    const itemCode=document.getElementById('editMasterItemCode').value.trim();
-    const material=document.getElementById('editMasterMaterial').value.trim();
-    const length=document.getElementById('editMasterLength').value.trim();
-    const exLength=document.getElementById('editMasterExLength').value.trim();
-    const uw=Math.max(0,parseFloat(document.getElementById('editMasterUnitWeight').value)||0);
-    const cap=Math.max(1,parseInt(document.getElementById('editMasterBoxCapacity').value)||100);
-    if(!profile||!itemCode||!length) return showToast('Profile, Item Code and Length are required.','warning');
-    const values={profile,item_code:itemCode,material,length,ex_length:exLength,unit_weight:uw,box_capacity:cap};
-    if(item.db_id){
-      await dbUpdate('master_catalog',values,item.db_id,'Master catalog save failed');
-      Object.assign(item,{profile,itemCode,material,length,exLength,unitWeight:uw,boxCapacity:cap});
-      saveMasterExtrasLocally(); closeMasterEditModal(); showToast('Catalog updated successfully','success');
-    } else {
-      const row={...values,cut_qty:item.cutQty||0,punch_qty:item.punchQty||0,wrap_qty:item.wrapQty||0,box_qty:item.boxQty||0,crate_qty:item.crateQty||0};
-      await dbInsert('master_catalog',row,'Master catalog save failed');
-      closeMasterEditModal(); showToast('Catalog saved. Refreshing database ID...','success');
-      await loadDataFromSupabase(true);
-      return;
+async function saveMasterCatalogEdit() { if(isAppBusy) return; isAppBusy=true; try { const index = parseInt(document.getElementById('editMasterIndex').value); const profile = document.getElementById('editMasterProfile').value.trim(); const itemCode = document.getElementById('editMasterItemCode').value.trim(); const material = document.getElementById('editMasterMaterial').value.trim(); const length = document.getElementById('editMasterLength').value.trim(); const exLength = document.getElementById('editMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('editMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('editMasterBoxCapacity').value) || 100; if (isNaN(index)) return; const item = masterData[index]; item.profile = profile; item.itemCode = itemCode; item.material = material; item.length = length; item.exLength = exLength; item.unitWeight = uw; item.boxCapacity = cap; if (item.db_id) { try { await supabaseClient.from('master_catalog').update({ profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap }).eq('id', item.db_id); } catch(e) {} } else { try { const r=await supabaseClient.from('master_catalog').insert([{ profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: item.cutQty, punch_qty: item.punchQty, wrap_qty: item.wrapQty, box_qty: item.boxQty, crate_qty: item.crateQty }]); if(r.error) throw r.error; } catch(e) { showToast(dbErrorMessage(e,'Master catalog save failed'),'error'); return; } } saveMasterExtrasLocally(); closeMasterEditModal(); showToast("Catalog updated successfully", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderProfileSummaryTable(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
+function deleteMasterItem(index) { if (currentUserRole !== 'Admin') return; showConfirm("Delete catalog item?", async () => { const item = masterData[index]; if (item && item.db_id) await supabaseClient.from('master_catalog').delete().eq('id', item.db_id); masterData.splice(index, 1); saveMasterExtrasLocally(); renderMasterCatalog(); showToast("Catalog item deleted", "success"); }); }
+function openAddMasterModal() { if (currentUserRole !== 'Admin') return; document.getElementById('addMasterProfile').value = ''; document.getElementById('addMasterItemCode').value = ''; document.getElementById('addMasterMaterial').value = ''; document.getElementById('addMasterLength').value = ''; document.getElementById('addMasterExLength').value = ''; document.getElementById('addMasterUnitWeight').value = ''; document.getElementById('addMasterBoxCapacity').value = '100'; document.getElementById('addMasterModal').style.display = 'flex'; }
+function closeAddMasterModal() { document.getElementById('addMasterModal').style.display = 'none'; }
+async function saveNewMasterProfile() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const profile = document.getElementById('addMasterProfile').value.trim(); const itemCode = document.getElementById('addMasterItemCode').value.trim(); const material = document.getElementById('addMasterMaterial').value.trim(); const length = document.getElementById('addMasterLength').value.trim(); const exLength = document.getElementById('addMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('addMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('addMasterBoxCapacity').value) || 100; if (!profile || !itemCode || !length) { showToast("Fill all fields", "warning"); return; } const exists = masterData.find(m => String(m.profile).trim() === profile && cleanLen(m.length) === cleanLen(length) && m.itemCode === itemCode); if (exists) { showToast("Already exists!", "error"); return; } const newEntry = { profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0 }; const mapped = { db_id: Date.now(), profile: profile, itemCode: itemCode, material: material, length: length, exLength: exLength, unitWeight: uw, cutQty: 0, punchQty: 0, wrapQty: 0, boxQty: 0, crateQty: 0, boxCapacity: cap }; try { const r=await supabaseClient.from('master_catalog').insert([newEntry]); if(r.error) throw r.error; } catch (e) { showToast(dbErrorMessage(e,'Master catalog add failed'),'error'); return; } masterData.push(mapped); masterData.sort((a, b) => (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) || (parseFloat(a.length)||0) - (parseFloat(b.length)||0)); saveMasterExtrasLocally(); closeAddMasterModal(); showToast("Profile added!", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
+async function resetAllDataToZero() {
+    if (currentUserRole !== 'Admin') return showToast('Only Admin can reset current stock.', 'error');
+    if (isAppBusy) return;
+    showConfirm(
+        '<b>RESET CURRENT STOCK</b><br><br>This will set Cut, Punch, Wrap, Box and Crate stock quantities to <b>0</b> in the Master Catalog.<br><br><span style="color:#059669;font-weight:700">Production History, Packing Lists, POs, Shipments, Reject/Recover and Cardboard data will NOT be deleted.</span>',
+        async () => {
+            isAppBusy = true; stockResetInProgress = true;
+            const button=document.getElementById('resetAllBtn'), oldHtml=button?button.innerHTML:'';
+            try {
+                if(button){button.disabled=true;button.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Resetting...';}
+                const pageSize=1000, rows=[];
+                for(let from=0;;from+=pageSize){
+                    const {data,error}=await supabaseClient.from('master_catalog').select('id,profile,length,item_code,cut_qty,punch_qty,wrap_qty,box_qty,crate_qty').range(from,from+pageSize-1);
+                    if(error) throw new Error(`Could not read Master Catalog: ${error.message}`);
+                    const page=data||[]; rows.push(...page); if(page.length<pageSize) break;
+                }
+                const failures=[];
+                for(let i=0;i<rows.length;i+=25){
+                    const batch=rows.slice(i,i+25);
+                    const results=await Promise.all(batch.map(row=>supabaseClient.from('master_catalog').update({cut_qty:0,punch_qty:0,wrap_qty:0,box_qty:0,crate_qty:0}).eq('id',row.id).then(({error})=>({row,error}))));
+                    results.forEach(({row,error})=>{if(error)failures.push(`${row.profile}/${row.length}/${row.item_code}: ${error.message}`);});
+                }
+                if(failures.length) throw new Error(`${failures.length} stock row(s) could not be reset.`);
+                const verify=[];
+                for(let from=0;;from+=pageSize){
+                    const {data,error}=await supabaseClient.from('master_catalog').select('id,cut_qty,punch_qty,wrap_qty,box_qty,crate_qty').range(from,from+pageSize-1);
+                    if(error) throw new Error(`Reset verification failed: ${error.message}`);
+                    const page=data||[]; verify.push(...page); if(page.length<pageSize) break;
+                }
+                const nonZeroRows=verify.filter(r=>[r.cut_qty,r.punch_qty,r.wrap_qty,r.box_qty,r.crate_qty].some(v=>(Number(v)||0)!==0));
+                if(nonZeroRows.length) throw new Error(`${nonZeroRows.length} stock row(s) are still non-zero after reset verification.`);
+                masterData.forEach(item=>{item.cutQty=0;item.punchQty=0;item.wrapQty=0;item.boxQty=0;item.crateQty=0;});
+                renderDashboard();renderProfileSummaryTable();renderHistoryData();renderBalanceWorkTable();renderPackingListTable();
+                showToast(`Current stock reset successfully (${verify.length} catalog rows verified). History preserved.`,'success');
+            } catch(e) {
+                console.error('Reset current stock error:',e);
+                await loadDataFromSupabase(true).catch(()=>{});
+                showToast(`Stock reset failed: ${e.message||'Database update failed.'}`,'error');
+            } finally {
+                if(button){button.disabled=false;button.innerHTML=oldHtml;} stockResetInProgress=false; isAppBusy=false;
+            }
+        }
+    );
+}
+
+// Manual system health check for Admin troubleshooting. It never mutates data.
+window.runSystemHealthCheck = async function() {
+  const checks = [];
+  const requiredIds = ['dashboardTab','packingListTab','masterWeightChart','overallPoChart','overallPlChart','rejectDashboardChart','rejectProfileChart','plWeightChart','packingShipmentControls','packingListTableBody'];
+  requiredIds.forEach(id => checks.push({ check: `DOM: ${id}`, ok: !!document.getElementById(id) }));
+  checks.push({ check: 'Chart.js loaded', ok: typeof Chart !== 'undefined' });
+  checks.push({ check: 'XLSX loaded', ok: typeof XLSX !== 'undefined' });
+  checks.push({ check: 'Supabase client loaded', ok: !!supabaseClient });
+  checks.push({ check: 'Master catalog loaded', ok: masterData.length >= 0 });
+  checks.push({ check: 'Packing data loaded', ok: packingLists.length >= 0 });
+  const failed = checks.filter(c => !c.ok);
+  console.table(checks);
+  if (failed.length) showToast(`Health check: ${failed.length} issue(s) found. Check console.`, 'warning');
+  else showToast('System health check passed.', 'success');
+  return checks;
+};
+
+
+
+// -------------------- Production Reliability Helpers --------------------
+window.getAISDataHealth = function(){
+  const rows = [
+    ['Master Catalog', masterData.length], ['Production Orders', poList.length], ['Shipments', shipmentList.length],
+    ['Packing List', packingLists.length], ['Production History', historyLogs.length], ['Reject Logs', rejectLogs.length],
+    ['Legacy Recovery Logs', recoverLogs.length], ['Recovery Cut Logs', recoveryCutLogs.length], ['Recovery Wrapping Logs', recoveryWrapLogs.length], ['Cardboard Transactions', cardboardStockList.length], ['Cardboard Manual Data', cardboardManualData.length], ['Cardboard Manual Data', cardboardManualData.length]
+  ];
+  const duplicateKeys = new Set(), duplicates=[];
+  masterData.forEach(m=>{
+    const k=`${String(m.profile).trim()}|${String(m.itemCode).trim()}|${cleanLen(m.length)}`;
+    if(duplicateKeys.has(k)) duplicates.push(k); else duplicateKeys.add(k);
+  });
+  return {rows, duplicateMasterKeys:[...new Set(duplicates)], currentRole:currentUserRole, supabaseConfigured:!!supabaseClient};
+};
+
+window.runProductionAudit = async function(){
+  if(currentUserRole!=='Admin') return showToast('Only Admin can run the production audit.','error');
+  const report=[];
+  const checks=[
+    ['Supabase client', !!supabaseClient],
+    ['Chart.js', typeof Chart!=='undefined'],
+    ['Excel export library', typeof XLSX!=='undefined'],
+    ['Dashboard', !!document.getElementById('dashboardTab')],
+    ['Packing List', !!document.getElementById('packingListTab')],
+    ['Recovery', !!document.getElementById('rejectRecoverTab') || !!document.getElementById('recoverTab')],
+    ['Master Catalog loaded', Array.isArray(masterData)],
+    ['No duplicate in-memory catalog keys', window.getAISDataHealth().duplicateMasterKeys.length===0]
+  ];
+  checks.forEach(([name,ok])=>report.push({check:name,status:ok?'PASS':'CHECK'}));
+  console.table(report);
+  const bad=report.filter(x=>x.status!=='PASS');
+  showToast(bad.length?`Audit complete: ${bad.length} item(s) need attention.`:'Audit complete: all application checks passed.','success');
+  return report;
+};
+
+// A visible security notice is intentionally kept in the Admin health report:
+// the legacy role/password screen is client-side and must be replaced by Supabase Auth + RLS
+// before this application is exposed to untrusted internet users. The existing login is retained
+// for compatibility so current users are not locked out.
+window.getSecurityStatus = function(){
+  return {
+    clientSideRoleGate: true,
+    supabaseRLSRequired: true,
+    recommendation: 'Use Supabase Auth and database RLS for production access control.'
+  };
+};
+
+window.addEventListener('error', function(event){
+  const msg = String(event?.message || '');
+  console.error('AIS Tracker runtime error:', event?.error || msg || event);
+  // Browsers intentionally expose only "Script error." for some cross-origin CDN failures.
+  // Do not flood the user with misleading generic errors; application code reports actionable errors itself.
+  if (msg && msg !== 'Script error.' && !msg.includes('ResizeObserver')) {
+    const target = event?.target;
+    const isExternal = target && target.tagName === 'SCRIPT' && target.src && !target.src.startsWith(location.origin);
+    if (!isExternal && document.getElementById('mainContent')?.style.display !== 'none') {
+      showToast(`Runtime error: ${msg}`,'error');
     }
-    renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderProfileSummaryTable(); renderCardboardStock(); renderBalanceWorkTable(); renderDashboard();
-  } catch(e){ console.error(e); await loadDataFromSupabase(true).catch(()=>{}); showToast(e.message||'Master catalog save failed','error'); }
-  finally { isAppBusy=false; }
-}
+  }
+});
+window.addEventListener('unhandledrejection', function(event){
+  const reason=event.reason; console.error('AIS Tracker unhandled promise rejection:',reason);
+  const msg = String(reason?.message || reason || 'Unexpected background error.');
+  // Background realtime/chart/CDN promises must not be presented as a failed save.
+  // Actual save functions already catch and display their own database errors.
+  const lower=msg.toLowerCase();
+  const noisy = lower.includes('resizeobserver') || lower.includes('aborterror') || lower === 'script error.' || lower.includes('load failed');
+  const looksDatabase = lower.includes('supabase') || lower.includes('database') || lower.includes('row-level security') || lower.includes('permission denied') || lower.includes('violates') || lower.includes('relation') || lower.includes('column');
+  if(!noisy && looksDatabase && document.getElementById('mainContent')?.style.display !== 'none') showToast(`Database background sync issue: ${msg}`,'warning');
+  event.preventDefault();
+});
 
-async function saveNewMasterProfile() {
-  if(isAppBusy) return; isAppBusy=true;
-  try {
-    if(currentUserRole!=='Admin') return;
-    const profile=document.getElementById('addMasterProfile').value.trim();
-    const itemCode=document.getElementById('addMasterItemCode').value.trim();
-    const material=document.getElementById('addMasterMaterial').value.trim();
-    const length=document.getElementById('addMasterLength').value.trim();
-    const exLength=document.getElementById('addMasterExLength').value.trim();
-    const uw=Math.max(0,parseFloat(document.getElementById('addMasterUnitWeight').value)||0);
-    const cap=Math.max(1,parseInt(document.getElementById('addMasterBoxCapacity').value)||100);
-    if(!profile||!itemCode||!length) return showToast('Fill all required fields','warning');
-    const exists=masterData.find(m=>String(m.profile).trim()===profile&&cleanLen(m.length)===cleanLen(length)&&String(m.itemCode||'').trim()===itemCode);
-    if(exists) return showToast('Already exists!','error');
-    await dbInsert('master_catalog',{profile,item_code:itemCode,material,length,ex_length:exLength,unit_weight:uw,box_capacity:cap,cut_qty:0,punch_qty:0,wrap_qty:0,box_qty:0,crate_qty:0},'Master catalog add failed');
-    closeAddMasterModal(); showToast('Profile added. Refreshing database...','success');
-    await loadDataFromSupabase(true);
-  } catch(e){ showToast(dbErrorMessage(e,'Master catalog add failed'),'error'); }
-  finally { isAppBusy=false; }
-}
+// END OF SCRIPT
 
+window.dashboardDataPeriod = dashboardDataPeriod;
+window.setDashboardPeriodBadge = setDashboardPeriodBadge;
+
+// ===== V16 stability helpers for existing UI hooks =====
 function populateCbProfileDropdown(){
   const p=document.getElementById('cbSelectProfile'); if(!p) return;
   p.innerHTML='<option value="">-- Choose Profile --</option>';
@@ -3670,8 +3834,18 @@ function renderPoDetailsTable(){
     po.itemCode=itemCode;
     const m=masterData.find(x=>String(x.profile).trim()===String(po.profile).trim()&&cleanLen(x.length)===cleanLen(po.length)&&String(x.itemCode||'').trim()===itemCode)
       || masterData.find(x=>String(x.profile).trim()===String(po.profile).trim()&&cleanLen(x.length)===cleanLen(po.length));
-    return `<tr><td>${po.date||'-'}</td><td>${po.poNumber||'-'}</td><td>${po.profile||'-'}</td><td><b style="color:var(--primary-dark);">${itemCode||'-'}</b></td><td>${po.length||'-'} mm</td><td>${m?Number(m.unitWeight||0).toFixed(4):'-'}</td><td>${Number(po.orderQty||0).toLocaleString()}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openPoEditModal(${idx})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deletePoItem(${po.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`;
-  }).join(''):'<tr><td colspan="8" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No production orders match the filters.</td></tr>';
+    const requiredQty = Math.max(0, Number(po.orderQty)||0);
+    const shippedQty = shipmentList
+      .filter(s => String(s.poNumber||'').trim() === String(po.poNumber||'').trim()
+        && String(s.profile||'').trim() === String(po.profile||'').trim()
+        && cleanLen(s.length) === cleanLen(po.length))
+      .reduce((sum,s) => sum + (Number(s.shippedQty)||0), 0);
+    const remainingQty = Math.max(0, requiredQty - shippedQty);
+    const statusHtml = remainingQty > 0
+      ? `<span style="background:#fff1f2;color:#be123c;padding:3px 8px;border-radius:999px;font-weight:800;font-size:11px;">Pending</span>`
+      : `<span style="background:#dcfce7;color:#047857;padding:3px 8px;border-radius:999px;font-weight:800;font-size:11px;">Complete</span>`;
+    return `<tr><td>${po.date||'-'}</td><td>${po.poNumber||'-'}</td><td>${po.profile||'-'}</td><td><b style="color:var(--primary-dark);">${itemCode||'-'}</b></td><td>${po.length||'-'} mm</td><td>${m?Number(m.unitWeight||0).toFixed(4):'-'}</td><td>${requiredQty.toLocaleString()}</td><td><b style="color:#2563eb;">${shippedQty.toLocaleString()} Pcs</b></td><td><b style="color:${remainingQty>0?'#dc2626':'#059669'};">${remainingQty.toLocaleString()} Pcs</b></td><td>${statusHtml}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openPoEditModal(${idx})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deletePoItem(${po.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`;
+  }).join(''):'<tr><td colspan="11" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No production orders match the filters.</td></tr>';
 }
 
 function renderShipmentHistoryTable(){
