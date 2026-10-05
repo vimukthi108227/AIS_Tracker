@@ -1040,6 +1040,10 @@ function renderSmartDailyPlan() {
   boxPlan.sort((a,b)=> (b.demand-a.demand) || (b.boxes-a.boxes));
   cratePlan.sort((a,b)=> String(a.crateNo).localeCompare(String(b.crateNo), undefined, {numeric:true}));
 
+  // Keep the calculated rows available for read-only Excel/PDF export.
+  // This object is memory-only and is never written back to Supabase.
+  window.smartDailyPlanData = { punchPlan, wrapPlan, boxPlan, cratePlan, alerts, whyNot, generatedAt: new Date().toISOString(), activePackingMonth: activePackingMonth || '', activePackingContainer: activePackingContainer || '' };
+
   // Summary KPIs.
   const punchPcs = punchPlan.reduce((s,r)=>s+r.qty,0);
   const wrapPcs = wrapPlan.reduce((s,r)=>s+r.qty,0);
@@ -1125,6 +1129,94 @@ function renderSmartDailyPlan() {
       </tr>`).join('')}</tbody>
     </table></div>` : `<div style="padding:16px;text-align:center;color:#047857;font-weight:900;background:#f0fdf4;border-radius:12px;">✓ No profiles are currently waiting for the minimum Punch/Wrap quantity.</div>`;
 }
+
+
+function smartDailyExportRows(step) {
+  const d = window.smartDailyPlanData || {};
+  if(step === 'punch') return (d.punchPlan||[]).map(r => ({
+    'Priority': r.demand > 0 ? 'High' : 'Normal', 'Profile': r.profile, 'Item Code': r.item,
+    'Length (mm)': r.length, 'Cut Stock (Pcs)': r.m.cut, 'Recommended Punch (Pcs)': r.qty,
+    'Unit Weight (kg/Pc)': Number(r.m.unitWeight||0).toFixed(4), 'Weight (kg)': Number(r.wt||0).toFixed(2),
+    'Pending PO Qty (Pcs)': Number(r.demand||0)
+  }));
+  if(step === 'wrap') return (d.wrapPlan||[]).map(r => ({
+    'Priority': r.demand > 0 ? 'High' : 'Normal', 'Profile': r.profile, 'Item Code': r.item,
+    'Length (mm)': r.length, 'Source Stage': r.sourceStage, 'Available Source (Pcs)': r.qty,
+    'Recommended Wrap (Pcs)': r.qty, 'Unit Weight (kg/Pc)': Number(r.m.unitWeight||0).toFixed(4),
+    'Weight (kg)': Number(r.wt||0).toFixed(2), 'Pending PO Qty (Pcs)': Number(r.demand||0)
+  }));
+  if(step === 'box') return (d.boxPlan||[]).map(r => ({
+    'Priority': r.demand > 0 ? 'High' : 'Normal', 'Profile': r.profile, 'Item Code': r.item,
+    'Length (mm)': r.length, 'Wrap Stock (Pcs)': r.wrap, 'Pcs / Box': r.cap,
+    'Cardboard Available (Boxes)': r.cardboard, 'Can Pack (Boxes)': r.boxes,
+    'Can Pack (Pcs)': r.pcs, 'Unit Weight (kg/Pc)': Number(r.m.unitWeight||0).toFixed(4),
+    'Weight (kg)': Number(r.wt||0).toFixed(2), 'Pending PO Qty (Pcs)': Number(r.demand||0),
+    'Cardboard Shortage (Boxes)': Math.max(0, Math.floor(r.wrap/r.cap)-r.cardboard)
+  }));
+  if(step === 'crate') return (d.cratePlan||[]).map(r => ({
+    'Shipment Month': r.month, 'Container': r.container, 'Crate No': r.crateNo,
+    'Profiles / Lines': r.items.length, 'Ready Qty (Pcs)': r.totalPcs,
+    'Ready Weight (kg)': Number(r.totalWt||0).toFixed(2),
+    'Packing List Status': 'Ready to Pack',
+    'Packing List Items': r.items.map(i=>`${i.profile}/${cleanLen(i.length)}: ${Number(i.pcsQty||0)} Pcs`).join(' | ')
+  }));
+  if(step === 'alerts') return (d.alerts||[]).map(a => ({'Level':a.level,'Type':a.type,'Profile / Crate':a.profile,'Length (mm)':a.length||'','Item Code':a.item||'','Alert':a.message}));
+  if(step === 'why') return (d.whyNot||[]).map(r => ({'Stage':r.stage,'Profile':r.profile,'Item Code':r.item,'Length (mm)':r.length,'Available (Pcs)':r.qty,'Minimum (Pcs)':r.minimum,'Reason':r.reason}));
+  return [];
+}
+
+window.exportSmartDailyStep = function(step, type) {
+  const names={punch:'01_Cut_to_Punch',wrap:'02_To_Wrapping',box:'03_Box_Packing',crate:'04_Crate_Packing',alerts:'05_Action_Alerts',why:'06_Why_Not'};
+  const titles={punch:'Kaizen Smart Plan - Cut to Punch',wrap:'Kaizen Smart Plan - Wrapping',box:'Kaizen Smart Plan - Box Packing',crate:'Kaizen Smart Plan - Crate Packing',alerts:'Kaizen Smart Plan - Action Alerts',why:'Kaizen Smart Plan - Why Not'};
+  const rows=smartDailyExportRows(step);
+  if(!rows.length) return showToast('No data available for this Kaizen step.', 'warning');
+  if(type==='pdf') exportDataToPdf(rows,`AIS_Kaizen_${names[step]}`,titles[step],`AIS Tracker • ${window.smartDailyPlanData?.activePackingMonth||''} ${window.smartDailyPlanData?.activePackingContainer||''}`);
+  else exportTableToExcel(rows,`AIS_Kaizen_${names[step]}`,titles[step]);
+};
+
+window.exportSmartDailyAll = function(type) {
+  const steps=['punch','wrap','box','crate','alerts','why'];
+  if(type==='pdf') {
+    // Full PDF: keep each Kaizen step as its own table so every step's different
+    // columns remain visible instead of being flattened into one mixed table.
+    if(!window.jspdf || !window.jspdf.jsPDF || !window.jspdf.jsPDF.prototype) return showToast('PDF library not loaded. Please check internet connection.','error');
+    const doc=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+    const stepTitles={punch:'1. CUT → PUNCH',wrap:'2. PUNCH/CUT → WRAPPING',box:'3. BOX PACKING',crate:'4. CRATE PACKING',alerts:'5. ACTION ALERTS / BOTTLENECKS',why:'6. WHY NOT / WAITING'};
+    let has=false;
+    steps.forEach((step,idx)=>{
+      const rows=smartDailyExportRows(step);
+      if(!rows.length) return;
+      if(has) doc.addPage();
+      has=true;
+      doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(6,78,59);
+      doc.text(`AIS Tracker • Kaizen Smart Daily Plan`,14,13);
+      doc.setFontSize(11); doc.setTextColor(30,64,175); doc.text(stepTitles[step],14,20);
+      doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(90);
+      doc.text(`Generated: ${new Date().toLocaleString('en-GB')}`,14,25);
+      const columns=Object.keys(rows[0]);
+      const body=rows.map(r=>columns.map(k=>r[k]===null||r[k]===undefined?'':String(r[k])));
+      if(typeof doc.autoTable!=='function') return showToast('PDF table plugin not loaded. Please check internet connection.','error');
+      doc.autoTable({head:[columns],body,startY:29,theme:'grid',styles:{font:'helvetica',fontSize:7,cellPadding:2,overflow:'linebreak'},headStyles:{fillColor:[6,78,59],textColor:255,fontStyle:'bold'},alternateRowStyles:{fillColor:[240,253,244]},margin:{left:10,right:10},didDrawPage:function(data){const page=doc.internal.getNumberOfPages();doc.setFontSize(7);doc.setTextColor(100);doc.text(`AIS Tracker • Page ${page}`,doc.internal.pageSize.getWidth()-45,doc.internal.pageSize.getHeight()-7);}});
+    });
+    if(!has) return showToast('No Smart Daily Plan data to export.','warning');
+    doc.save('AIS_Kaizen_Smart_Daily_Plan_Full.pdf'); showToast('Full Kaizen PDF downloaded successfully.','success');
+    return;
+  }
+  // Excel: one workbook with a separate sheet per step.
+  if(typeof XLSX !== 'undefined' && XLSX.utils && XLSX.writeFile) {
+    const wb=XLSX.utils.book_new();
+    steps.forEach(step=>{
+      const rows=smartDailyExportRows(step);
+      if(rows.length) XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),(step==='punch'?'01 Punch':step==='wrap'?'02 Wrap':step==='box'?'03 Box':step==='crate'?'04 Crate':step==='alerts'?'05 Alerts':'06 Why Not').slice(0,31));
+    });
+    if(!wb.SheetNames.length) return showToast('No Smart Daily Plan data to export.','warning');
+    XLSX.writeFile(wb,'AIS_Kaizen_Smart_Daily_Plan_Full.xlsx'); showToast('Full Kaizen Excel downloaded successfully.','success');
+  } else {
+    // Fallback still exports all rows in one Excel-compatible file.
+    const allRows=[]; steps.forEach(step=>smartDailyExportRows(step).forEach(r=>allRows.push(Object.assign({'Step':step.toUpperCase()},r))));
+    exportTableToExcel(allRows,'AIS_Kaizen_Smart_Daily_Plan_Full','Kaizen Plan');
+  }
+};
 
 function switchTab(tabId, btn) {
   setDashboardNavPlacement(tabId);
