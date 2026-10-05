@@ -681,7 +681,7 @@ async function loadDataFromSupabase(isSilent = false) {
     shipmentList = shipData.map(item => ({ id: item.id, date: item.shipment_date, month: item.shipment_month, poNumber: item.po_number, profile: item.profile, length: cleanLen(item.length), container: item.container, shippedQty: item.shipped_qty, remainingBalance: item.remaining_balance }));
     packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate 1`, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date }));
     historyLogs = logData.map(item => ({ id: item.id, date: item.log_date, shift: item.shift, profile: item.profile, length: cleanLen(item.length), cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, timestamp: item.log_time || item.created_at || new Date().toISOString() }));
-    rejectLogs = rjData; recoverLogs = rcData; dailyInstructionsList = instData;
+    rejectLogs = rjData; recoverLogs = rcData; dailyInstructionsList = (instData || []).map(normalizeDailyInstructionRow);
     recoveryCutLogs = (rCutData || []).map(r => ({id:r.id,cut_date:r.cut_date,source_profile:r.source_profile,source_item_code:r.source_item_code,original_length:cleanLen(r.original_length),new_profile:r.new_profile,new_item_code:r.new_item_code,new_length:cleanLen(r.new_length),cut_pcs:Number(r.cut_pcs)||0,cut_weight:Number(r.cut_weight)||0}));
     recoveryWrapLogs = (rWrapData || []).map(r => ({id:r.id,wrap_date:r.wrap_date,profile:r.profile,item_code:r.item_code,length:cleanLen(r.length),available_cut_pcs:Number(r.available_cut_pcs)||0,wrap_pcs:Number(r.wrap_pcs)||0,wrap_weight:Number(r.wrap_weight)||0}));
     // Version 1 recovery rows represented CUT conversion, not actual wrapping recovery.
@@ -4171,6 +4171,37 @@ function dailyNoteEscape(v){
   return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 }
 
+function encodeDailyNoteMeta(category, action){
+  try{
+    return '__AIS_NOTE_META__' + JSON.stringify({
+      category: category || 'General',
+      action: action || ''
+    });
+  }catch(e){
+    return action || '';
+  }
+}
+function decodeDailyNoteMeta(row){
+  const raw=String(row?.action_taken||'');
+  if(raw.startsWith('__AIS_NOTE_META__')){
+    try{
+      const meta=JSON.parse(raw.slice('__AIS_NOTE_META__'.length));
+      return {
+        category: meta.category || 'General',
+        action: meta.action || ''
+      };
+    }catch(e){}
+  }
+  return {
+    category: row?.category || 'General',
+    action: raw
+  };
+}
+function normalizeDailyInstructionRow(row){
+  const meta=decodeDailyNoteMeta(row);
+  return {...row, category: meta.category, action_taken: meta.action};
+}
+
 function dailyNoteCanManage(){
   return currentUserRole === 'Admin' || currentUserRole === 'Planner';
 }
@@ -4235,20 +4266,29 @@ async function saveDailyInstruction(){
     target_date:document.getElementById('planDate').value,
     target_user:document.getElementById('planUser').value,
     priority:document.getElementById('planPriority').value,
-    category:document.getElementById('planCategory')?.value || 'Daily Plan',
     message:document.getElementById('planMessage').value.trim(),
     status:'Pending',
-    action_taken:''
+    // IMPORTANT: daily_instructions table in the existing site does not require
+    // a separate "category" column. Keep category metadata inside the existing
+    // action_taken field so old Supabase schemas continue to work.
+    action_taken:encodeDailyNoteMeta(document.getElementById('planCategory')?.value || 'Daily Plan','')
   };
   if(!rec.target_date||!rec.message)return showToast('Enter date and instruction message.','warning');
   try{
     const r=await supabaseClient.from('daily_instructions').insert([rec]);
     if(r.error)throw r.error;
-    dailyInstructionsList.unshift({...rec,id:-Date.now()});
+
+    const localRec={
+      ...rec,
+      id:-Date.now(),
+      ...decodeDailyNoteMeta(rec)
+    };
+    dailyInstructionsList.unshift(localRec);
     renderDailyInstructions();
     clearDailyNoteForm();
-    showToast('Daily plan note saved.','success');
+    showToast('Daily plan note saved successfully.','success');
   }catch(e){
+    console.error('Daily instruction save failed:',e);
     showToast(dbErrorMessage(e,'Instruction save failed'),'error');
   }
 }
@@ -4260,7 +4300,11 @@ window.toggleDailyInstructionStatus = async function(id){
   const nextStatus=String(item.status||'Pending')==='Completed'?'Pending':'Completed';
   try{
     if(Number(id)>0){
-      const r=await supabaseClient.from('daily_instructions').update({status:nextStatus,action_taken:nextStatus==='Completed'?'Completed by '+currentUserRole:''}).eq('id',id);
+      const action=nextStatus==='Completed'?'Completed by '+currentUserRole:'';
+      const r=await supabaseClient.from('daily_instructions').update({
+        status:nextStatus,
+        action_taken:encodeDailyNoteMeta(item.category||'General',action)
+      }).eq('id',id);
       if(r.error)throw r.error;
     }
     item.status=nextStatus;
