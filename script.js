@@ -1453,7 +1453,15 @@ function renderDashboard() {
   if(document.getElementById('kpiTotalStockPcs')) document.getElementById('kpiTotalStockPcs').textContent = `${totalStockPcs.toLocaleString()} Pcs`; 
   if(document.getElementById('kpiTotalStockWt')) document.getElementById('kpiTotalStockWt').textContent = `${totalStockWt.toFixed(2)} kg`;
 
-  let latestDate = historyLogs.length > 0 ? historyLogs[0].date : '-';
+  // Last entered production day: do not depend on Supabase/history array order.
+  // The KPI should always show the most recent Daily Production entry.
+  const latestHistoryDateMs = (historyLogs || []).reduce((max, h) => {
+      const ms = Date.parse(String(h?.date || ''));
+      return Number.isFinite(ms) && ms > max ? ms : max;
+  }, -Infinity);
+  let latestDate = Number.isFinite(latestHistoryDateMs)
+      ? new Date(latestHistoryDateMs).toISOString().slice(0,10)
+      : '-';
   let todayPcs = 0, todayWt = 0;
 
   const now = new Date(); ensureDashboardMonthControl(); const selectedMonthKey = dashboardSelectedMonth || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`; const [selY, selM] = selectedMonthKey.split('-').map(Number); const cm = (selM||1)-1; const cy = selY || now.getFullYear();
@@ -1894,7 +1902,52 @@ function renderDashboard() {
   try {
       if(typeof Chart !== 'undefined') {
           const textColor = isDarkMode ? '#f8fafc' : '#0f172a'; 
-          if(document.getElementById('masterWeightChart')) { safeChartDestroy(masterChartInstance, 'masterWeightChart'); let mData = [ totalCut, totalPunch, totalWrap, totalBox, funnelCrateDisplay ]; if (mData.every(v => v === 0)) mData = [1]; masterChartInstance = new Chart(document.getElementById('masterWeightChart'), { type: 'doughnut', data: { labels: mData.length === 1 ? ['No Stock'] : ['Cut', 'Punch', 'Wrap', 'Box', 'Crate'], datasets: [{ hoverOffset: 10, data: mData, backgroundColor: mData.length === 1 ? ['#e2e8f0'] : ['#0ea5e9', '#ea580c', '#d946ef', '#10b981', '#f59e0b'], borderWidth: isDarkMode ? 3 : 2, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { ...dashboardChartOptions(textColor, mData.length > 1), cutout: '65%' } }); }
+          if(document.getElementById('masterWeightChart')) {
+              safeChartDestroy(masterChartInstance, 'masterWeightChart');
+              // Factory Stock Breakdown is a weight view. Convert each live stage
+              // quantity to kg using the Master Catalog unit weight.
+              let stockWeightData = [0, 0, 0, 0, 0];
+              masterData.forEach(m => {
+                  const uw = Number(m.unitWeight) || 0;
+                  stockWeightData[0] += (Number(m.cutQty) || 0) * uw;
+                  stockWeightData[1] += (Number(m.punchQty) || 0) * uw;
+                  stockWeightData[2] += (Number(m.wrapQty) || 0) * uw;
+                  stockWeightData[3] += (Number(m.boxQty) || 0) * uw;
+                  stockWeightData[4] += (Number(m.crateQty) || 0) * uw;
+              });
+              stockWeightData = stockWeightData.map(v => Number(v.toFixed(2)));
+              const stockHasData = stockWeightData.some(v => v > 0);
+              const stockChartData = stockHasData ? stockWeightData : [1];
+              masterChartInstance = new Chart(document.getElementById('masterWeightChart'), {
+                  type: 'doughnut',
+                  data: {
+                      labels: stockHasData ? ['Cut', 'Punch', 'Wrap', 'Box', 'Crate'] : ['No Stock'],
+                      datasets: [{
+                          hoverOffset: 10,
+                          data: stockChartData,
+                          backgroundColor: stockHasData ? ['#0ea5e9', '#ea580c', '#d946ef', '#10b981', '#f59e0b'] : ['#e2e8f0'],
+                          borderWidth: isDarkMode ? 3 : 2,
+                          borderColor: isDarkMode ? '#1e293b' : '#fff'
+                      }]
+                  },
+                  options: {
+                      ...dashboardChartOptions(textColor, stockHasData),
+                      cutout: '65%',
+                      plugins: {
+                          ...dashboardChartOptions(textColor, stockHasData).plugins,
+                          tooltip: {
+                              enabled: true,
+                              callbacks: {
+                                  label: function(context) {
+                                      const value = Number(context.raw || 0);
+                                      return ` ${context.label || ''}: ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
+                                  }
+                              }
+                          }
+                      }
+                  }
+              });
+          }
           
           if(document.getElementById('overallPoChart')) { 
               safeChartDestroy(overallPoChartInstance, 'overallPoChart'); 
