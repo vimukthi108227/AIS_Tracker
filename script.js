@@ -13,6 +13,8 @@ let shipmentStates = {};
 let activePackingMonth = null;
 let activePackingContainer = null;
 let shipmentDeadline = null;
+let aisDbReadCache = {};
+let aisDbReadWarnings = {};
 
 const cleanLen = (val) => String(val || '').replace(/ mm/gi, '').trim();
 
@@ -95,7 +97,7 @@ function resetRoleSelection() { document.getElementById('loginPassSection').styl
 document.addEventListener('DOMContentLoaded', () => { ensureLoginInputReady(); rememberAISFormFields(); });
 function verifyLogin() {
   const section=document.getElementById('loginPassSection'); const role=section?.dataset.role||''; const pass=(document.getElementById('rolePassInput')?.value||'').trim();
-  if(role==='Admin' && pass==='Ais@2026') { enterAISApplication('Admin'); showToast('Admin access granted.','success'); return; }
+  if(role==='Admin' && pass==='Lr@108227') { enterAISApplication('Admin'); showToast('Admin access granted.','success'); return; }
   if(role==='Planner' && pass==='alumex123') { enterAISApplication('Planner'); showToast('Planner access granted.','success'); return; }
   showToast('Invalid authentication key.','error');
   const box=document.querySelector('.ais-password-box'); if(box){ box.classList.remove('ais-shake'); void box.offsetWidth; box.classList.add('ais-shake'); }
@@ -492,7 +494,18 @@ async function loadDataFromSupabase(isSilent = false) {
       }
     };
 
-    const safeFetchOptional = async (table, options={}) => { try { return await safeFetch(table, options, true); } catch(e) { console.warn(`Optional DB table unavailable: ${table}`, e); return []; } };
+    const safeFetchOptional = async (table, options={}) => {
+      try {
+        const rows = await safeFetch(table, options, true);
+        aisDbReadCache[table] = rows;
+        delete aisDbReadWarnings[table];
+        return rows;
+      } catch(e) {
+        console.warn(`Optional DB table unavailable: ${table}`, e);
+        aisDbReadWarnings[table] = e?.message || 'Database read failed';
+        return Array.isArray(aisDbReadCache[table]) ? aisDbReadCache[table] : [];
+      }
+    };
     const results = await Promise.all([
         safeFetch('master_catalog'),
         safeFetchOptional('production_orders', { order: {col: 'id', asc: false} }),
@@ -619,19 +632,7 @@ async function loadDataFromSupabase(isSilent = false) {
       if(currentUserRole) { 
           updateRoleUI(); 
           setTimeout(() => {
-              // Performance: render the Dashboard and only the currently visible tab.
-              // Other heavy tables are rendered lazily when their tab is opened.
-              renderDashboard();
-              const activeTabId=document.querySelector('.tab-content.active')?.id || 'dashboardTab';
-              if(activeTabId==='balanceWorkTab') renderBalanceWorkTable();
-              else if(activeTabId==='cardboardTab') renderCardboardStock();
-              else if(activeTabId==='historyTab') { renderHistoryData(); checkDateStatus(); }
-              else if(activeTabId==='masterListTab') renderMasterCatalog();
-              else if(activeTabId==='poManagementTab') { updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); }
-              else if(activeTabId==='shipmentTab') { populateShipmentPoDropdown(); window.renderShipmentHistoryTable(); }
-              else if(activeTabId==='packingListTab') { populatePlPoDropdown(); renderPackingListTable(); }
-              else if(activeTabId==='dailyPlanTab') renderDailyInstructions();
-              else if(activeTabId==='rejectTrackerTab') { populateRejProfile(); renderRejectTable(); populateRecProfile(); renderRecoverTable(); }
+              renderDashboard(); renderProfileSummaryTable(); checkDateStatus(); renderHistoryData(); updatePoFilters(); renderPoDetailsTable(); window.renderShipmentHistoryTable(); renderPackingListTable(); renderPoCharts(); renderBalanceWorkTable(); renderCardboardStock(); renderDailyInstructions(); renderRejectTable(); renderRecoverTable();
               window.updateShipmentCountdown();
           }, 10);
       } 
@@ -862,8 +863,10 @@ async function saveRejectEntry() {
     if(!matched) return showToast('Selected profile/length is not in Master Catalog.','error');
     const wt=parseFloat((pcs*(matched.unitWeight||0)).toFixed(2));
     const punchStage=String(stg).toLowerCase().includes('punch'), wrapStage=String(stg).toLowerCase().includes('wrap');
-    const nextCut=Math.max(0,(matched.cutQty||0)-(punchStage?pcs:0));
-    const nextPunch=Math.max(0,(matched.punchQty||0)-(wrapStage?pcs:0));
+    if(punchStage && pcs>(Number(matched.cutQty)||0)) return showToast(`Insufficient Cut Stock for Reject. Available: ${Number(matched.cutQty)||0} Pcs.`, 'error');
+    if(wrapStage && pcs>(Number(matched.punchQty)||0)) return showToast(`Insufficient Punch Stock for Reject. Available: ${Number(matched.punchQty)||0} Pcs.`, 'error');
+    const nextCut=(Number(matched.cutQty)||0)-(punchStage?pcs:0);
+    const nextPunch=(Number(matched.punchQty)||0)-(wrapStage?pcs:0);
     const entry={reject_date:d,shift:sh,team:tm,location:loc,stage:stg,profile:p,item_code:ic,length:l,pcs,weight:wt};
     let stockChanged=false;
     try {
@@ -1218,19 +1221,6 @@ function dbErrorMessage(error, action) {
   return `${action}: ${msg}`;
 }
 
-function setSaveButtonBusy(buttonId, busy, busyText='Saving...') {
-  const btn=document.getElementById(buttonId);
-  if(!btn) return;
-  if(busy){
-    if(!btn.dataset.aisOriginalHtml) btn.dataset.aisOriginalHtml=btn.innerHTML;
-    btn.disabled=true; btn.setAttribute('aria-busy','true');
-    btn.innerHTML=`<i class="fa-solid fa-spinner fa-spin"></i> ${busyText}`;
-  }else{
-    btn.disabled=false; btn.removeAttribute('aria-busy');
-    if(btn.dataset.aisOriginalHtml){ btn.innerHTML=btn.dataset.aisOriginalHtml; delete btn.dataset.aisOriginalHtml; }
-  }
-}
-
 async function dbInsert(table, row, action) {
   // Do NOT request the inserted row back here. With Supabase RLS, INSERT may be
   // allowed while SELECT/RETURNING is not. Using .select() made a successful
@@ -1336,7 +1326,118 @@ function getDashboardPackingSelection(monthKey){
   return {month:m,container:c,records:getPackingContainerRecords(m,c)};
 }
 
+
+/* -------------------------------------------------------------------------
+ * Dashboard: All Pending Production Orders
+ * -------------------------------------------------------------------------
+ * This block is intentionally independent of the Dashboard Month selector.
+ * It calculates ALL currently outstanding PO demand, then allocates the
+ * CURRENT master stock against that demand once per Profile + Item Code +
+ * Length key. It does not mutate masterData, PO data, shipments, or Supabase.
+ */
+function dashboardQty(value) {
+  const n = Number(String(value ?? 0).replace(/,/g, '').trim());
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+function dashboardKey(value) {
+  return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+function getDashboardCatalogItemForPo(po) {
+  const profile = dashboardKey(po?.profile);
+  const itemCode = dashboardKey(po?.itemCode);
+  const length = cleanLen(po?.length);
+  if (!profile || !length) return null;
+  if (itemCode) {
+    const exact = masterData.find(m =>
+      dashboardKey(m.profile) === profile &&
+      dashboardKey(m.itemCode) === itemCode &&
+      cleanLen(m.length) === length
+    );
+    if (exact) return exact;
+  }
+  return masterData.find(m =>
+    dashboardKey(m.profile) === profile && cleanLen(m.length) === length
+  ) || null;
+}
+function calculateAllPendingProductionOrderDashboard() {
+  const result = { totalPendingWt: 0, completeWt: 0, processingWt: 0, stillPendingWt: 0, pendingQty: 0, lineCount: 0, unresolvedLines: 0 };
+  if (!Array.isArray(poList) || !Array.isArray(masterData)) return result;
+
+  const shippedByLine = new Map();
+  (shipmentList || []).forEach(sh => {
+    const key = `${dashboardKey(sh?.poNumber)}_${dashboardKey(sh?.profile)}_${cleanLen(sh?.length)}`;
+    const qty = dashboardQty(sh?.shippedQty);
+    if (qty > 0) shippedByLine.set(key, (shippedByLine.get(key) || 0) + qty);
+  });
+
+  const demandByKey = new Map();
+  (poList || []).forEach(po => {
+    const orderQty = dashboardQty(po?.orderQty);
+    if (orderQty <= 0) return;
+    const profile = String(po?.profile ?? '').trim();
+    const length = cleanLen(po?.length);
+    const poNumber = String(po?.poNumber ?? '').trim();
+    if (!profile || !length) return;
+
+    const shipKey = `${dashboardKey(poNumber)}_${dashboardKey(profile)}_${length}`;
+    const shippedQty = Math.min(orderQty, shippedByLine.get(shipKey) || 0);
+    const remainingQty = Math.max(0, orderQty - shippedQty);
+    if (remainingQty <= 0) return;
+
+    const catalog = getDashboardCatalogItemForPo(po);
+    if (!catalog) { result.unresolvedLines += 1; return; }
+    const itemCode = String(catalog.itemCode ?? po?.itemCode ?? '').trim();
+    const key = `${dashboardKey(profile)}_${dashboardKey(itemCode)}_${length}`;
+    const existing = demandByKey.get(key) || { profile, itemCode, length, remainingQty: 0, unitWeight: dashboardQty(catalog.unitWeight), master: catalog };
+    existing.remainingQty += remainingQty;
+    demandByKey.set(key, existing);
+  });
+
+  demandByKey.forEach(line => {
+    const demandQty = line.remainingQty;
+    const m = line.master;
+    const unitWeight = dashboardQty(line.unitWeight);
+    const completeStockQty = dashboardQty(m.wrapQty) + dashboardQty(m.boxQty) + dashboardQty(m.crateQty);
+    const processingStockQty = dashboardQty(m.cutQty) + dashboardQty(m.punchQty);
+    const completeQty = Math.min(demandQty, completeStockQty);
+    const afterComplete = Math.max(0, demandQty - completeQty);
+    const processingQty = Math.min(afterComplete, processingStockQty);
+    const stillPendingQty = Math.max(0, afterComplete - processingQty);
+    result.pendingQty += demandQty;
+    result.lineCount += 1;
+    result.totalPendingWt += demandQty * unitWeight;
+    result.completeWt += completeQty * unitWeight;
+    result.processingWt += processingQty * unitWeight;
+    result.stillPendingWt += stillPendingQty * unitWeight;
+  });
+  return result;
+}
+
+function renderPendingProductionOrderDashboardCard() {
+  const summary = calculateAllPendingProductionOrderDashboard();
+
+  const setText = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = `${Number(value || 0).toFixed(2)} kg`;
+  };
+
+  setText('dashPendingPoTotalWt', summary.totalPendingWt);
+  setText('dashPendingPoCompleteWt', summary.completeWt);
+  setText('dashPendingPoProcessingWt', summary.processingWt);
+  setText('dashPendingPoStillWt', summary.stillPendingWt);
+
+  const card = document.getElementById('pendingProductionOrdersCard');
+  if (card) {
+    card.dataset.pendingLines = String(summary.lineCount);
+    card.dataset.pendingQty = String(summary.pendingQty);
+  }
+
+  return summary;
+}
+
 function renderDashboard() {
+  // All-pending-PO card is independent of the selected dashboard month.
+  renderPendingProductionOrderDashboardCard();
   let totalStockPcs = 0, totalStockWt = 0;
   let totalCut = 0, totalPunch = 0, totalWrap = 0, totalBox = 0, totalCrate = 0;
   
@@ -2262,32 +2363,16 @@ function renderCardboardStock(){
 function onCbMaterialSelect(){ const val=(document.getElementById('cbMaterialInput')?.value||'').trim(); const matches=masterData.filter(m=>String(m.material||'').trim()===val); const p=document.getElementById('cbSelectProfile'); if(p){p.innerHTML='<option value="">-- Choose Profile --</option>'; [...new Set(matches.map(m=>String(m.profile).trim()))].forEach(x=>p.appendChild(new Option(x,x)));} onCbProfileSelect(); }
 function onCbProfileSelect(){ const p=document.getElementById('cbSelectProfile'); const i=document.getElementById('cbSelectItemCode'); if(!p||!i)return; const profile=p.value; i.innerHTML='<option value="">-- Choose Item Code --</option>'; const mat=(document.getElementById('cbMaterialInput')?.value||'').trim(); masterData.filter(m=>String(m.profile).trim()===profile && (!mat||String(m.material||'').trim()===mat)).forEach(m=>{if(m.itemCode&&!Array.from(i.options).some(o=>o.value===m.itemCode))i.appendChild(new Option(m.itemCode,m.itemCode));}); onCbItemCodeSelect();}
 function onCbItemCodeSelect(){ const p=document.getElementById('cbSelectProfile'),i=document.getElementById('cbSelectItemCode'),l=document.getElementById('cbSelectLength'); if(!p||!i||!l)return; l.innerHTML='<option value="">-- Choose Length --</option>'; masterData.filter(m=>String(m.profile).trim()===p.value&&m.itemCode===i.value).forEach(m=>l.appendChild(new Option(`${m.length} mm`,m.length))); if(l.options.length===2)l.selectedIndex=1; }
-async function processCardboardTransaction(){
-  if(isAppBusy)return;
-  if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return;
-  isAppBusy=true; setSaveButtonBusy('cardboardSaveBtn',true,'Saving...');
-  try{
-    const date=document.getElementById('cbDate').value||new Date().toISOString().split('T')[0], type=document.getElementById('cbTxType').value, profile=document.getElementById('cbSelectProfile').value,item=document.getElementById('cbSelectItemCode').value,length=document.getElementById('cbSelectLength').value,qty=parseInt(document.getElementById('cbQty').value)||0;
-    if(!profile||!item||!length||qty<=0){showToast('Select profile, item, length and quantity.','warning');return;}
-    const bal=getAvailableCardboard(profile,item,length);
-    if(type==='OUT'&&qty>bal){showToast(`Insufficient cardboard stock. Available: ${bal} boxes.`,'error');return;}
-    const rec={cb_date:date,cb_type:cardboardType(profile,item,length),incoming:type==='IN'?qty:0,used:type==='OUT'?qty:0};
-    const r=await supabaseClient.from('cardboard_stock').insert([rec]);
-    if(r.error)throw r.error;
-    cardboardStockList.unshift({id:-Date.now(),db_id:null,date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});
-    saveCardboardLocally(); renderCardboardStock(); document.getElementById('cardboardEntryForm')?.reset(); showToast('Cardboard transaction saved.','success');
-  }catch(e){showToast(dbErrorMessage(e,'Cardboard save failed'),'error');}
-  finally{isAppBusy=false;setSaveButtonBusy('cardboardSaveBtn',false);}
-}
+async function processCardboardTransaction(){ if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return; const date=document.getElementById('cbDate').value||new Date().toISOString().split('T')[0], type=document.getElementById('cbTxType').value, profile=document.getElementById('cbSelectProfile').value,item=document.getElementById('cbSelectItemCode').value,length=document.getElementById('cbSelectLength').value,qty=parseInt(document.getElementById('cbQty').value)||0; if(!profile||!item||!length||qty<=0)return showToast('Select profile, item, length and quantity.','warning'); const bal=getAvailableCardboard(profile,item,length); if(type==='OUT'&&qty>bal)return showToast(`Insufficient cardboard stock. Available: ${bal} boxes.`,'error'); const rec={cb_date:date,cb_type:cardboardType(profile,item,length),incoming:type==='IN'?qty:0,used:type==='OUT'?qty:0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date, type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();renderCardboardStock();document.getElementById('cardboardEntryForm')?.reset();showToast('Cardboard transaction saved.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard save failed'),'error');}}
 function openCbAdjustModal(g){ if(typeof g==='string') g=JSON.parse(decodeURIComponent(g));document.getElementById('adjustCbProfile').value=g.profile;document.getElementById('adjustCbItemCode').value=g.itemCode;document.getElementById('adjustCbLength').value=g.length;document.getElementById('cbAdjustTarget').innerHTML=`${g.profile} • ${g.itemCode} • ${g.length} mm`;document.getElementById('newCbBalanceVal').value=Math.max(0,getAvailableCardboard(g.profile,g.itemCode,g.length));document.getElementById('cbAdjustModal').style.display='flex';}
 function closeCbAdjustModal(){document.getElementById('cbAdjustModal').style.display='none';}
-async function saveCbAdjust(){ if(isAppBusy)return; isAppBusy=true; setSaveButtonBusy('cbAdjustSaveBtn',true,'Saving...'); try{const p=document.getElementById('adjustCbProfile').value,i=document.getElementById('adjustCbItemCode').value,l=document.getElementById('adjustCbLength').value,n=Math.max(0,parseInt(document.getElementById('newCbBalanceVal').value)||0),cur=getAvailableCardboard(p,i,l),diff=n-cur;if(!diff){closeCbAdjustModal();return showToast('No balance change required.','info');} const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:`Pr: ${p} | Item: ${i} | L: ${l} | MANUAL ADJUSTMENT`,incoming:diff>0?diff:0,used:diff<0?Math.abs(diff):0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();closeCbAdjustModal();renderCardboardStock();showToast('Cardboard balance adjusted.','success');}catch(e){showToast(dbErrorMessage(e,'Balance adjustment failed'),'error');}}catch(e){showToast(dbErrorMessage(e,'Balance adjustment failed'),'error');}finally{isAppBusy=false;setSaveButtonBusy('cbAdjustSaveBtn',false);} }
+async function saveCbAdjust(){const p=document.getElementById('adjustCbProfile').value,i=document.getElementById('adjustCbItemCode').value,l=document.getElementById('adjustCbLength').value,n=Math.max(0,parseInt(document.getElementById('newCbBalanceVal').value)||0),cur=getAvailableCardboard(p,i,l),diff=n-cur;if(!diff){closeCbAdjustModal();return showToast('No balance change required.','info');} const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:`Pr: ${p} | Item: ${i} | L: ${l} | MANUAL ADJUSTMENT`,incoming:diff>0?diff:0,used:diff<0?Math.abs(diff):0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();closeCbAdjustModal();renderCardboardStock();showToast('Cardboard balance adjusted.','success');}catch(e){showToast(dbErrorMessage(e,'Balance adjustment failed'),'error');}}
 function openCbInOutModal(g,inc,out){ if(typeof g==='string') g=JSON.parse(decodeURIComponent(g));document.getElementById('inOutCbProfile').value=g.profile;document.getElementById('inOutCbItemCode').value=g.itemCode;document.getElementById('inOutCbLength').value=g.length;document.getElementById('currentCbIn').value=inc;document.getElementById('currentCbOut').value=out;document.getElementById('cbInOutTarget').innerHTML=`${g.profile} • ${g.itemCode} • ${g.length} mm`;document.getElementById('newCbInVal').value=inc;document.getElementById('newCbOutVal').value=out;document.getElementById('cbInOutEditModal').style.display='flex';}
 function closeCbInOutModal(){document.getElementById('cbInOutEditModal').style.display='none';}
-async function saveCbInOut(){ if(isAppBusy)return; isAppBusy=true; setSaveButtonBusy('cbInOutSaveBtn',true,'Saving...'); try{const p=document.getElementById('inOutCbProfile').value,i=document.getElementById('inOutCbItemCode').value,l=document.getElementById('inOutCbLength').value,oldIn=Number(document.getElementById('currentCbIn').value)||0,oldOut=Number(document.getElementById('currentCbOut').value)||0,newIn=Math.max(0,parseInt(document.getElementById('newCbInVal').value)||0),newOut=Math.max(0,parseInt(document.getElementById('newCbOutVal').value)||0); const dIn=newIn-oldIn,dOut=newOut-oldOut; if(newOut>newIn)return showToast('Total OUT cannot exceed Total IN.','error'); const base=`Pr: ${p} | Item: ${i} | L: ${l}`; try{if(dIn||dOut){const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:base+' | MANUAL EDIT',incoming:dIn>0?dIn:0,used:dOut>0?dOut:0}; if(dIn<0) rec.used+=Math.abs(dIn); if(dOut<0) rec.incoming+=Math.abs(dOut); const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();} closeCbInOutModal();renderCardboardStock();showToast('Cardboard totals updated.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard edit failed'),'error');}}catch(e){showToast(dbErrorMessage(e,'Cardboard edit failed'),'error');}finally{isAppBusy=false;setSaveButtonBusy('cbInOutSaveBtn',false);} }
+async function saveCbInOut(){const p=document.getElementById('inOutCbProfile').value,i=document.getElementById('inOutCbItemCode').value,l=document.getElementById('inOutCbLength').value,oldIn=Number(document.getElementById('currentCbIn').value)||0,oldOut=Number(document.getElementById('currentCbOut').value)||0,newIn=Math.max(0,parseInt(document.getElementById('newCbInVal').value)||0),newOut=Math.max(0,parseInt(document.getElementById('newCbOutVal').value)||0); const dIn=newIn-oldIn,dOut=newOut-oldOut; if(newOut>newIn)return showToast('Total OUT cannot exceed Total IN.','error'); const base=`Pr: ${p} | Item: ${i} | L: ${l}`; try{if(dIn||dOut){const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:base+' | MANUAL EDIT',incoming:dIn>0?dIn:0,used:dOut>0?dOut:0}; if(dIn<0) rec.used+=Math.abs(dIn); if(dOut<0) rec.incoming+=Math.abs(dOut); const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();} closeCbInOutModal();renderCardboardStock();showToast('Cardboard totals updated.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard edit failed'),'error');}}
 function openCbCapacityModal(g){ if(typeof g==='string') g=JSON.parse(decodeURIComponent(g));document.getElementById('editCbCatalogId').value=masterData.find(m=>String(m.profile).trim()===String(g.profile).trim()&&m.itemCode===g.itemCode&&cleanLen(m.length)===cleanLen(g.length))?.db_id||'';document.getElementById('cbEditTarget').innerHTML=`${g.profile} • ${g.itemCode} • ${g.length} mm`;document.getElementById('editCbCapacityVal').value=g.capacity||100;document.getElementById('cbCapacityEditModal').style.display='flex';}
 function closeCbCapacityModal(){document.getElementById('cbCapacityEditModal').style.display='none';}
-async function saveCbCapacityEdit(){ if(isAppBusy)return; isAppBusy=true; setSaveButtonBusy('cbCapacitySaveBtn',true,'Saving...'); try{const id=document.getElementById('editCbCatalogId').value,cap=Math.max(1,parseInt(document.getElementById('editCbCapacityVal').value)||100);if(!id)return showToast('Matching Master Catalog item not found.','error');try{const r=await supabaseClient.from('master_catalog').update({box_capacity:cap}).eq('id',id);if(r.error)throw r.error;const m=masterData.find(x=>String(x.db_id)===String(id));if(m)m.boxCapacity=cap;closeCbCapacityModal();renderCardboardStock();renderBalanceWorkTable();showToast('Pcs per Box updated.','success');}catch(e){showToast(dbErrorMessage(e,'Capacity update failed'),'error');}}catch(e){showToast(dbErrorMessage(e,'Capacity update failed'),'error');}finally{isAppBusy=false;setSaveButtonBusy('cbCapacitySaveBtn',false);} }
+async function saveCbCapacityEdit(){const id=document.getElementById('editCbCatalogId').value,cap=Math.max(1,parseInt(document.getElementById('editCbCapacityVal').value)||100);if(!id)return showToast('Matching Master Catalog item not found.','error');try{const r=await supabaseClient.from('master_catalog').update({box_capacity:cap}).eq('id',id);if(r.error)throw r.error;const m=masterData.find(x=>String(x.db_id)===String(id));if(m)m.boxCapacity=cap;closeCbCapacityModal();renderCardboardStock();renderBalanceWorkTable();showToast('Pcs per Box updated.','success');}catch(e){showToast(dbErrorMessage(e,'Capacity update failed'),'error');}}
 function editCardboardTransaction(id){const row=cardboardStockList.find(c=>Number(c.db_id||c.id)===Number(id));if(!row||!row.db_id)return showToast('This automatic/local record cannot be edited here. Use Manual Cardboard Data for independent reference information.','info');showToast('Stock transaction quantities are protected. Use Manual Cardboard Data to edit reference information without changing Current Cardboard Stock.','info');}
 
 async function persistCardboardManualData(){
@@ -2300,17 +2385,14 @@ async function persistCardboardManualData(){
 async function saveCardboardManualData(event){
   event?.preventDefault();
   if(currentUserRole!=='Admin'&&currentUserRole!=='Planner') return;
-  if(isAppBusy)return;
   const id=document.getElementById('cbManualId').value.trim();
   const row={manual_id:id||`CBM-${Date.now()}`,date:document.getElementById('cbManualDate').value||new Date().toISOString().split('T')[0],material:document.getElementById('cbManualMaterial').value.trim(),profile:document.getElementById('cbManualProfile').value.trim(),itemCode:document.getElementById('cbManualItemCode').value.trim(),length:document.getElementById('cbManualLength').value.trim(),quantity:Math.max(0,parseInt(document.getElementById('cbManualQty').value)||0),note:document.getElementById('cbManualNote').value.trim()};
   if(!row.profile&&!row.itemCode&&!row.material) return showToast('Enter at least Material, Profile or Item Code.','warning');
-  isAppBusy=true; setSaveButtonBusy('cbManualSaveBtn',true,'Saving...');
   try{
     if(id){ const idx=cardboardManualData.findIndex(x=>String(x.manual_id||x.id)===String(id)); if(idx<0)return showToast('Manual record not found.','error'); cardboardManualData[idx]=row; showToast('Manual cardboard data updated. Current stock unchanged.','success'); }
     else { cardboardManualData.unshift(row); showToast('Manual cardboard data saved. Current stock unchanged.','success'); }
     await persistCardboardManualData(); saveCardboardManualLocally(); cancelCardboardManualEdit(); renderCardboardStock();
   }catch(e){showToast(dbErrorMessage(e,'Manual cardboard data save failed'),'error');}
-  finally{isAppBusy=false;setSaveButtonBusy('cbManualSaveBtn',false);}
 }
 function editCardboardManualData(id){
   const r=cardboardManualData.find(x=>String(x.manual_id||x.id)===String(id));
@@ -2349,35 +2431,49 @@ async function submitDailyEntry() {
     if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return;
     const dateVal=document.getElementById('entryDate').value, shiftVal=document.getElementById('shift').value,
       profileVal=document.getElementById('selectProfile').value, itemCodeVal=document.getElementById('selectItemCode').value,
-      lengthVal=document.getElementById('selectLength').value, cutQty=parseInt(document.getElementById('cutQty').value)||0,
-      punchQty=parseInt(document.getElementById('punchQty').value)||0, wrapQty=parseInt(document.getElementById('wrapQty').value)||0,
-      enteredBoxes=Math.max(0,parseInt(document.getElementById('boxQty').value)||0), crateQty=parseInt(document.getElementById('crateQty').value)||0;
+      lengthVal=document.getElementById('selectLength').value, cutQty=Math.max(0,parseInt(document.getElementById('cutQty').value)||0),
+      punchQty=Math.max(0,parseInt(document.getElementById('punchQty').value)||0), wrapQty=Math.max(0,parseInt(document.getElementById('wrapQty').value)||0),
+      enteredBoxes=Math.max(0,parseInt(document.getElementById('boxQty').value)||0), crateQty=Math.max(0,parseInt(document.getElementById('crateQty').value)||0);
     const availableCardboard=Math.max(0,Number(getAvailableCardboard(profileVal,itemCodeVal,lengthVal))||0);
-    // Do not block production when cardboard is insufficient. The production Box Qty is
-    // recorded as entered, while actual cardboard stock consumption is capped at what is available.
     if(!dateVal||!profileVal||!itemCodeVal||!lengthVal) return showToast('Please select correctly.','warning');
     const item=masterData.find(m=>String(m.profile).trim()===profileVal&&m.itemCode===itemCodeVal&&cleanLen(m.length)===cleanLen(lengthVal));
     if(!item) return showToast('Selected catalog item was not found.','error');
 
     const previous={cutQty:Number(item.cutQty)||0,punchQty:Number(item.punchQty)||0,wrapQty:Number(item.wrapQty)||0,boxQty:Number(item.boxQty)||0,crateQty:Number(item.crateQty)||0};
     let next={...previous};
-    const boxPcs=enteredBoxes*(item.boxCapacity||100);
-    next.cutQty+=cutQty;
-    if(punchQty>0){ next.cutQty=Math.max(0,next.cutQty-punchQty); next.punchQty+=punchQty; }
+    const boxPcs=enteredBoxes*(Number(item.boxCapacity)||100);
+
+    // All transfers are validated before any database write. A single entry may
+    // still use its newly-entered Cut Qty to feed Punch/Wrap in the same save.
+    next.cutQty += cutQty;
+    if(punchQty>0){
+      if(punchQty>next.cutQty) return showToast(`Insufficient Cut Stock for Punch. Available: ${next.cutQty} Pcs.`, 'error');
+      next.cutQty-=punchQty; next.punchQty+=punchQty;
+    }
     if(wrapQty>0){
-      if(isPunchBypassed(profileVal,lengthVal)||next.punchQty<=0) next.cutQty=Math.max(0,next.cutQty-wrapQty);
-      else if(next.punchQty>=wrapQty) next.punchQty-=wrapQty;
-      else { const rem=wrapQty-next.punchQty; next.punchQty=0; next.cutQty=Math.max(0,next.cutQty-rem); }
+      if(isPunchBypassed(profileVal,lengthVal)){
+        if(wrapQty>next.cutQty) return showToast(`Insufficient Cut Stock for Wrapping. Available: ${next.cutQty} Pcs.`, 'error');
+        next.cutQty-=wrapQty;
+      } else {
+        const availableForWrap=next.punchQty+next.cutQty;
+        if(wrapQty>availableForWrap) return showToast(`Insufficient Punch + Cut Stock for Wrapping. Available: ${availableForWrap} Pcs.`, 'error');
+        const fromPunch=Math.min(next.punchQty,wrapQty), rem=wrapQty-fromPunch;
+        next.punchQty-=fromPunch; next.cutQty-=rem;
+      }
       next.wrapQty+=wrapQty;
     }
-    if(boxPcs>0){ next.wrapQty=Math.max(0,next.wrapQty-boxPcs); next.boxQty+=boxPcs; }
-    if(crateQty>0){ next.boxQty=Math.max(0,next.boxQty-crateQty); next.crateQty+=crateQty; }
+    if(boxPcs>0){
+      if(boxPcs>next.wrapQty) return showToast(`Insufficient Wrapping Stock for Box. Available: ${next.wrapQty} Pcs.`, 'error');
+      next.wrapQty-=boxPcs; next.boxQty+=boxPcs;
+    }
+    if(crateQty>0){
+      if(crateQty>next.boxQty) return showToast(`Insufficient Box Stock for Crate. Available: ${next.boxQty} Pcs.`, 'error');
+      next.boxQty-=crateQty; next.crateQty+=crateQty;
+    }
 
     const newLog={log_date:dateVal,shift:shiftVal,profile:profileVal,length:cleanLen(lengthVal),cut_qty:cutQty,punch_qty:punchQty,wrap_qty:wrapQty,box_qty:boxPcs,crate_qty:crateQty,log_time:new Date().toLocaleTimeString()};
     let stockUpdated=false, insertedLog=null, cardboardDeducted=null;
     try {
-      // Reserve only the cardboard that actually exists. If production needs more boxes,
-      // the remaining production quantity is still recorded, but cardboard stock bottoms at 0.
       const cardboardToDeduct=Math.min(enteredBoxes,availableCardboard);
       if(cardboardToDeduct>0) cardboardDeducted=await deductCardboardBoxesForProduction(profileVal,itemCodeVal,lengthVal,cardboardToDeduct);
       if(item.db_id){
@@ -2387,10 +2483,8 @@ async function submitDailyEntry() {
       insertedLog=await dbInsert('history_logs',newLog,'Production history save failed');
     } catch(err) {
       if(stockUpdated&&item.db_id){ try{ await dbUpdate('master_catalog',previousToDb(previous),item.db_id,'Production rollback failed'); }catch(rb){ console.error(rb); } }
-      // If later production save failed, reverse the cardboard transaction we just made.
       if(cardboardDeducted){
         try {
-          // The insert helper intentionally does not request SELECT/RETURNING; remove the most recent matching local transaction if possible.
           const idx=cardboardStockList.indexOf(cardboardDeducted); if(idx>=0){cardboardStockList.splice(idx,1);saveCardboardLocally();}
           const q=await supabaseClient.from('cardboard_stock').delete().eq('cb_date',cardboardDeducted.date).eq('cb_type',cardboardDeducted.type).eq('used',cardboardToDeduct);
           if(q.error) console.warn('Cardboard rollback warning:',q.error);
@@ -3237,9 +3331,8 @@ async function savePackingListEntry(startNewCrate=false){
   if(alreadyPacked+pcsQty>Number(po.orderQty||0))return showToast(`Packing quantity exceeds PO quantity. Remaining: ${Math.max(0,Number(po.orderQty||0)-alreadyPacked)} Pcs.`,'error');
   const netWeight=parseFloat((pcsQty*(matched.unitWeight||0)).toFixed(2)),filterMonth=activePackingMonth||new Date().toLocaleString('en-US',{month:'long'});
   const newPl={pl_number:plNum,po_number:poNum,shipment_month:filterMonth,container,crate_no:crateNo,profile,item_code:itemCode,length,box_qty:1,pcs_qty:pcsQty,net_weight:netWeight,gross_weight:grossWeight,packing_date:plDate};
-  const {data:inserted,error}=await supabaseClient.from('packing_list').insert([newPl]).select().single();
-  if(error)throw new Error(`Packing List save failed: ${error.message}`);
-  packingLists.unshift({id:inserted?.id||-Date.now(),plNumber:plNum,poNumber:poNum,month:filterMonth,container,crateNo,profile,itemCode,length,boxQty:1,pcsQty,netWeight,grossWeight,date:plDate});
+  const inserted=await dbInsert('packing_list',newPl,'Packing List save failed');
+  packingLists.unshift({id:inserted.id||-Date.now(),plNumber:plNum,poNumber:poNum,month:filterMonth,container,crateNo,profile,itemCode,length,boxQty:1,pcsQty,netWeight,grossWeight,date:plDate});
   showToast(`${profile} added to ${crateNo}. You can add another profile to the same crate.`,'success');
 
   // Keep the crate/header information so multiple profiles can be entered into one crate.
@@ -3398,153 +3491,59 @@ function renderMasterCatalog() {
 
 function openMasterEditModal(index) { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editMasterIndex').value = index; document.getElementById('editMasterProfile').value = item.profile; document.getElementById('editMasterItemCode').value = item.itemCode || ''; document.getElementById('editMasterMaterial').value = item.material || ''; document.getElementById('editMasterLength').value = item.length; document.getElementById('editMasterExLength').value = item.exLength || ''; document.getElementById('editMasterUnitWeight').value = item.unitWeight; document.getElementById('editMasterBoxCapacity').value = item.boxCapacity || 100; document.getElementById('masterEditModal').style.display = 'flex'; }
 function closeMasterEditModal() { document.getElementById('masterEditModal').style.display = 'none'; }
-async function saveMasterCatalogEdit() { if(isAppBusy) return; isAppBusy=true; try { const index = parseInt(document.getElementById('editMasterIndex').value); const profile = document.getElementById('editMasterProfile').value.trim(); const itemCode = document.getElementById('editMasterItemCode').value.trim(); const material = document.getElementById('editMasterMaterial').value.trim(); const length = document.getElementById('editMasterLength').value.trim(); const exLength = document.getElementById('editMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('editMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('editMasterBoxCapacity').value) || 100; if (isNaN(index)) return; const item = masterData[index]; item.profile = profile; item.itemCode = itemCode; item.material = material; item.length = length; item.exLength = exLength; item.unitWeight = uw; item.boxCapacity = cap; if (item.db_id) { try { await supabaseClient.from('master_catalog').update({ profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap }).eq('id', item.db_id); } catch(e) {} } else { try { const r=await supabaseClient.from('master_catalog').insert([{ profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: item.cutQty, punch_qty: item.punchQty, wrap_qty: item.wrapQty, box_qty: item.boxQty, crate_qty: item.crateQty }]); if(r.error) throw r.error; } catch(e) { showToast(dbErrorMessage(e,'Master catalog save failed'),'error'); return; } } saveMasterExtrasLocally(); closeMasterEditModal(); showToast("Catalog updated successfully", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderProfileSummaryTable(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
-function deleteMasterItem(index) { if (currentUserRole !== 'Admin') return; showConfirm("Delete catalog item?", async () => { const item = masterData[index]; if (item && item.db_id) await supabaseClient.from('master_catalog').delete().eq('id', item.db_id); masterData.splice(index, 1); saveMasterExtrasLocally(); renderMasterCatalog(); showToast("Catalog item deleted", "success"); }); }
-function openAddMasterModal() { if (currentUserRole !== 'Admin') return; document.getElementById('addMasterProfile').value = ''; document.getElementById('addMasterItemCode').value = ''; document.getElementById('addMasterMaterial').value = ''; document.getElementById('addMasterLength').value = ''; document.getElementById('addMasterExLength').value = ''; document.getElementById('addMasterUnitWeight').value = ''; document.getElementById('addMasterBoxCapacity').value = '100'; document.getElementById('addMasterModal').style.display = 'flex'; }
-function closeAddMasterModal() { document.getElementById('addMasterModal').style.display = 'none'; }
-async function saveNewMasterProfile() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const profile = document.getElementById('addMasterProfile').value.trim(); const itemCode = document.getElementById('addMasterItemCode').value.trim(); const material = document.getElementById('addMasterMaterial').value.trim(); const length = document.getElementById('addMasterLength').value.trim(); const exLength = document.getElementById('addMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('addMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('addMasterBoxCapacity').value) || 100; if (!profile || !itemCode || !length) { showToast("Fill all fields", "warning"); return; } const exists = masterData.find(m => String(m.profile).trim() === profile && cleanLen(m.length) === cleanLen(length) && m.itemCode === itemCode); if (exists) { showToast("Already exists!", "error"); return; } const newEntry = { profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0 }; const mapped = { db_id: Date.now(), profile: profile, itemCode: itemCode, material: material, length: length, exLength: exLength, unitWeight: uw, cutQty: 0, punchQty: 0, wrapQty: 0, boxQty: 0, crateQty: 0, boxCapacity: cap }; try { const r=await supabaseClient.from('master_catalog').insert([newEntry]); if(r.error) throw r.error; } catch (e) { showToast(dbErrorMessage(e,'Master catalog add failed'),'error'); return; } masterData.push(mapped); masterData.sort((a, b) => (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) || (parseFloat(a.length)||0) - (parseFloat(b.length)||0)); saveMasterExtrasLocally(); closeAddMasterModal(); showToast("Profile added!", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
-async function resetAllDataToZero() {
-    if (currentUserRole !== 'Admin') return showToast('Only Admin can reset current stock.', 'error');
-    if (isAppBusy) return;
-    showConfirm(
-        '<b>RESET CURRENT STOCK</b><br><br>This will set Cut, Punch, Wrap, Box and Crate stock quantities to <b>0</b> in the Master Catalog.<br><br><span style="color:#059669;font-weight:700">Production History, Packing Lists, POs, Shipments, Reject/Recover and Cardboard data will NOT be deleted.</span>',
-        async () => {
-            isAppBusy = true; stockResetInProgress = true;
-            const button=document.getElementById('resetAllBtn'), oldHtml=button?button.innerHTML:'';
-            try {
-                if(button){button.disabled=true;button.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Resetting...';}
-                const pageSize=1000, rows=[];
-                for(let from=0;;from+=pageSize){
-                    const {data,error}=await supabaseClient.from('master_catalog').select('id,profile,length,item_code,cut_qty,punch_qty,wrap_qty,box_qty,crate_qty').range(from,from+pageSize-1);
-                    if(error) throw new Error(`Could not read Master Catalog: ${error.message}`);
-                    const page=data||[]; rows.push(...page); if(page.length<pageSize) break;
-                }
-                const failures=[];
-                for(let i=0;i<rows.length;i+=25){
-                    const batch=rows.slice(i,i+25);
-                    const results=await Promise.all(batch.map(row=>supabaseClient.from('master_catalog').update({cut_qty:0,punch_qty:0,wrap_qty:0,box_qty:0,crate_qty:0}).eq('id',row.id).then(({error})=>({row,error}))));
-                    results.forEach(({row,error})=>{if(error)failures.push(`${row.profile}/${row.length}/${row.item_code}: ${error.message}`);});
-                }
-                if(failures.length) throw new Error(`${failures.length} stock row(s) could not be reset.`);
-                const verify=[];
-                for(let from=0;;from+=pageSize){
-                    const {data,error}=await supabaseClient.from('master_catalog').select('id,cut_qty,punch_qty,wrap_qty,box_qty,crate_qty').range(from,from+pageSize-1);
-                    if(error) throw new Error(`Reset verification failed: ${error.message}`);
-                    const page=data||[]; verify.push(...page); if(page.length<pageSize) break;
-                }
-                const nonZeroRows=verify.filter(r=>[r.cut_qty,r.punch_qty,r.wrap_qty,r.box_qty,r.crate_qty].some(v=>(Number(v)||0)!==0));
-                if(nonZeroRows.length) throw new Error(`${nonZeroRows.length} stock row(s) are still non-zero after reset verification.`);
-                masterData.forEach(item=>{item.cutQty=0;item.punchQty=0;item.wrapQty=0;item.boxQty=0;item.crateQty=0;});
-                renderDashboard();renderProfileSummaryTable();renderHistoryData();renderBalanceWorkTable();renderPackingListTable();
-                showToast(`Current stock reset successfully (${verify.length} catalog rows verified). History preserved.`,'success');
-            } catch(e) {
-                console.error('Reset current stock error:',e);
-                await loadDataFromSupabase(true).catch(()=>{});
-                showToast(`Stock reset failed: ${e.message||'Database update failed.'}`,'error');
-            } finally {
-                if(button){button.disabled=false;button.innerHTML=oldHtml;} stockResetInProgress=false; isAppBusy=false;
-            }
-        }
-    );
+async function saveMasterCatalogEdit() {
+  if(isAppBusy) return; isAppBusy=true;
+  try {
+    const index=parseInt(document.getElementById('editMasterIndex').value);
+    if(isNaN(index)) return;
+    const item=masterData[index];
+    if(!item) return;
+    const profile=document.getElementById('editMasterProfile').value.trim();
+    const itemCode=document.getElementById('editMasterItemCode').value.trim();
+    const material=document.getElementById('editMasterMaterial').value.trim();
+    const length=document.getElementById('editMasterLength').value.trim();
+    const exLength=document.getElementById('editMasterExLength').value.trim();
+    const uw=Math.max(0,parseFloat(document.getElementById('editMasterUnitWeight').value)||0);
+    const cap=Math.max(1,parseInt(document.getElementById('editMasterBoxCapacity').value)||100);
+    if(!profile||!itemCode||!length) return showToast('Profile, Item Code and Length are required.','warning');
+    const values={profile,item_code:itemCode,material,length,ex_length:exLength,unit_weight:uw,box_capacity:cap};
+    if(item.db_id){
+      await dbUpdate('master_catalog',values,item.db_id,'Master catalog save failed');
+      Object.assign(item,{profile,itemCode,material,length,exLength,unitWeight:uw,boxCapacity:cap});
+      saveMasterExtrasLocally(); closeMasterEditModal(); showToast('Catalog updated successfully','success');
+    } else {
+      const row={...values,cut_qty:item.cutQty||0,punch_qty:item.punchQty||0,wrap_qty:item.wrapQty||0,box_qty:item.boxQty||0,crate_qty:item.crateQty||0};
+      await dbInsert('master_catalog',row,'Master catalog save failed');
+      closeMasterEditModal(); showToast('Catalog saved. Refreshing database ID...','success');
+      await loadDataFromSupabase(true);
+      return;
+    }
+    renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderProfileSummaryTable(); renderCardboardStock(); renderBalanceWorkTable(); renderDashboard();
+  } catch(e){ console.error(e); await loadDataFromSupabase(true).catch(()=>{}); showToast(e.message||'Master catalog save failed','error'); }
+  finally { isAppBusy=false; }
 }
 
-// Manual system health check for Admin troubleshooting. It never mutates data.
-window.runSystemHealthCheck = async function() {
-  const checks = [];
-  const requiredIds = ['dashboardTab','packingListTab','masterWeightChart','overallPoChart','overallPlChart','rejectDashboardChart','rejectProfileChart','plWeightChart','packingShipmentControls','packingListTableBody'];
-  requiredIds.forEach(id => checks.push({ check: `DOM: ${id}`, ok: !!document.getElementById(id) }));
-  checks.push({ check: 'Chart.js loaded', ok: typeof Chart !== 'undefined' });
-  checks.push({ check: 'XLSX loaded', ok: typeof XLSX !== 'undefined' });
-  checks.push({ check: 'Supabase client loaded', ok: !!supabaseClient });
-  checks.push({ check: 'Master catalog loaded', ok: masterData.length >= 0 });
-  checks.push({ check: 'Packing data loaded', ok: packingLists.length >= 0 });
-  const failed = checks.filter(c => !c.ok);
-  console.table(checks);
-  if (failed.length) showToast(`Health check: ${failed.length} issue(s) found. Check console.`, 'warning');
-  else showToast('System health check passed.', 'success');
-  return checks;
-};
+async function saveNewMasterProfile() {
+  if(isAppBusy) return; isAppBusy=true;
+  try {
+    if(currentUserRole!=='Admin') return;
+    const profile=document.getElementById('addMasterProfile').value.trim();
+    const itemCode=document.getElementById('addMasterItemCode').value.trim();
+    const material=document.getElementById('addMasterMaterial').value.trim();
+    const length=document.getElementById('addMasterLength').value.trim();
+    const exLength=document.getElementById('addMasterExLength').value.trim();
+    const uw=Math.max(0,parseFloat(document.getElementById('addMasterUnitWeight').value)||0);
+    const cap=Math.max(1,parseInt(document.getElementById('addMasterBoxCapacity').value)||100);
+    if(!profile||!itemCode||!length) return showToast('Fill all required fields','warning');
+    const exists=masterData.find(m=>String(m.profile).trim()===profile&&cleanLen(m.length)===cleanLen(length)&&String(m.itemCode||'').trim()===itemCode);
+    if(exists) return showToast('Already exists!','error');
+    await dbInsert('master_catalog',{profile,item_code:itemCode,material,length,ex_length:exLength,unit_weight:uw,box_capacity:cap,cut_qty:0,punch_qty:0,wrap_qty:0,box_qty:0,crate_qty:0},'Master catalog add failed');
+    closeAddMasterModal(); showToast('Profile added. Refreshing database...','success');
+    await loadDataFromSupabase(true);
+  } catch(e){ showToast(dbErrorMessage(e,'Master catalog add failed'),'error'); }
+  finally { isAppBusy=false; }
+}
 
-
-
-// -------------------- Production Reliability Helpers --------------------
-window.getAISDataHealth = function(){
-  const rows = [
-    ['Master Catalog', masterData.length], ['Production Orders', poList.length], ['Shipments', shipmentList.length],
-    ['Packing List', packingLists.length], ['Production History', historyLogs.length], ['Reject Logs', rejectLogs.length],
-    ['Legacy Recovery Logs', recoverLogs.length], ['Recovery Cut Logs', recoveryCutLogs.length], ['Recovery Wrapping Logs', recoveryWrapLogs.length], ['Cardboard Transactions', cardboardStockList.length], ['Cardboard Manual Data', cardboardManualData.length], ['Cardboard Manual Data', cardboardManualData.length]
-  ];
-  const duplicateKeys = new Set(), duplicates=[];
-  masterData.forEach(m=>{
-    const k=`${String(m.profile).trim()}|${String(m.itemCode).trim()}|${cleanLen(m.length)}`;
-    if(duplicateKeys.has(k)) duplicates.push(k); else duplicateKeys.add(k);
-  });
-  return {rows, duplicateMasterKeys:[...new Set(duplicates)], currentRole:currentUserRole, supabaseConfigured:!!supabaseClient};
-};
-
-window.runProductionAudit = async function(){
-  if(currentUserRole!=='Admin') return showToast('Only Admin can run the production audit.','error');
-  const report=[];
-  const checks=[
-    ['Supabase client', !!supabaseClient],
-    ['Chart.js', typeof Chart!=='undefined'],
-    ['Excel export library', typeof XLSX!=='undefined'],
-    ['Dashboard', !!document.getElementById('dashboardTab')],
-    ['Packing List', !!document.getElementById('packingListTab')],
-    ['Recovery', !!document.getElementById('rejectRecoverTab') || !!document.getElementById('recoverTab')],
-    ['Master Catalog loaded', Array.isArray(masterData)],
-    ['No duplicate in-memory catalog keys', window.getAISDataHealth().duplicateMasterKeys.length===0]
-  ];
-  checks.forEach(([name,ok])=>report.push({check:name,status:ok?'PASS':'CHECK'}));
-  console.table(report);
-  const bad=report.filter(x=>x.status!=='PASS');
-  showToast(bad.length?`Audit complete: ${bad.length} item(s) need attention.`:'Audit complete: all application checks passed.','success');
-  return report;
-};
-
-// A visible security notice is intentionally kept in the Admin health report:
-// the legacy role/password screen is client-side and must be replaced by Supabase Auth + RLS
-// before this application is exposed to untrusted internet users. The existing login is retained
-// for compatibility so current users are not locked out.
-window.getSecurityStatus = function(){
-  return {
-    clientSideRoleGate: true,
-    supabaseRLSRequired: true,
-    recommendation: 'Use Supabase Auth and database RLS for production access control.'
-  };
-};
-
-window.addEventListener('error', function(event){
-  const msg = String(event?.message || '');
-  console.error('AIS Tracker runtime error:', event?.error || msg || event);
-  // Browsers intentionally expose only "Script error." for some cross-origin CDN failures.
-  // Do not flood the user with misleading generic errors; application code reports actionable errors itself.
-  if (msg && msg !== 'Script error.' && !msg.includes('ResizeObserver')) {
-    const target = event?.target;
-    const isExternal = target && target.tagName === 'SCRIPT' && target.src && !target.src.startsWith(location.origin);
-    if (!isExternal && document.getElementById('mainContent')?.style.display !== 'none') {
-      showToast(`Runtime error: ${msg}`,'error');
-    }
-  }
-});
-window.addEventListener('unhandledrejection', function(event){
-  const reason=event.reason; console.error('AIS Tracker unhandled promise rejection:',reason);
-  const msg = String(reason?.message || reason || 'Unexpected background error.');
-  // Background realtime/chart/CDN promises must not be presented as a failed save.
-  // Actual save functions already catch and display their own database errors.
-  const lower=msg.toLowerCase();
-  const noisy = lower.includes('resizeobserver') || lower.includes('aborterror') || lower === 'script error.' || lower.includes('load failed');
-  const looksDatabase = lower.includes('supabase') || lower.includes('database') || lower.includes('row-level security') || lower.includes('permission denied') || lower.includes('violates') || lower.includes('relation') || lower.includes('column');
-  if(!noisy && looksDatabase && document.getElementById('mainContent')?.style.display !== 'none') showToast(`Database background sync issue: ${msg}`,'warning');
-  event.preventDefault();
-});
-
-// END OF SCRIPT
-
-window.dashboardDataPeriod = dashboardDataPeriod;
-window.setDashboardPeriodBadge = setDashboardPeriodBadge;
-
-// ===== V16 stability helpers for existing UI hooks =====
 function populateCbProfileDropdown(){
   const p=document.getElementById('cbSelectProfile'); if(!p) return;
   p.innerHTML='<option value="">-- Choose Profile --</option>';
@@ -3631,26 +3630,17 @@ function renderDailyInstructions(){
   box.innerHTML=visible.length?visible.map(x=>`<div class="card" style="margin:0;border-left:5px solid ${x.priority==='High'?'#e11d48':'#d97706'};background:#fffdf5;"><div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;font-weight:800;color:#92400e;"><span>${x.target_date||'-'}</span><span>${x.priority||'Normal'}</span></div><h4 style="margin:8px 0;color:#334155;">${x.target_user||'All Sections'}</h4><p style="margin:0;color:#475569;font-weight:600;font-size:13px;line-height:1.5;">${x.message||''}</p><div style="margin-top:10px;font-size:10px;color:#94a3b8;">${x.status||''}</div></div>`).join(''):'<div style="grid-column:1/-1;text-align:center;padding:24px;color:var(--text-muted);font-weight:700;">No active instructions.</div>';
 }
 async function saveDailyInstruction(){
-  if(isAppBusy)return;
   if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return;
-  isAppBusy=true; setSaveButtonBusy('saveInstructionBtn',true,'Saving...');
-  try{
-    const rec={target_date:document.getElementById('planDate').value,target_user:document.getElementById('planUser').value,priority:document.getElementById('planPriority').value,message:document.getElementById('planMessage').value.trim(),status:'Pending',action_taken:''};
-    if(!rec.target_date||!rec.message){showToast('Enter date and instruction message.','warning');return;}
-    const r=await supabaseClient.from('daily_instructions').insert([rec]);
-    if(r.error)throw r.error;
-    dailyInstructionsList.unshift({...rec,id:-Date.now()});
-    renderDailyInstructions(); document.getElementById('planMessage').value=''; showToast('Instruction pinned.','success');
-  }catch(e){showToast(dbErrorMessage(e,'Instruction save failed'),'error');}
-  finally{isAppBusy=false;setSaveButtonBusy('saveInstructionBtn',false);}
+  const rec={target_date:document.getElementById('planDate').value,target_user:document.getElementById('planUser').value,priority:document.getElementById('planPriority').value,message:document.getElementById('planMessage').value.trim(),status:'Pending',action_taken:''};
+  if(!rec.target_date||!rec.message)return showToast('Enter date and instruction message.','warning');
+  try{const r=await supabaseClient.from('daily_instructions').insert([rec]);if(r.error)throw r.error;dailyInstructionsList.unshift({...rec,id:-Date.now()});renderDailyInstructions();document.getElementById('planMessage').value='';showToast('Instruction pinned.','success');}catch(e){showToast(dbErrorMessage(e,'Instruction save failed'),'error');}
 }
-
 function openPoEditModal(idx){const p=poList[idx];if(!p)return;document.getElementById('editPoId').value=p.id;document.getElementById('editPoDate').value=p.date||'';document.getElementById('editPoNumber').value=p.poNumber||'';document.getElementById('editPoProfile').value=p.profile||'';document.getElementById('editPoLength').value=p.length||'';document.getElementById('editPoQty').value=p.orderQty||0;document.getElementById('poEditModal').style.display='flex';}
 function closePoEditModal(){document.getElementById('poEditModal').style.display='none';}
-async function savePoEdit(){if(isAppBusy)return; isAppBusy=true; const id=document.getElementById('editPoId').value;const p=poList.find(x=>String(x.id)===String(id));if(!p)return;const vals={po_date:document.getElementById('editPoDate').value,po_number:document.getElementById('editPoNumber').value.trim(),profile:document.getElementById('editPoProfile').value.trim(),length:cleanLen(document.getElementById('editPoLength').value),order_qty:Math.max(1,parseInt(document.getElementById('editPoQty').value)||0)};try{const r=await supabaseClient.from('production_orders').update(vals).eq('id',id);if(r.error)throw r.error;Object.assign(p,{date:vals.po_date,poNumber:vals.po_number,profile:vals.profile,length:vals.length,orderQty:vals.order_qty});closePoEditModal();updatePoFilters();renderPoDetailsTable();renderPoCharts();renderBalanceWorkTable();showToast('PO updated.','success');}catch(e){showToast(dbErrorMessage(e,'PO update failed'),'error');}finally{isAppBusy=false;}}
+async function savePoEdit(){const id=document.getElementById('editPoId').value;const p=poList.find(x=>String(x.id)===String(id));if(!p)return;const vals={po_date:document.getElementById('editPoDate').value,po_number:document.getElementById('editPoNumber').value.trim(),profile:document.getElementById('editPoProfile').value.trim(),length:cleanLen(document.getElementById('editPoLength').value),order_qty:Math.max(1,parseInt(document.getElementById('editPoQty').value)||0)};try{const r=await supabaseClient.from('production_orders').update(vals).eq('id',id);if(r.error)throw r.error;Object.assign(p,{date:vals.po_date,poNumber:vals.po_number,profile:vals.profile,length:vals.length,orderQty:vals.order_qty});closePoEditModal();updatePoFilters();renderPoDetailsTable();renderPoCharts();renderBalanceWorkTable();showToast('PO updated.','success');}catch(e){showToast(dbErrorMessage(e,'PO update failed'),'error');}}
 function openShipmentEditModal(idx){const s=shipmentList[idx];if(!s)return;document.getElementById('editShipmentId').value=s.id;document.getElementById('editShipmentDate').value=s.date||'';document.getElementById('editShipmentContainer').value=s.container||'';document.getElementById('editShipmentQty').value=s.shippedQty||0;document.getElementById('shipmentEditModal').style.display='flex';}
 function closeShipmentEditModal(){document.getElementById('shipmentEditModal').style.display='none';}
-async function saveShipmentEdit(){if(isAppBusy)return; isAppBusy=true; const id=document.getElementById('editShipmentId').value;const s=shipmentList.find(x=>String(x.id)===String(id));if(!s)return;const date=document.getElementById('editShipmentDate').value,container=document.getElementById('editShipmentContainer').value,qty=Math.max(1,parseInt(document.getElementById('editShipmentQty').value)||0);try{const r=await supabaseClient.from('shipments').update({shipment_date:date,container:container,shipped_qty:qty}).eq('id',id);if(r.error)throw r.error;Object.assign(s,{date,container,shippedQty:qty});closeShipmentEditModal();renderShipmentHistoryTable();renderDashboard();renderBalanceWorkTable();showToast('Shipment updated.','success');}catch(e){showToast(dbErrorMessage(e,'Shipment update failed'),'error');}finally{isAppBusy=false;}}
+async function saveShipmentEdit(){const id=document.getElementById('editShipmentId').value;const s=shipmentList.find(x=>String(x.id)===String(id));if(!s)return;const date=document.getElementById('editShipmentDate').value,container=document.getElementById('editShipmentContainer').value,qty=Math.max(1,parseInt(document.getElementById('editShipmentQty').value)||0);try{const r=await supabaseClient.from('shipments').update({shipment_date:date,container:container,shipped_qty:qty}).eq('id',id);if(r.error)throw r.error;Object.assign(s,{date,container,shippedQty:qty});closeShipmentEditModal();renderShipmentHistoryTable();renderDashboard();renderBalanceWorkTable();showToast('Shipment updated.','success');}catch(e){showToast(dbErrorMessage(e,'Shipment update failed'),'error');}}
 window.openPoEditModal=openPoEditModal; window.openShipmentEditModal=openShipmentEditModal;
 
 window.updateProductionCardboardAvailability=updateProductionCardboardAvailability;
