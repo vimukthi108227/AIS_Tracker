@@ -904,6 +904,228 @@ function setDashboardNavPlacement(tabId){
   }
 }
 
+
+function renderSmartDailyPlan() {
+  const esc = v => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const n = v => Number(v) || 0;
+  const keyOf = (profile, length) => `${String(profile||'').trim()}|${cleanLen(length)}`;
+  const getMaster = (profile, length) => masterData.find(m =>
+    String(m.profile||'').trim() === String(profile||'').trim() &&
+    cleanLen(m.length) === cleanLen(length)
+  );
+  const unitWeight = m => n(m?.unitWeight);
+  const weight = (qty, m) => n(qty) * unitWeight(m);
+
+  // Read-only: snapshot current master stock.
+  const stockRows = masterData.map(m => ({
+    ...m,
+    cut: n(m.cutQty), punch: n(m.punchQty), wrap: n(m.wrapQty),
+    box: n(m.boxQty), crate: n(m.crateQty),
+    cap: Math.max(1, n(m.boxCapacity) || 100)
+  }));
+
+  // PO demand by Profile + Length, using the same shipped-quantity concept
+  // already used by the Production Order page.
+  const poDemand = new Map();
+  poList.forEach(po => {
+    const k = keyOf(po.profile, po.length);
+    const required = Math.max(0, n(po.orderQty));
+    const shipped = shipmentList
+      .filter(s => String(s.poNumber||'').trim() === String(po.poNumber||'').trim()
+        && String(s.profile||'').trim() === String(po.profile||'').trim()
+        && cleanLen(s.length) === cleanLen(po.length))
+      .reduce((sum,s) => sum + n(s.shippedQty), 0);
+    const rem = Math.max(0, required - shipped);
+    poDemand.set(k, (poDemand.get(k) || 0) + rem);
+  });
+
+  const punchPlan = [];
+  const wrapPlan = [];
+  const boxPlan = [];
+  const alerts = [];
+  const whyNot = [];
+
+  stockRows.forEach(m => {
+    const profile = String(m.profile||'').trim();
+    const length = cleanLen(m.length);
+    if (!profile || !length) return;
+    const item = m.itemCode || '-';
+    const demand = poDemand.get(keyOf(profile,length)) || 0;
+
+    // CUT -> PUNCH: for profiles that use punching, cut stock is the input.
+    // Punch-bypass profiles are intentionally excluded from this stage plan.
+    const bypass = typeof isPunchBypassed === 'function' ? isPunchBypassed(profile, length) : false;
+    if (!bypass) {
+      if (m.cut >= 100) {
+        const qty = Math.floor(m.cut);
+        punchPlan.push({m, profile, length, item, qty, wt:weight(qty,m), demand});
+      } else if (m.cut > 0) {
+        whyNot.push({stage:'Punch', profile, length, item, qty:m.cut, minimum:100, reason:`Only ${m.cut.toLocaleString()} Pcs in Cut stage`});
+      }
+    }
+
+    // PUNCH/CUT -> WRAP: punch stock for normal profiles; cut stock for bypass profiles.
+    const sourceStage = bypass ? 'Cut' : 'Punch';
+    const sourceQty = bypass ? m.cut : m.punch;
+    if (sourceQty >= 200) {
+      const qty = Math.floor(sourceQty);
+      wrapPlan.push({m, profile, length, item, qty, wt:weight(qty,m), sourceStage, demand});
+    } else if (sourceQty > 0) {
+      whyNot.push({stage:'Wrapping', profile, length, item, qty:sourceQty, minimum:200, reason:`Only ${sourceQty.toLocaleString()} Pcs in ${sourceStage} stage`});
+    }
+
+    // WRAP -> BOX: available boxes are limited by wrapping Pcs and cardboard.
+    if (m.wrap > 0) {
+      const possibleByWrap = Math.floor(m.wrap / m.cap);
+      const cardboard = Math.max(0, n(getAvailableCardboard(profile, item, length)));
+      const possibleBoxes = Math.min(possibleByWrap, Math.floor(cardboard));
+      if (possibleBoxes > 0) {
+        const pcs = possibleBoxes * m.cap;
+        boxPlan.push({m, profile, length, item, wrap:m.wrap, cap:m.cap, cardboard, boxes:possibleBoxes, pcs, wt:weight(pcs,m), demand});
+      }
+      if (possibleByWrap > cardboard) {
+        alerts.push({
+          type:'cardboard', level:'High', profile, length, item,
+          message:`Wrapping stock ${m.wrap.toLocaleString()} Pcs can support ${possibleByWrap} boxes, but cardboard available is only ${cardboard}. Short ${Math.max(0,possibleByWrap-cardboard)} box(es).`
+        });
+      }
+    }
+  });
+
+  // Ready-to-pack crates: use current selected Packing List month/container and
+  // require every line in a crate to have enough Box-stage stock. Manual-completed
+  // crates are excluded because they are no longer work for today.
+  let cratePlan = [];
+  try {
+    if (typeof ensurePackingSelection === 'function') ensurePackingSelection();
+    const month = activePackingMonth;
+    const container = activePackingContainer;
+    const records = (typeof getPackingContainerRecords === 'function')
+      ? getPackingContainerRecords(month, container)
+      : packingLists.filter(p => String(p.month||'')===String(month||'') && String(p.container||'')===String(container||''));
+    const groups = new Map();
+    records.forEach(r => {
+      const crate = String(r.crateNo||'').trim();
+      if (!crate) return;
+      if (!groups.has(crate)) groups.set(crate, []);
+      groups.get(crate).push(r);
+    });
+    groups.forEach((items, crateNo) => {
+      if (typeof isManualCrateComplete === 'function' && isManualCrateComplete(crateNo, container, month)) return;
+      let ready = true;
+      let totalPcs = 0, totalWt = 0;
+      const reasons = [];
+      items.forEach(r => {
+        const m = getMaster(r.profile, r.length);
+        const req = Math.max(0,n(r.pcsQty));
+        const availableBox = n(m?.boxQty);
+        totalPcs += req;
+        totalWt += weight(req,m);
+        if (availableBox < req) {
+          ready = false;
+          reasons.push(`${r.profile}/${cleanLen(r.length)}: need ${req}, Box stock ${availableBox}`);
+        }
+      });
+      if (ready) cratePlan.push({crateNo, totalPcs, totalWt, container, month, items});
+      else if (reasons.length) alerts.push({type:'crate', level:'Medium', profile:crateNo, length:'', item:'', message:`Crate ${crateNo} is not ready: ${reasons.join(' • ')}`});
+    });
+  } catch(e) {
+    console.warn('Smart Daily Plan crate calculation skipped:', e);
+  }
+
+  // Prioritize work that has outstanding PO demand.
+  const priority = row => row.demand > 0 ? 'High' : 'Normal';
+  punchPlan.sort((a,b)=> (b.demand-a.demand) || (b.qty-a.qty));
+  wrapPlan.sort((a,b)=> (b.demand-a.demand) || (b.qty-a.qty));
+  boxPlan.sort((a,b)=> (b.demand-a.demand) || (b.boxes-a.boxes));
+  cratePlan.sort((a,b)=> String(a.crateNo).localeCompare(String(b.crateNo), undefined, {numeric:true}));
+
+  // Summary KPIs.
+  const punchPcs = punchPlan.reduce((s,r)=>s+r.qty,0);
+  const wrapPcs = wrapPlan.reduce((s,r)=>s+r.qty,0);
+  const boxQty = boxPlan.reduce((s,r)=>s+r.boxes,0);
+  const crateQty = cratePlan.length;
+  const alertCount = alerts.length;
+  const summary = document.getElementById('smartDailyPlanSummary');
+  if(summary) summary.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;">
+      ${[
+        ['fa-arrow-right-to-bracket','#0369a1','Punch Today',`${punchPcs.toLocaleString()} Pcs`,`from ${punchPlan.length} profile(s)`],
+        ['fa-bolt','#7c3aed','Wrap Today',`${wrapPcs.toLocaleString()} Pcs`,`from ${wrapPlan.length} profile(s)`],
+        ['fa-box-open','#047857','Box Today',`${boxQty.toLocaleString()} Boxes`,`from current Wrap + cardboard`],
+        ['fa-boxes-stacked','#b45309','Crates Ready',`${crateQty} Crates`,`from active Packing List`],
+        ['fa-triangle-exclamation','#be123c','Alerts',`${alertCount}`,`material / packing issues`]
+      ].map(x=>`<div style="background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:13px;">
+        <div style="font-size:10px;font-weight:900;color:#64748b;text-transform:uppercase;">${x[2]}</div>
+        <div style="font-size:22px;font-weight:950;color:${x[1]};margin-top:3px;">${x[3]}</div>
+        <div style="font-size:10px;font-weight:700;color:#64748b;">${x[4]}</div>
+      </div>`).join('')}
+    </div>`;
+
+  const punchHost = document.getElementById('smartPunchPlan');
+  if(punchHost) punchHost.innerHTML = punchPlan.length ? `
+    <div style="overflow:auto;"><table class="data-table" style="width:100%;min-width:760px;">
+      <thead><tr><th>Priority</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Cut Stock</th><th>Recommended Punch</th><th>Weight</th></tr></thead>
+      <tbody>${punchPlan.map(r=>`<tr>
+        <td><b style="color:${priority(r)==='High'?'#dc2626':'#2563eb'}">${priority(r)}</b></td>
+        <td><b>${esc(r.profile)}</b></td><td>${esc(r.item)}</td><td>${esc(r.length)} mm</td>
+        <td>${r.m.cut.toLocaleString()} Pcs</td><td><b style="color:#0369a1">${r.qty.toLocaleString()} Pcs</b></td><td>${r.wt.toFixed(2)} kg</td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : `<div style="padding:18px;text-align:center;color:#64748b;font-weight:800;">No Cut-stage profile has the minimum 100 Pcs for Punching right now.</div>`;
+
+  const wrapHost = document.getElementById('smartWrapPlan');
+  if(wrapHost) wrapHost.innerHTML = wrapPlan.length ? `
+    <div style="overflow:auto;"><table class="data-table" style="width:100%;min-width:820px;">
+      <thead><tr><th>Priority</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Source</th><th>Available</th><th>Recommended Wrap</th><th>Weight</th></tr></thead>
+      <tbody>${wrapPlan.map(r=>`<tr>
+        <td><b style="color:${priority(r)==='High'?'#dc2626':'#7c3aed'}">${priority(r)}</b></td>
+        <td><b>${esc(r.profile)}</b></td><td>${esc(r.item)}</td><td>${esc(r.length)} mm</td>
+        <td>${r.sourceStage}</td><td>${r.qty.toLocaleString()} Pcs</td>
+        <td><b style="color:#7c3aed">${r.qty.toLocaleString()} Pcs</b></td><td>${r.wt.toFixed(2)} kg</td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : `<div style="padding:18px;text-align:center;color:#64748b;font-weight:800;">No profile has the minimum 200 Pcs for Wrapping right now.</div>`;
+
+  const boxHost = document.getElementById('smartBoxPlan');
+  if(boxHost) boxHost.innerHTML = boxPlan.length ? `
+    <div style="overflow:auto;"><table class="data-table" style="width:100%;min-width:900px;">
+      <thead><tr><th>Priority</th><th>Profile</th><th>Length</th><th>Wrap Stock</th><th>Pcs / Box</th><th>Cardboard</th><th>Can Pack</th><th>Pcs</th><th>Weight</th></tr></thead>
+      <tbody>${boxPlan.map(r=>`<tr>
+        <td><b style="color:${priority(r)==='High'?'#dc2626':'#047857'}">${priority(r)}</b></td>
+        <td><b>${esc(r.profile)}</b><br><small>${esc(r.item)}</small></td><td>${esc(r.length)} mm</td>
+        <td>${r.wrap.toLocaleString()} Pcs</td><td>${r.cap.toLocaleString()}</td><td>${r.cardboard.toLocaleString()} Boxes</td>
+        <td><b style="color:#047857">${r.boxes.toLocaleString()} Boxes</b></td><td>${r.pcs.toLocaleString()} Pcs</td><td>${r.wt.toFixed(2)} kg</td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : `<div style="padding:18px;text-align:center;color:#64748b;font-weight:800;">No Box Packing quantity is currently available from Wrap stock + cardboard stock.</div>`;
+
+  const crateHost = document.getElementById('smartCratePlan');
+  if(crateHost) crateHost.innerHTML = cratePlan.length ? `
+    <div style="overflow:auto;"><table class="data-table" style="width:100%;min-width:700px;">
+      <thead><tr><th>Container</th><th>Crate No.</th><th>Profiles</th><th>Ready Qty</th><th>Weight</th><th>Action</th></tr></thead>
+      <tbody>${cratePlan.map(r=>`<tr>
+        <td>${esc(r.container)}</td><td><b style="color:#b45309">${esc(r.crateNo)}</b></td>
+        <td>${r.items.length}</td><td>${r.totalPcs.toLocaleString()} Pcs</td><td>${r.totalWt.toFixed(2)} kg</td>
+        <td><button class="btn" style="padding:5px 9px;background:#b45309;border:1px solid #b45309;" onclick="switchTab('packingListTab', document.querySelector('[onclick*=\\'packingListTab\\']'))"><i class="fa-solid fa-boxes-packing"></i> Open Packing</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : `<div style="padding:18px;text-align:center;color:#64748b;font-weight:800;">No Ready-to-Pack crates in the active Packing List.</div>`;
+
+  const alertHost = document.getElementById('smartAlerts');
+  if(alertHost) alertHost.innerHTML = alerts.length ? alerts.map(a=>`
+    <div style="display:flex;gap:10px;align-items:flex-start;padding:11px 12px;margin-bottom:8px;border-radius:12px;background:${a.level==='High'?'#fff1f2':'#fff7ed'};border:1px solid ${a.level==='High'?'#fecdd3':'#fed7aa'};">
+      <i class="fa-solid fa-triangle-exclamation" style="color:${a.level==='High'?'#e11d48':'#ea580c'};margin-top:2px;"></i>
+      <div><b style="color:${a.level==='High'?'#be123c':'#9a3412'}">${esc(a.level)} Alert — ${esc(a.profile)}</b><div style="font-size:12px;color:#475569;margin-top:2px;">${esc(a.message)}</div></div>
+    </div>`).join('') : `<div style="padding:16px;text-align:center;color:#047857;font-weight:900;background:#f0fdf4;border-radius:12px;">✓ No current material / crate readiness alerts.</div>`;
+
+  const whyHost = document.getElementById('smartWhyNot');
+  if(whyHost) whyHost.innerHTML = whyNot.length ? `
+    <div style="overflow:auto;"><table class="data-table" style="width:100%;min-width:720px;">
+      <thead><tr><th>Stage</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Available</th><th>Minimum</th><th>Reason</th></tr></thead>
+      <tbody>${whyNot.slice(0,30).map(r=>`<tr>
+        <td><b>${esc(r.stage)}</b></td><td>${esc(r.profile)}</td><td>${esc(r.item)}</td><td>${esc(r.length)} mm</td>
+        <td>${r.qty.toLocaleString()} Pcs</td><td>${r.minimum} Pcs</td><td style="color:#b45309;font-weight:800">${esc(r.reason)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : `<div style="padding:16px;text-align:center;color:#047857;font-weight:900;background:#f0fdf4;border-radius:12px;">✓ No profiles are currently waiting for the minimum Punch/Wrap quantity.</div>`;
+}
+
 function switchTab(tabId, btn) {
   setDashboardNavPlacement(tabId);
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active')); 
@@ -921,7 +1143,7 @@ function switchTab(tabId, btn) {
       if (tabId === 'poManagementTab') { updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); } 
       if (tabId === 'shipmentTab') { populateShipmentPoDropdown(); window.renderShipmentHistoryTable(); } 
       if (tabId === 'packingListTab') { populatePlPoDropdown(); renderPackingListTable(); } 
-      if (tabId === 'dailyPlanTab') renderDailyInstructions(); 
+      if (tabId === 'dailyPlanTab') renderDailyInstructions();      if (tabId === 'smartDailyPlanTab') renderSmartDailyPlan(); 
       if (tabId === 'rejectTrackerTab') { populateRejProfile(); renderRejectTable(); populateRecProfile(); renderRecoverTable(); }
   }, 10);
 }
