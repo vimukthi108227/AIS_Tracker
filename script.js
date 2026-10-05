@@ -371,8 +371,12 @@ window.saveGenericEdit = async function() {
                 if(cat) updateObj.net_weight = Number(updateObj.pcs_qty||0) * (Number(cat.unitWeight)||0);
             }
         }
+        const localRow = table==='packing_list' ? packingLists.find(x=>String(x.id)===String(id)) : (table==='history_logs' ? historyLogs.find(x=>String(x.id)===String(id)) : null);
+        const oldObj={};
+        if(localRow){ Object.keys(updateObj).forEach(k=>{ const map={pcs_qty:'pcsQty',crate_no:'crateNo',cut_qty:'cutQty',punch_qty:'punchQty',wrap_qty:'wrapQty',box_qty:'boxQty',crate_qty:'crateQty'}; oldObj[k]=localRow[map[k]||k]; }); }
         const result = await supabaseClient.from(table).update(updateObj).eq('id', id);
         if(result.error) throw result.error;
+        if(localRow && Object.keys(oldObj).length) aisRegisterUndo(`Edit ${table.replace('_',' ')} • ID ${id}`,async()=>{await aisUpdateById(table,id,oldObj);},table==='packing_list'?'packingListTab':'historyTab');
         document.getElementById('genericEditModal').style.display = 'none';
         showToast("Record updated successfully!", "success");
         await loadDataFromSupabase(true);
@@ -517,6 +521,7 @@ window.clearShipmentDeadline = async function() {
 window.onload = function() {
   injectGenericEditModal();
   injectCountdownUI();
+  aisInjectUndoButtons();
   startLiveClock(); const today = new Date().toISOString().split('T')[0];
   ['entryDate', 'poDate', 'shipmentDate', 'plDate', 'historyDateSelect', 'cbDate', 'cbManualDate', 'planDate', 'recDate', 'rwDate'].forEach(id => { if(document.getElementById(id)) document.getElementById(id).value = today; });
   if(document.getElementById('rejDate')) document.getElementById('rejDate').value = today;
@@ -1271,7 +1276,16 @@ async function saveRejectEntry() {
       if(stockChanged && matched.db_id){ try{ await supabaseClient.from('master_catalog').update({cut_qty:matched.cutQty,punch_qty:matched.punchQty}).eq('id',matched.db_id); }catch(rb){ console.error('Reject stock rollback failed:',rb); } }
       throw err;
     }
-    matched.cutQty=nextCut; matched.punchQty=nextPunch; rejectLogs.unshift({...entry,id:-Date.now()});
+    matched.cutQty=nextCut; matched.punchQty=nextPunch;
+    const rejectPrevious={cutQty:Number(matched.cutQty)||0,punchQty:Number(matched.punchQty)||0};
+    // The local object is already updated below; calculate the exact values before this entry.
+    rejectPrevious.cutQty=nextCut+(punchStage?pcs:0);
+    rejectPrevious.punchQty=nextPunch+(wrapStage?pcs:0);
+    aisRegisterUndo(`Reject Entry • ${p} / ${l} • ${pcs} Pcs`,async()=>{
+      await aisDeleteLatest('reject_logs',{reject_date:entry.reject_date,shift:entry.shift,team:entry.team,location:entry.location,stage:entry.stage,profile:entry.profile,item_code:entry.item_code,length:entry.length,pcs:entry.pcs,weight:entry.weight});
+      if(matched.db_id) await aisUpdateById('master_catalog',matched.db_id,{cut_qty:rejectPrevious.cutQty,punch_qty:rejectPrevious.punchQty});
+    },'rejectTrackerTab');
+    rejectLogs.unshift({...entry,id:-Date.now()});
     renderRejectTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable();
     showToast('Reject saved successfully.','success'); document.getElementById('rejectEntryForm').reset(); document.getElementById('rejDate').value=d;
   } catch(e){ console.error(e); showToast(e.message||'Reject save failed.','error'); } finally { isAppBusy=false; }
@@ -1445,6 +1459,7 @@ async function saveRecoverEntry(){
     const cutWeight=parseFloat((pcs*targetUnitWeight).toFixed(2));
     const entry={cut_date:d,source_profile:sp,source_item_code:sic,original_length:ol,new_profile:np,new_item_code:nic,new_length:nl,cut_pcs:pcs,cut_weight:cutWeight};
     const {error}=await supabaseClient.from('recovery_cut_logs').insert([entry]);if(error)throw new Error(`Recovery Cut save failed: ${error.message}`);
+    aisRegisterUndo(`Recovery Cut • ${np} / ${nl} • ${pcs} Pcs`,async()=>{await aisDeleteLatest('recovery_cut_logs',{cut_date:entry.cut_date,source_profile:entry.source_profile,source_item_code:entry.source_item_code,original_length:entry.original_length,new_profile:entry.new_profile,new_item_code:entry.new_item_code,new_length:entry.new_length,cut_pcs:entry.cut_pcs,cut_weight:entry.cut_weight});},'rejectTrackerTab');
     recoveryCutLogs.unshift({...entry,id:-Date.now()});renderRecoverTable();renderDashboard();showRecAvailable();renderRecoveryCutStockTable();showToast(`${pcs} pcs converted to ${np} / ${nl} mm. Cut stock was NOT added to normal production stock.`,'success');
     document.getElementById('rejectRecoverForm').reset();document.getElementById('recDate').value=d;populateRecProfile();
   }catch(e){console.error(e);showToast(e.message||'Recovery Cut save failed.','error');}finally{isAppBusy=false;}
@@ -1510,6 +1525,10 @@ async function saveRecoverWrapEntry(){
       throw saveErr;
     }
 
+    aisRegisterUndo(`Recovery Wrapping • ${p} / ${l} • ${pcs} Pcs`,async()=>{
+      await aisDeleteLatest('recovery_wrap_logs',{wrap_date:entry.wrap_date,profile:entry.profile,item_code:entry.item_code,length:entry.length,available_cut_pcs:entry.available_cut_pcs,wrap_pcs:entry.wrap_pcs,wrap_weight:entry.wrap_weight});
+      if(m?.db_id) await aisUpdateById('master_catalog',m.db_id,{wrap_qty:previousWrapQty});
+    },'rejectTrackerTab');
     recoveryWrapLogs.unshift({...entry,id:-Date.now()});
     renderRecoverTable();
     renderRecoveryCutStockTable();
@@ -1609,6 +1628,86 @@ function safeChartDestroy(instance, canvasOrId = null) {
 function dbErrorMessage(error, action) {
   const msg = error?.message || error?.details || error?.hint || 'Unknown database error';
   return `${action}: ${msg}`;
+}
+
+// ===== AIS GLOBAL UNDO / REVERT SYSTEM =====
+// Keeps a short in-session stack of successful data-entry/edit operations.
+// It never touches existing data until the user explicitly presses Undo.
+let aisUndoStack = [];
+let aisUndoBusy = false;
+
+function aisRegisterUndo(label, undoFn, tabId='') {
+  if (typeof undoFn !== 'function') return;
+  aisUndoStack.push({ label: String(label || 'Last Change'), undoFn, tabId, at: Date.now() });
+  if (aisUndoStack.length > 20) aisUndoStack.shift();
+  aisUpdateUndoButtons();
+}
+
+async function aisFindLatestId(table, matchObj) {
+  let q = supabaseClient.from(table).select('id');
+  Object.entries(matchObj || {}).forEach(([k,v]) => { if(v !== undefined && v !== null) q = q.eq(k, v); });
+  const { data, error } = await q.order('id', { ascending: false }).limit(1);
+  if (error) throw error;
+  return data?.[0]?.id ?? null;
+}
+
+async function aisDeleteLatest(table, matchObj) {
+  const id = await aisFindLatestId(table, matchObj);
+  if (id === null || id === undefined) throw new Error(`Undo could not find the saved ${table} record.`);
+  const { error } = await supabaseClient.from(table).delete().eq('id', id);
+  if (error) throw error;
+  return id;
+}
+
+async function aisUpdateById(table, id, values) {
+  if(id === null || id === undefined) throw new Error(`Undo could not identify the ${table} record.`);
+  const { error } = await supabaseClient.from(table).update(values).eq('id', id);
+  if (error) throw error;
+}
+
+function aisUndoLabel(){ return aisUndoStack.length ? `↩ Undo: ${aisUndoStack[aisUndoStack.length-1].label}` : '↩ Undo Last Change'; }
+function aisUpdateUndoButtons(){
+  document.querySelectorAll('.ais-undo-btn').forEach(btn=>{
+    btn.disabled = !aisUndoStack.length || aisUndoBusy;
+    btn.innerHTML = `<i class="fa-solid fa-rotate-left"></i> ${aisUndoLabel()}`;
+    btn.title = aisUndoStack.length ? `Undo ${aisUndoStack[aisUndoStack.length-1].label}` : 'No recent change to undo';
+  });
+}
+
+window.aisUndoLastAction = async function(){
+  if(aisUndoBusy || !aisUndoStack.length) return showToast('There is no recent change to undo.','info');
+  if(currentUserRole!=='Admin' && currentUserRole!=='Planner') return showToast('Undo is available to Admin / Planner only.','warning');
+  const action=aisUndoStack[aisUndoStack.length-1];
+  if(!confirm(`Undo this change?\n\n${action.label}\n\nThe saved data will be reverted.`)) return;
+  aisUndoBusy=true; aisUpdateUndoButtons();
+  try{
+    await action.undoFn();
+    aisUndoStack.pop();
+    await loadDataFromSupabase(true).catch(()=>{});
+    showToast(`Undo successful: ${action.label}`,'success');
+  }catch(e){
+    console.error('AIS Undo failed:',e);
+    showToast(dbErrorMessage(e,'Undo failed. No data was intentionally removed/changed by the undo system.'),'error');
+  }finally{ aisUndoBusy=false; aisUpdateUndoButtons(); }
+};
+
+function aisInjectUndoButtons(){
+  const targets=['adminEntryTab','rejectTrackerTab','poManagementTab','shipmentTab','packingListTab','cardboardTab','historyTab','masterListTab'];
+  targets.forEach(tabId=>{
+    const tab=document.getElementById(tabId); if(!tab || tab.querySelector('.ais-undo-btn')) return;
+    const card=tab.querySelector('.card'); if(!card) return;
+    const head=card.querySelector('h2,h3'); if(!head) return;
+    const wrap=document.createElement('div');
+    wrap.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;';
+    head.parentNode.insertBefore(wrap,head);
+    wrap.appendChild(head);
+    const btn=document.createElement('button');
+    btn.type='button'; btn.className='btn ais-undo-btn';
+    btn.style.cssText='background:#64748b;color:#fff;border:1px solid #475569;padding:7px 11px;font-size:11px;font-weight:900;';
+    btn.onclick=()=>window.aisUndoLastAction();
+    wrap.appendChild(btn);
+  });
+  aisUpdateUndoButtons();
 }
 
 async function dbInsert(table, row, action) {
@@ -2813,16 +2912,16 @@ function renderCardboardStock(){
 function onCbMaterialSelect(){ const val=(document.getElementById('cbMaterialInput')?.value||'').trim(); const matches=masterData.filter(m=>String(m.material||'').trim()===val); const p=document.getElementById('cbSelectProfile'); if(p){p.innerHTML='<option value="">-- Choose Profile --</option>'; [...new Set(matches.map(m=>String(m.profile).trim()))].forEach(x=>p.appendChild(new Option(x,x)));} onCbProfileSelect(); }
 function onCbProfileSelect(){ const p=document.getElementById('cbSelectProfile'); const i=document.getElementById('cbSelectItemCode'); if(!p||!i)return; const profile=p.value; i.innerHTML='<option value="">-- Choose Item Code --</option>'; const mat=(document.getElementById('cbMaterialInput')?.value||'').trim(); masterData.filter(m=>String(m.profile).trim()===profile && (!mat||String(m.material||'').trim()===mat)).forEach(m=>{if(m.itemCode&&!Array.from(i.options).some(o=>o.value===m.itemCode))i.appendChild(new Option(m.itemCode,m.itemCode));}); onCbItemCodeSelect();}
 function onCbItemCodeSelect(){ const p=document.getElementById('cbSelectProfile'),i=document.getElementById('cbSelectItemCode'),l=document.getElementById('cbSelectLength'); if(!p||!i||!l)return; l.innerHTML='<option value="">-- Choose Length --</option>'; masterData.filter(m=>String(m.profile).trim()===p.value&&m.itemCode===i.value).forEach(m=>l.appendChild(new Option(`${m.length} mm`,m.length))); if(l.options.length===2)l.selectedIndex=1; }
-async function processCardboardTransaction(){ if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return; const date=document.getElementById('cbDate').value||new Date().toISOString().split('T')[0], type=document.getElementById('cbTxType').value, profile=document.getElementById('cbSelectProfile').value,item=document.getElementById('cbSelectItemCode').value,length=document.getElementById('cbSelectLength').value,qty=parseInt(document.getElementById('cbQty').value)||0; if(!profile||!item||!length||qty<=0)return showToast('Select profile, item, length and quantity.','warning'); const bal=getAvailableCardboard(profile,item,length); if(type==='OUT'&&qty>bal)return showToast(`Insufficient cardboard stock. Available: ${bal} boxes.`,'error'); const rec={cb_date:date,cb_type:cardboardType(profile,item,length),incoming:type==='IN'?qty:0,used:type==='OUT'?qty:0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date, type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();renderCardboardStock();document.getElementById('cardboardEntryForm')?.reset();showToast('Cardboard transaction saved.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard save failed'),'error');}}
+async function processCardboardTransaction(){ if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return; const date=document.getElementById('cbDate').value||new Date().toISOString().split('T')[0], type=document.getElementById('cbTxType').value, profile=document.getElementById('cbSelectProfile').value,item=document.getElementById('cbSelectItemCode').value,length=document.getElementById('cbSelectLength').value,qty=parseInt(document.getElementById('cbQty').value)||0; if(!profile||!item||!length||qty<=0)return showToast('Select profile, item, length and quantity.','warning'); const bal=getAvailableCardboard(profile,item,length); if(type==='OUT'&&qty>bal)return showToast(`Insufficient cardboard stock. Available: ${bal} boxes.`,'error'); const rec={cb_date:date,cb_type:cardboardType(profile,item,length),incoming:type==='IN'?qty:0,used:type==='OUT'?qty:0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date, type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();aisRegisterUndo(`Cardboard ${type==='IN'?'IN':'OUT'} • ${profile} / ${length} • ${qty} Boxes`,async()=>{await aisDeleteLatest('cardboard_stock',rec);},'cardboardTab');renderCardboardStock();document.getElementById('cardboardEntryForm')?.reset();showToast('Cardboard transaction saved.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard save failed'),'error');}}
 function openCbAdjustModal(g){ if(typeof g==='string') g=JSON.parse(decodeURIComponent(g));document.getElementById('adjustCbProfile').value=g.profile;document.getElementById('adjustCbItemCode').value=g.itemCode;document.getElementById('adjustCbLength').value=g.length;document.getElementById('cbAdjustTarget').innerHTML=`${g.profile} • ${g.itemCode} • ${g.length} mm`;document.getElementById('newCbBalanceVal').value=Math.max(0,getAvailableCardboard(g.profile,g.itemCode,g.length));document.getElementById('cbAdjustModal').style.display='flex';}
 function closeCbAdjustModal(){document.getElementById('cbAdjustModal').style.display='none';}
-async function saveCbAdjust(){const p=document.getElementById('adjustCbProfile').value,i=document.getElementById('adjustCbItemCode').value,l=document.getElementById('adjustCbLength').value,n=Math.max(0,parseInt(document.getElementById('newCbBalanceVal').value)||0),cur=getAvailableCardboard(p,i,l),diff=n-cur;if(!diff){closeCbAdjustModal();return showToast('No balance change required.','info');} const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:`Pr: ${p} | Item: ${i} | L: ${l} | MANUAL ADJUSTMENT`,incoming:diff>0?diff:0,used:diff<0?Math.abs(diff):0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();closeCbAdjustModal();renderCardboardStock();showToast('Cardboard balance adjusted.','success');}catch(e){showToast(dbErrorMessage(e,'Balance adjustment failed'),'error');}}
+async function saveCbAdjust(){const p=document.getElementById('adjustCbProfile').value,i=document.getElementById('adjustCbItemCode').value,l=document.getElementById('adjustCbLength').value,n=Math.max(0,parseInt(document.getElementById('newCbBalanceVal').value)||0),cur=getAvailableCardboard(p,i,l),diff=n-cur;if(!diff){closeCbAdjustModal();return showToast('No balance change required.','info');} const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:`Pr: ${p} | Item: ${i} | L: ${l} | MANUAL ADJUSTMENT`,incoming:diff>0?diff:0,used:diff<0?Math.abs(diff):0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();aisRegisterUndo(`Cardboard Balance Adjustment • ${p} / ${l}`,async()=>{await aisDeleteLatest('cardboard_stock',rec);},'cardboardTab');closeCbAdjustModal();renderCardboardStock();showToast('Cardboard balance adjusted.','success');}catch(e){showToast(dbErrorMessage(e,'Balance adjustment failed'),'error');}}
 function openCbInOutModal(g,inc,out){ if(typeof g==='string') g=JSON.parse(decodeURIComponent(g));document.getElementById('inOutCbProfile').value=g.profile;document.getElementById('inOutCbItemCode').value=g.itemCode;document.getElementById('inOutCbLength').value=g.length;document.getElementById('currentCbIn').value=inc;document.getElementById('currentCbOut').value=out;document.getElementById('cbInOutTarget').innerHTML=`${g.profile} • ${g.itemCode} • ${g.length} mm`;document.getElementById('newCbInVal').value=inc;document.getElementById('newCbOutVal').value=out;document.getElementById('cbInOutEditModal').style.display='flex';}
 function closeCbInOutModal(){document.getElementById('cbInOutEditModal').style.display='none';}
-async function saveCbInOut(){const p=document.getElementById('inOutCbProfile').value,i=document.getElementById('inOutCbItemCode').value,l=document.getElementById('inOutCbLength').value,oldIn=Number(document.getElementById('currentCbIn').value)||0,oldOut=Number(document.getElementById('currentCbOut').value)||0,newIn=Math.max(0,parseInt(document.getElementById('newCbInVal').value)||0),newOut=Math.max(0,parseInt(document.getElementById('newCbOutVal').value)||0); const dIn=newIn-oldIn,dOut=newOut-oldOut; if(newOut>newIn)return showToast('Total OUT cannot exceed Total IN.','error'); const base=`Pr: ${p} | Item: ${i} | L: ${l}`; try{if(dIn||dOut){const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:base+' | MANUAL EDIT',incoming:dIn>0?dIn:0,used:dOut>0?dOut:0}; if(dIn<0) rec.used+=Math.abs(dIn); if(dOut<0) rec.incoming+=Math.abs(dOut); const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();} closeCbInOutModal();renderCardboardStock();showToast('Cardboard totals updated.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard edit failed'),'error');}}
+async function saveCbInOut(){const p=document.getElementById('inOutCbProfile').value,i=document.getElementById('inOutCbItemCode').value,l=document.getElementById('inOutCbLength').value,oldIn=Number(document.getElementById('currentCbIn').value)||0,oldOut=Number(document.getElementById('currentCbOut').value)||0,newIn=Math.max(0,parseInt(document.getElementById('newCbInVal').value)||0),newOut=Math.max(0,parseInt(document.getElementById('newCbOutVal').value)||0); const dIn=newIn-oldIn,dOut=newOut-oldOut; if(newOut>newIn)return showToast('Total OUT cannot exceed Total IN.','error'); const base=`Pr: ${p} | Item: ${i} | L: ${l}`; try{if(dIn||dOut){const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:base+' | MANUAL EDIT',incoming:dIn>0?dIn:0,used:dOut>0?dOut:0}; if(dIn<0) rec.used+=Math.abs(dIn); if(dOut<0) rec.incoming+=Math.abs(dOut); const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();aisRegisterUndo(`Edit Cardboard Totals • ${p} / ${l}`,async()=>{await aisDeleteLatest('cardboard_stock',rec);},'cardboardTab');} closeCbInOutModal();renderCardboardStock();showToast('Cardboard totals updated.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard edit failed'),'error');}}
 function openCbCapacityModal(g){ if(typeof g==='string') g=JSON.parse(decodeURIComponent(g));document.getElementById('editCbCatalogId').value=masterData.find(m=>String(m.profile).trim()===String(g.profile).trim()&&m.itemCode===g.itemCode&&cleanLen(m.length)===cleanLen(g.length))?.db_id||'';document.getElementById('cbEditTarget').innerHTML=`${g.profile} • ${g.itemCode} • ${g.length} mm`;document.getElementById('editCbCapacityVal').value=g.capacity||100;document.getElementById('cbCapacityEditModal').style.display='flex';}
 function closeCbCapacityModal(){document.getElementById('cbCapacityEditModal').style.display='none';}
-async function saveCbCapacityEdit(){const id=document.getElementById('editCbCatalogId').value,cap=Math.max(1,parseInt(document.getElementById('editCbCapacityVal').value)||100);if(!id)return showToast('Matching Master Catalog item not found.','error');try{const r=await supabaseClient.from('master_catalog').update({box_capacity:cap}).eq('id',id);if(r.error)throw r.error;const m=masterData.find(x=>String(x.db_id)===String(id));if(m)m.boxCapacity=cap;closeCbCapacityModal();renderCardboardStock();renderBalanceWorkTable();showToast('Pcs per Box updated.','success');}catch(e){showToast(dbErrorMessage(e,'Capacity update failed'),'error');}}
+async function saveCbCapacityEdit(){const id=document.getElementById('editCbCatalogId').value,cap=Math.max(1,parseInt(document.getElementById('editCbCapacityVal').value)||100);if(!id)return showToast('Matching Master Catalog item not found.','error');try{const m=masterData.find(x=>String(x.db_id)===String(id));const oldCap=Number(m?.boxCapacity)||100;const r=await supabaseClient.from('master_catalog').update({box_capacity:cap}).eq('id',id);if(r.error)throw r.error;if(m)m.boxCapacity=cap;aisRegisterUndo(`Edit Pcs per Box • ${m?.profile||''} / ${m?.length||''}`,async()=>{await aisUpdateById('master_catalog',id,{box_capacity:oldCap});},'cardboardTab');closeCbCapacityModal();renderCardboardStock();renderBalanceWorkTable();showToast('Pcs per Box updated.','success');}catch(e){showToast(dbErrorMessage(e,'Capacity update failed'),'error');}}
 function editCardboardTransaction(id){const row=cardboardStockList.find(c=>Number(c.db_id||c.id)===Number(id));if(!row||!row.db_id)return showToast('This automatic/local record cannot be edited here. Use Manual Cardboard Data for independent reference information.','info');showToast('Stock transaction quantities are protected. Use Manual Cardboard Data to edit reference information without changing Current Cardboard Stock.','info');}
 
 async function persistCardboardManualData(){
@@ -2839,9 +2938,12 @@ async function saveCardboardManualData(event){
   const row={manual_id:id||`CBM-${Date.now()}`,date:document.getElementById('cbManualDate').value||new Date().toISOString().split('T')[0],material:document.getElementById('cbManualMaterial').value.trim(),profile:document.getElementById('cbManualProfile').value.trim(),itemCode:document.getElementById('cbManualItemCode').value.trim(),length:document.getElementById('cbManualLength').value.trim(),quantity:Math.max(0,parseInt(document.getElementById('cbManualQty').value)||0),note:document.getElementById('cbManualNote').value.trim()};
   if(!row.profile&&!row.itemCode&&!row.material) return showToast('Enter at least Material, Profile or Item Code.','warning');
   try{
+    const beforeManual=JSON.parse(JSON.stringify(cardboardManualData));
     if(id){ const idx=cardboardManualData.findIndex(x=>String(x.manual_id||x.id)===String(id)); if(idx<0)return showToast('Manual record not found.','error'); cardboardManualData[idx]=row; showToast('Manual cardboard data updated. Current stock unchanged.','success'); }
     else { cardboardManualData.unshift(row); showToast('Manual cardboard data saved. Current stock unchanged.','success'); }
-    await persistCardboardManualData(); saveCardboardManualLocally(); cancelCardboardManualEdit(); renderCardboardStock();
+    await persistCardboardManualData(); saveCardboardManualLocally();
+    aisRegisterUndo(`Manual Cardboard Data • ${id?'Edit':'New'} • ${row.profile||row.itemCode||row.material}`,async()=>{cardboardManualData=beforeManual;await persistCardboardManualData();saveCardboardManualLocally();},'cardboardTab');
+    cancelCardboardManualEdit(); renderCardboardStock();
   }catch(e){showToast(dbErrorMessage(e,'Manual cardboard data save failed'),'error');}
 }
 function editCardboardManualData(id){
@@ -2931,6 +3033,11 @@ async function submitDailyEntry() {
       throw err;
     }
     Object.assign(item,{cutQty:next.cutQty,punchQty:next.punchQty,wrapQty:next.wrapQty,boxQty:next.boxQty,crateQty:next.crateQty});
+    aisRegisterUndo(`Daily Production • ${profileVal} / ${lengthVal} • ${dateVal}`, async()=>{
+      if(item.db_id) await aisUpdateById('master_catalog',item.db_id,previousToDb(previous));
+      await aisDeleteLatest('history_logs',{log_date:newLog.log_date,shift:newLog.shift,profile:newLog.profile,length:newLog.length,cut_qty:newLog.cut_qty,punch_qty:newLog.punch_qty,wrap_qty:newLog.wrap_qty,box_qty:newLog.box_qty,crate_qty:newLog.crate_qty,log_time:newLog.log_time});
+      if(cardboardDeducted) await aisDeleteLatest('cardboard_stock',{cb_date:cardboardDeducted.date,cb_type:cardboardDeducted.type,incoming:0,used:cardboardDeducted.used});
+    },'adminEntryTab');
     historyLogs.unshift({id:insertedLog.id || -Date.now(),date:dateVal,shift:shiftVal,profile:profileVal,length:cleanLen(lengthVal),cutQty,punchQty,wrapQty,boxQty:boxPcs,crateQty,timestamp:insertedLog.log_time||insertedLog.created_at});
     showToast('Movement saved to Supabase successfully.','success');
     renderDashboard(); renderProfileSummaryTable(); renderHistoryData(); checkDateStatus(); renderCardboardStock(); renderBalanceWorkTable();
@@ -2945,7 +3052,7 @@ function toggleBoxCountInput() { const stage = document.getElementById('editStag
 function syncBoxCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const pcs = parseInt(document.getElementById('editStageValue').value) || 0; const capacity = parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity) || 100; const boxes = capacity > 0 ? (pcs / capacity) : 0; document.getElementById('editBoxCountValue').value = boxes % 1 === 0 ? boxes : parseFloat(boxes.toFixed(2)); }
 function syncPcsCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const boxes = parseFloat(document.getElementById('editBoxCountValue').value) || 0; const capacity = parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity) || 100; document.getElementById('editStageValue').value = Math.round(boxes * capacity); }
 function closeStockEditModal() { document.getElementById('stockEditModal').style.display = 'none'; }
-async function saveSingleStageEdit() { try { const index=parseInt(document.getElementById('editItemIndex').value); const stage=document.getElementById('editStageSelect').value; const newQty=Math.max(0,parseInt(document.getElementById('editStageValue').value)||0); const item=masterData[index]; if(!item?.db_id) throw new Error('Stock edit failed: catalog record is not linked to Supabase.'); const field=stage.replace('Qty','_qty'); const updated={}; updated[field]=newQty; await dbUpdate('master_catalog',updated,item.db_id,'Stock edit failed'); item[stage]=newQty; closeStockEditModal(); showToast('Stock edit saved successfully.','success'); renderProfileSummaryTable(); renderDashboard(); renderBalanceWorkTable(); } catch(e){console.error(e);await loadDataFromSupabase(true).catch(()=>{});showToast(e.message||'Stock edit failed.','error');} }
+async function saveSingleStageEdit() { try { const index=parseInt(document.getElementById('editItemIndex').value); const stage=document.getElementById('editStageSelect').value; const newQty=Math.max(0,parseInt(document.getElementById('editStageValue').value)||0); const item=masterData[index]; if(!item?.db_id) throw new Error('Stock edit failed: catalog record is not linked to Supabase.'); const oldQty=Number(item[stage])||0; const field=stage.replace('Qty','_qty'); const updated={}; updated[field]=newQty; await dbUpdate('master_catalog',updated,item.db_id,'Stock edit failed'); item[stage]=newQty; aisRegisterUndo(`Stock Edit • ${item.profile} / ${item.length} • ${stage}`,async()=>{const back={};back[field]=oldQty;await aisUpdateById('master_catalog',item.db_id,back);},'publicStockTab'); closeStockEditModal(); showToast('Stock edit saved successfully.','success'); renderProfileSummaryTable(); renderDashboard(); renderBalanceWorkTable(); } catch(e){console.error(e);await loadDataFromSupabase(true).catch(()=>{});showToast(e.message||'Stock edit failed.','error');} }
 
 function populatePoProfileDropdown() { const select = document.getElementById('poSelectProfile'); if(!select) return; select.innerHTML = '<option value="">-- Choose Profile --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }
 function onPoProfileSelect() { const profile = document.getElementById('poSelectProfile').value; const itemSelect = document.getElementById('poSelectItemCode'); itemSelect.innerHTML = '<option value="">-- Choose Item Code --</option>'; document.getElementById('poSelectLength').innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile) return; const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => itemSelect.appendChild(new Option(ic, ic))); }
@@ -2961,6 +3068,7 @@ async function saveNewPO() {
     const newPo={po_date:dateVal,po_number:poNum,profile:profileVal,length:cleanLen(lengthVal),order_qty:orderQtyVal};
     const inserted=await dbInsert('production_orders',newPo,'PO save failed');
     poList.unshift({id:inserted.id || -Date.now(),date:dateVal,poNumber:poNum,profile:profileVal,itemCode:resolvedItemCode,length:cleanLen(lengthVal),orderQty:orderQtyVal});
+    aisRegisterUndo(`Production Order • ${poNum} • ${profileVal}`,async()=>{await aisDeleteLatest('production_orders',{po_date:newPo.po_date,po_number:newPo.po_number,profile:newPo.profile,length:newPo.length,order_qty:newPo.order_qty});},'poManagementTab');
     showToast('PO saved to Supabase successfully!','success'); document.getElementById('poEntryForm').reset(); updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); renderDashboard(); populateShipmentPoDropdown(); populatePlPoDropdown(); renderBalanceWorkTable();
   }catch(e){console.error('PO save error:',e);showToast(e.message||'PO save failed.','error');}finally{isAppBusy=false;}
 }
@@ -3031,6 +3139,10 @@ async function saveShipmentEntry(){
 
   const shipmentLocalId=-Date.now();
   shipmentList.unshift({id:shipmentLocalId,date:shipDate,month,poNumber:poNum,profile,length,container,shippedQty:qtyToShip,remainingBalance:newRemaining});
+  aisRegisterUndo(`Shipment • ${poNum} • ${qtyToShip} Pcs`,async()=>{
+    await aisDeleteLatest('shipments',{shipment_date:newShipment.shipment_date,shipment_month:newShipment.shipment_month,po_number:newShipment.po_number,profile:newShipment.profile,length:newShipment.length,container:newShipment.container,shipped_qty:newShipment.shipped_qty,remaining_balance:newShipment.remaining_balance});
+    await aisUpdateById('master_catalog',cat.db_id,{cut_qty:before.cutQty,punch_qty:before.punchQty,wrap_qty:before.wrapQty,box_qty:before.boxQty,crate_qty:before.crateQty});
+  },'shipmentTab');
   const deductionSummary=stages.filter(k=>(deduction[k]||0)>0).map(k=>`${k.replace('Qty','')}: ${deduction[k]} Pcs`).join(' • ');
   showToast(`Shipment saved. Stock deducted: ${deductionSummary}.`,'success');
 
@@ -3772,6 +3884,7 @@ async function savePackingListEntry(startNewCrate=false){
   const {data:inserted,error}=await supabaseClient.from('packing_list').insert([newPl]).select().single();
   if(error)throw new Error(`Packing List save failed: ${error.message}`);
   packingLists.unshift({id:inserted?.id||-Date.now(),plNumber:plNum,poNumber:poNum,month:filterMonth,container,crateNo,profile,itemCode,length,boxQty:1,pcsQty,netWeight,grossWeight,date:plDate});
+  aisRegisterUndo(`Packing List • ${plNum} • ${crateNo}`,async()=>{await aisDeleteLatest('packing_list',{pl_number:newPl.pl_number,po_number:newPl.po_number,shipment_month:newPl.shipment_month,container:newPl.container,crate_no:newPl.crate_no,profile:newPl.profile,item_code:newPl.item_code,length:newPl.length,box_qty:newPl.box_qty,pcs_qty:newPl.pcs_qty,net_weight:newPl.net_weight,gross_weight:newPl.gross_weight,packing_date:newPl.packing_date});},'packingListTab');
   showToast(`${profile} added to ${crateNo}. You can add another profile to the same crate.`,'success');
 
   // Keep the crate/header information so multiple profiles can be entered into one crate.
@@ -3930,11 +4043,35 @@ function renderMasterCatalog() {
 
 function openMasterEditModal(index) { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editMasterIndex').value = index; document.getElementById('editMasterProfile').value = item.profile; document.getElementById('editMasterItemCode').value = item.itemCode || ''; document.getElementById('editMasterMaterial').value = item.material || ''; document.getElementById('editMasterLength').value = item.length; document.getElementById('editMasterExLength').value = item.exLength || ''; document.getElementById('editMasterUnitWeight').value = item.unitWeight; document.getElementById('editMasterBoxCapacity').value = item.boxCapacity || 100; document.getElementById('masterEditModal').style.display = 'flex'; }
 function closeMasterEditModal() { document.getElementById('masterEditModal').style.display = 'none'; }
-async function saveMasterCatalogEdit() { if(isAppBusy) return; isAppBusy=true; try { const index = parseInt(document.getElementById('editMasterIndex').value); const profile = document.getElementById('editMasterProfile').value.trim(); const itemCode = document.getElementById('editMasterItemCode').value.trim(); const material = document.getElementById('editMasterMaterial').value.trim(); const length = document.getElementById('editMasterLength').value.trim(); const exLength = document.getElementById('editMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('editMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('editMasterBoxCapacity').value) || 100; if (isNaN(index)) return; const item = masterData[index]; item.profile = profile; item.itemCode = itemCode; item.material = material; item.length = length; item.exLength = exLength; item.unitWeight = uw; item.boxCapacity = cap; if (item.db_id) { try { await supabaseClient.from('master_catalog').update({ profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap }).eq('id', item.db_id); } catch(e) {} } else { try { const r=await supabaseClient.from('master_catalog').insert([{ profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: item.cutQty, punch_qty: item.punchQty, wrap_qty: item.wrapQty, box_qty: item.boxQty, crate_qty: item.crateQty }]); if(r.error) throw r.error; } catch(e) { showToast(dbErrorMessage(e,'Master catalog save failed'),'error'); return; } } saveMasterExtrasLocally(); closeMasterEditModal(); showToast("Catalog updated successfully", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderProfileSummaryTable(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
+async function saveMasterCatalogEdit() {
+ if(isAppBusy)return; isAppBusy=true;
+ try {
+  const index=parseInt(document.getElementById('editMasterIndex').value);
+  const profile=document.getElementById('editMasterProfile').value.trim();
+  const itemCode=document.getElementById('editMasterItemCode').value.trim();
+  const material=document.getElementById('editMasterMaterial').value.trim();
+  const length=document.getElementById('editMasterLength').value.trim();
+  const exLength=document.getElementById('editMasterExLength').value.trim();
+  const uw=parseFloat(document.getElementById('editMasterUnitWeight').value)||0;
+  const cap=parseInt(document.getElementById('editMasterBoxCapacity').value)||100;
+  if(isNaN(index))return;
+  const item=masterData[index]; if(!item)throw new Error('Master catalog item not found.');
+  const old={profile:item.profile,item_code:item.itemCode||'',material:item.material||'',length:item.length,ex_length:item.exLength||'',unit_weight:Number(item.unitWeight)||0,box_capacity:Number(item.boxCapacity)||100};
+  const vals={profile,item_code:itemCode,material,length,ex_length:exLength,unit_weight:uw,box_capacity:cap};
+  if(item.db_id){ const r=await supabaseClient.from('master_catalog').update(vals).eq('id',item.db_id); if(r.error)throw r.error; }
+  else { const r=await supabaseClient.from('master_catalog').insert([{...vals,cut_qty:item.cutQty,punch_qty:item.punchQty,wrap_qty:item.wrapQty,box_qty:item.boxQty,crate_qty:item.crateQty}]); if(r.error)throw r.error; }
+  Object.assign(item,{profile,itemCode,material,length,exLength,unitWeight:uw,boxCapacity:cap});
+  if(item.db_id) aisRegisterUndo(`Edit Master Catalog • ${profile} / ${length}`,async()=>{await aisUpdateById('master_catalog',item.db_id,old);},'masterListTab');
+  saveMasterExtrasLocally(); closeMasterEditModal(); showToast('Catalog updated successfully','success'); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderProfileSummaryTable(); renderCardboardStock(); renderBalanceWorkTable();
+ } catch(e){ showToast(dbErrorMessage(e,'Master catalog save failed'),'error'); }
+ finally{isAppBusy=false;}
+}
 function deleteMasterItem(index) { if (currentUserRole !== 'Admin') return; showConfirm("Delete catalog item?", async () => { const item = masterData[index]; if (item && item.db_id) await supabaseClient.from('master_catalog').delete().eq('id', item.db_id); masterData.splice(index, 1); saveMasterExtrasLocally(); renderMasterCatalog(); showToast("Catalog item deleted", "success"); }); }
 function openAddMasterModal() { if (currentUserRole !== 'Admin') return; document.getElementById('addMasterProfile').value = ''; document.getElementById('addMasterItemCode').value = ''; document.getElementById('addMasterMaterial').value = ''; document.getElementById('addMasterLength').value = ''; document.getElementById('addMasterExLength').value = ''; document.getElementById('addMasterUnitWeight').value = ''; document.getElementById('addMasterBoxCapacity').value = '100'; document.getElementById('addMasterModal').style.display = 'flex'; }
 function closeAddMasterModal() { document.getElementById('addMasterModal').style.display = 'none'; }
-async function saveNewMasterProfile() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const profile = document.getElementById('addMasterProfile').value.trim(); const itemCode = document.getElementById('addMasterItemCode').value.trim(); const material = document.getElementById('addMasterMaterial').value.trim(); const length = document.getElementById('addMasterLength').value.trim(); const exLength = document.getElementById('addMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('addMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('addMasterBoxCapacity').value) || 100; if (!profile || !itemCode || !length) { showToast("Fill all fields", "warning"); return; } const exists = masterData.find(m => String(m.profile).trim() === profile && cleanLen(m.length) === cleanLen(length) && m.itemCode === itemCode); if (exists) { showToast("Already exists!", "error"); return; } const newEntry = { profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0 }; const mapped = { db_id: Date.now(), profile: profile, itemCode: itemCode, material: material, length: length, exLength: exLength, unitWeight: uw, cutQty: 0, punchQty: 0, wrapQty: 0, boxQty: 0, crateQty: 0, boxCapacity: cap }; try { const r=await supabaseClient.from('master_catalog').insert([newEntry]); if(r.error) throw r.error; } catch (e) { showToast(dbErrorMessage(e,'Master catalog add failed'),'error'); return; } masterData.push(mapped); masterData.sort((a, b) => (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) || (parseFloat(a.length)||0) - (parseFloat(b.length)||0)); saveMasterExtrasLocally(); closeAddMasterModal(); showToast("Profile added!", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
+async function saveNewMasterProfile() { if(isAppBusy) return; isAppBusy=true; try { if (currentUserRole !== 'Admin') return; const profile = document.getElementById('addMasterProfile').value.trim(); const itemCode = document.getElementById('addMasterItemCode').value.trim(); const material = document.getElementById('addMasterMaterial').value.trim(); const length = document.getElementById('addMasterLength').value.trim(); const exLength = document.getElementById('addMasterExLength').value.trim(); const uw = parseFloat(document.getElementById('addMasterUnitWeight').value) || 0; const cap = parseInt(document.getElementById('addMasterBoxCapacity').value) || 100; if (!profile || !itemCode || !length) { showToast("Fill all fields", "warning"); return; } const exists = masterData.find(m => String(m.profile).trim() === profile && cleanLen(m.length) === cleanLen(length) && m.itemCode === itemCode); if (exists) { showToast("Already exists!", "error"); return; } const newEntry = { profile: profile, item_code: itemCode, material: material, length: length, ex_length: exLength, unit_weight: uw, box_capacity: cap, cut_qty: 0, punch_qty: 0, wrap_qty: 0, box_qty: 0, crate_qty: 0 }; const mapped = { db_id: Date.now(), profile: profile, itemCode: itemCode, material: material, length: length, exLength: exLength, unitWeight: uw, cutQty: 0, punchQty: 0, wrapQty: 0, boxQty: 0, crateQty: 0, boxCapacity: cap }; try { const r=await supabaseClient.from('master_catalog').insert([newEntry]); if(r.error) throw r.error; } catch (e) { showToast(dbErrorMessage(e,'Master catalog add failed'),'error'); return; } masterData.push(mapped);
+  aisRegisterUndo(`New Master Profile • ${profile} / ${length}`,async()=>{await aisDeleteLatest('master_catalog',{profile:newEntry.profile,item_code:newEntry.item_code,material:newEntry.material,length:newEntry.length,ex_length:newEntry.ex_length,unit_weight:newEntry.unit_weight,box_capacity:newEntry.box_capacity,cut_qty:0,punch_qty:0,wrap_qty:0,box_qty:0,crate_qty:0});},'masterListTab');
+  masterData.sort((a, b) => (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) || (parseFloat(a.length)||0) - (parseFloat(b.length)||0)); saveMasterExtrasLocally(); closeAddMasterModal(); showToast("Profile added!", "success"); renderMasterCatalog(); populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateCbProfileDropdown(); renderCardboardStock(); renderBalanceWorkTable(); } finally { isAppBusy=false; } }
 async function resetAllDataToZero() {
     if (currentUserRole !== 'Admin') return showToast('Only Admin can reset current stock.', 'error');
     if (isAppBusy) return;
@@ -4284,6 +4421,7 @@ async function saveDailyInstruction(){
       ...decodeDailyNoteMeta(rec)
     };
     dailyInstructionsList.unshift(localRec);
+    aisRegisterUndo(`Daily Plan Note • ${rec.target_date} • ${rec.target_user}`,async()=>{await aisDeleteLatest('daily_instructions',rec);},'dailyPlanTab');
     renderDailyInstructions();
     clearDailyNoteForm();
     showToast('Daily plan note saved successfully.','success');
@@ -4381,10 +4519,10 @@ window.useSmartDailyPlanNote=function(){
 
 function openPoEditModal(idx){const p=poList[idx];if(!p)return;document.getElementById('editPoId').value=p.id;document.getElementById('editPoDate').value=p.date||'';document.getElementById('editPoNumber').value=p.poNumber||'';document.getElementById('editPoProfile').value=p.profile||'';document.getElementById('editPoLength').value=p.length||'';document.getElementById('editPoQty').value=p.orderQty||0;document.getElementById('poEditModal').style.display='flex';}
 function closePoEditModal(){document.getElementById('poEditModal').style.display='none';}
-async function savePoEdit(){const id=document.getElementById('editPoId').value;const p=poList.find(x=>String(x.id)===String(id));if(!p)return;const vals={po_date:document.getElementById('editPoDate').value,po_number:document.getElementById('editPoNumber').value.trim(),profile:document.getElementById('editPoProfile').value.trim(),length:cleanLen(document.getElementById('editPoLength').value),order_qty:Math.max(1,parseInt(document.getElementById('editPoQty').value)||0)};try{const r=await supabaseClient.from('production_orders').update(vals).eq('id',id);if(r.error)throw r.error;Object.assign(p,{date:vals.po_date,poNumber:vals.po_number,profile:vals.profile,length:vals.length,orderQty:vals.order_qty});closePoEditModal();updatePoFilters();renderPoDetailsTable();renderPoCharts();renderBalanceWorkTable();showToast('PO updated.','success');}catch(e){showToast(dbErrorMessage(e,'PO update failed'),'error');}}
+async function savePoEdit(){const id=document.getElementById('editPoId').value;const p=poList.find(x=>String(x.id)===String(id));if(!p)return;const old={po_date:p.date,po_number:p.poNumber,profile:p.profile,length:cleanLen(p.length),order_qty:p.orderQty};const vals={po_date:document.getElementById('editPoDate').value,po_number:document.getElementById('editPoNumber').value.trim(),profile:document.getElementById('editPoProfile').value.trim(),length:cleanLen(document.getElementById('editPoLength').value),order_qty:Math.max(1,parseInt(document.getElementById('editPoQty').value)||0)};try{const r=await supabaseClient.from('production_orders').update(vals).eq('id',id);if(r.error)throw r.error;Object.assign(p,{date:vals.po_date,poNumber:vals.po_number,profile:vals.profile,length:vals.length,orderQty:vals.order_qty});aisRegisterUndo(`Edit Production Order • ${vals.po_number}`,async()=>{await aisUpdateById('production_orders',id,old);},'poManagementTab');closePoEditModal();updatePoFilters();renderPoDetailsTable();renderPoCharts();renderBalanceWorkTable();showToast('PO updated.','success');}catch(e){showToast(dbErrorMessage(e,'PO update failed'),'error');}}
 function openShipmentEditModal(idx){const s=shipmentList[idx];if(!s)return;document.getElementById('editShipmentId').value=s.id;document.getElementById('editShipmentDate').value=s.date||'';document.getElementById('editShipmentContainer').value=s.container||'';document.getElementById('editShipmentQty').value=s.shippedQty||0;document.getElementById('shipmentEditModal').style.display='flex';}
 function closeShipmentEditModal(){document.getElementById('shipmentEditModal').style.display='none';}
-async function saveShipmentEdit(){const id=document.getElementById('editShipmentId').value;const s=shipmentList.find(x=>String(x.id)===String(id));if(!s)return;const date=document.getElementById('editShipmentDate').value,container=document.getElementById('editShipmentContainer').value,qty=Math.max(1,parseInt(document.getElementById('editShipmentQty').value)||0);try{const r=await supabaseClient.from('shipments').update({shipment_date:date,container:container,shipped_qty:qty}).eq('id',id);if(r.error)throw r.error;Object.assign(s,{date,container,shippedQty:qty});closeShipmentEditModal();renderShipmentHistoryTable();renderDashboard();renderBalanceWorkTable();showToast('Shipment updated.','success');}catch(e){showToast(dbErrorMessage(e,'Shipment update failed'),'error');}}
+async function saveShipmentEdit(){const id=document.getElementById('editShipmentId').value;const s=shipmentList.find(x=>String(x.id)===String(id));if(!s)return;const old={shipment_date:s.date,container:s.container,shipped_qty:s.shippedQty};const date=document.getElementById('editShipmentDate').value,container=document.getElementById('editShipmentContainer').value,qty=Math.max(1,parseInt(document.getElementById('editShipmentQty').value)||0);try{const r=await supabaseClient.from('shipments').update({shipment_date:date,container:container,shipped_qty:qty}).eq('id',id);if(r.error)throw r.error;Object.assign(s,{date,container,shippedQty:qty});aisRegisterUndo(`Edit Shipment • ${s.poNumber} • ${qty} Pcs`,async()=>{await aisUpdateById('shipments',id,old);},'shipmentTab');closeShipmentEditModal();renderShipmentHistoryTable();renderDashboard();renderBalanceWorkTable();showToast('Shipment updated.','success');}catch(e){showToast(dbErrorMessage(e,'Shipment update failed'),'error');}}
 window.openPoEditModal=openPoEditModal; window.openShipmentEditModal=openShipmentEditModal;
 
 window.updateProductionCardboardAvailability=updateProductionCardboardAvailability;
