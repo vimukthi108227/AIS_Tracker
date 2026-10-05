@@ -95,7 +95,7 @@ function resetRoleSelection() { document.getElementById('loginPassSection').styl
 document.addEventListener('DOMContentLoaded', () => { ensureLoginInputReady(); rememberAISFormFields(); });
 function verifyLogin() {
   const section=document.getElementById('loginPassSection'); const role=section?.dataset.role||''; const pass=(document.getElementById('rolePassInput')?.value||'').trim();
-  if(role==='Admin' && pass==='Lr@108227') { enterAISApplication('Admin'); showToast('Admin access granted.','success'); return; }
+  if(role==='Admin' && pass==='Ais@2026') { enterAISApplication('Admin'); showToast('Admin access granted.','success'); return; }
   if(role==='Planner' && pass==='alumex123') { enterAISApplication('Planner'); showToast('Planner access granted.','success'); return; }
   showToast('Invalid authentication key.','error');
   const box=document.querySelector('.ais-password-box'); if(box){ box.classList.remove('ais-shake'); void box.offsetWidth; box.classList.add('ais-shake'); }
