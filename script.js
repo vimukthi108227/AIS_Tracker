@@ -4167,17 +4167,174 @@ function renderShipmentHistoryTable(){
   body.innerHTML=shipmentList.length?shipmentList.map((s,i)=>`<tr><td>${s.date||'-'}</td><td>${s.poNumber||'-'}</td><td>${s.profile||'-'}</td><td>${s.itemCode||'-'}</td><td>${s.length||'-'} mm</td><td>${s.month||'-'}</td><td>${s.container||'-'}</td><td>${Number(s.shippedQty||0).toLocaleString()}</td><td>${Number(s.remainingBalance||0).toLocaleString()}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openShipmentEditModal(${i})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):'<tr><td colspan="10" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No shipment records.</td></tr>';
 }
 window.renderShipmentHistoryTable=renderShipmentHistoryTable;
+function dailyNoteEscape(v){
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+
+function dailyNoteCanManage(){
+  return currentUserRole === 'Admin' || currentUserRole === 'Planner';
+}
+function dailyNoteCanDelete(){
+  return currentUserRole === 'Admin';
+}
+
 function renderDailyInstructions(){
   const box=document.getElementById('instructionBoardContainer'); if(!box)return;
-  const visible=dailyInstructionsList.filter(x=>!String(x.target_user||'').startsWith('SYS_')).sort((a,b)=>String(a.target_date).localeCompare(String(b.target_date)));
-  box.innerHTML=visible.length?visible.map(x=>`<div class="card" style="margin:0;border-left:5px solid ${x.priority==='High'?'#e11d48':'#d97706'};background:#fffdf5;"><div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;font-weight:800;color:#92400e;"><span>${x.target_date||'-'}</span><span>${x.priority||'Normal'}</span></div><h4 style="margin:8px 0;color:#334155;">${x.target_user||'All Sections'}</h4><p style="margin:0;color:#475569;font-weight:600;font-size:13px;line-height:1.5;">${x.message||''}</p><div style="margin-top:10px;font-size:10px;color:#94a3b8;">${x.status||''}</div></div>`).join(''):'<div style="grid-column:1/-1;text-align:center;padding:24px;color:var(--text-muted);font-weight:700;">No active instructions.</div>';
+
+  const roleBadge=document.getElementById('dailyPlanRoleBadge');
+  if(roleBadge) roleBadge.textContent = currentUserRole === 'Admin' ? 'ADMIN • Full note control' : (currentUserRole === 'Planner' ? 'PLANNER • Add / complete notes' : 'VIEW ONLY');
+
+  const statusFilter=document.getElementById('dailyNoteFilter')?.value || 'All';
+  const categoryFilter=document.getElementById('dailyNoteCategoryFilter')?.value || 'All';
+
+  let visible=dailyInstructionsList
+    .filter(x=>!String(x.target_user||'').startsWith('SYS_'))
+    .filter(x=>statusFilter==='All' || String(x.status||'Pending')===statusFilter)
+    .filter(x=>categoryFilter==='All' || String(x.category||'General')===categoryFilter)
+    .sort((a,b)=>{
+      const sa=String(a.status||'Pending'), sb=String(b.status||'Pending');
+      if(sa!==sb) return sa==='Pending'?-1:1;
+      return String(a.target_date||'').localeCompare(String(b.target_date||''));
+    });
+
+  box.innerHTML=visible.length ? visible.map(x=>{
+    const isDone=String(x.status||'Pending')==='Completed';
+    const high=String(x.priority||'Normal')==='High';
+    const category=x.category||'General';
+    const border=high?'#e11d48':(isDone?'#10b981':'#d97706');
+    const bg=isDone?'#f0fdf4':'#fffdf5';
+    const canManage=dailyNoteCanManage();
+    const deleteBtn=dailyNoteCanDelete()
+      ? `<button class="btn" style="padding:5px 8px;background:#dc2626;border:1px solid #dc2626;" onclick="deleteDailyInstruction(${JSON.stringify(x.id)})"><i class="fa-solid fa-trash"></i> Delete</button>`
+      : '';
+    const completeBtn=canManage
+      ? `<button class="btn" style="padding:5px 8px;background:${isDone?'#64748b':'#059669'};border:1px solid ${isDone?'#64748b':'#059669'};" onclick="toggleDailyInstructionStatus(${JSON.stringify(x.id)})"><i class="fa-solid ${isDone?'fa-rotate-left':'fa-check'}"></i> ${isDone?'Re-open':'Complete'}</button>`
+      : '';
+    return `<div class="card" style="margin:0;border-left:5px solid ${border};background:${bg};box-shadow:0 5px 14px rgba(15,23,42,.06);">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:11px;font-weight:900;color:#92400e;">
+        <span><i class="fa-regular fa-calendar"></i> ${dailyNoteEscape(x.target_date||'-')}</span>
+        <span style="background:${high?'#ffe4e6':'#fef3c7'};color:${high?'#be123c':'#92400e'};padding:3px 7px;border-radius:999px;">${dailyNoteEscape(x.priority||'Normal')}</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;">
+        <span style="font-size:10px;font-weight:900;background:#e0f2fe;color:#075985;padding:4px 7px;border-radius:999px;">${dailyNoteEscape(category)}</span>
+        <span style="font-size:10px;font-weight:900;background:${isDone?'#dcfce7':'#f1f5f9'};color:${isDone?'#047857':'#475569'};padding:4px 7px;border-radius:999px;">${isDone?'Completed':'Pending'}</span>
+      </div>
+      <h4 style="margin:10px 0 6px;color:#334155;">${dailyNoteEscape(x.target_user||'All Sections')}</h4>
+      <p style="margin:0;color:#475569;font-weight:650;font-size:13px;line-height:1.6;white-space:pre-line;">${dailyNoteEscape(x.message||'')}</p>
+      <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="font-size:10px;color:#94a3b8;">${isDone?'Action completed':'Action pending'}</span>
+        <div style="display:flex;gap:6px;">${completeBtn}${deleteBtn}</div>
+      </div>
+    </div>`;
+  }).join(''):'<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--text-muted);font-weight:800;background:#fafafa;border-radius:12px;">No notes match the selected filter.</div>';
 }
+
 async function saveDailyInstruction(){
-  if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return;
-  const rec={target_date:document.getElementById('planDate').value,target_user:document.getElementById('planUser').value,priority:document.getElementById('planPriority').value,message:document.getElementById('planMessage').value.trim(),status:'Pending',action_taken:''};
+  if(!dailyNoteCanManage()) return;
+  const rec={
+    target_date:document.getElementById('planDate').value,
+    target_user:document.getElementById('planUser').value,
+    priority:document.getElementById('planPriority').value,
+    category:document.getElementById('planCategory')?.value || 'Daily Plan',
+    message:document.getElementById('planMessage').value.trim(),
+    status:'Pending',
+    action_taken:''
+  };
   if(!rec.target_date||!rec.message)return showToast('Enter date and instruction message.','warning');
-  try{const r=await supabaseClient.from('daily_instructions').insert([rec]);if(r.error)throw r.error;dailyInstructionsList.unshift({...rec,id:-Date.now()});renderDailyInstructions();document.getElementById('planMessage').value='';showToast('Instruction pinned.','success');}catch(e){showToast(dbErrorMessage(e,'Instruction save failed'),'error');}
+  try{
+    const r=await supabaseClient.from('daily_instructions').insert([rec]);
+    if(r.error)throw r.error;
+    dailyInstructionsList.unshift({...rec,id:-Date.now()});
+    renderDailyInstructions();
+    clearDailyNoteForm();
+    showToast('Daily plan note saved.','success');
+  }catch(e){
+    showToast(dbErrorMessage(e,'Instruction save failed'),'error');
+  }
 }
+
+window.toggleDailyInstructionStatus = async function(id){
+  if(!dailyNoteCanManage()) return;
+  const item=dailyInstructionsList.find(x=>String(x.id)===String(id));
+  if(!item)return;
+  const nextStatus=String(item.status||'Pending')==='Completed'?'Pending':'Completed';
+  try{
+    if(Number(id)>0){
+      const r=await supabaseClient.from('daily_instructions').update({status:nextStatus,action_taken:nextStatus==='Completed'?'Completed by '+currentUserRole:''}).eq('id',id);
+      if(r.error)throw r.error;
+    }
+    item.status=nextStatus;
+    item.action_taken=nextStatus==='Completed'?'Completed by '+currentUserRole:'';
+    renderDailyInstructions();
+    showToast(nextStatus==='Completed'?'Note marked completed.':'Note reopened.','success');
+  }catch(e){ showToast(dbErrorMessage(e,'Note status update failed'),'error'); }
+};
+
+window.deleteDailyInstruction = async function(id){
+  if(!dailyNoteCanDelete()){
+    showToast('Only Admin can delete daily plan notes.','warning');
+    return;
+  }
+  const item=dailyInstructionsList.find(x=>String(x.id)===String(id));
+  if(!item)return;
+  if(!confirm('Delete this daily plan note? This cannot be undone.'))return;
+  try{
+    if(Number(id)>0){
+      const r=await supabaseClient.from('daily_instructions').delete().eq('id',id);
+      if(r.error)throw r.error;
+    }
+    dailyInstructionsList=dailyInstructionsList.filter(x=>String(x.id)!==String(id));
+    renderDailyInstructions();
+    showToast('Daily plan note deleted.','success');
+  }catch(e){ showToast(dbErrorMessage(e,'Note delete failed'),'error'); }
+};
+
+window.clearDailyNoteForm=function(){
+  const msg=document.getElementById('planMessage'); if(msg)msg.value='';
+  const cat=document.getElementById('planCategory'); if(cat)cat.value='Daily Plan';
+  const pri=document.getElementById('planPriority'); if(pri)pri.value='Normal';
+};
+
+window.setDailyNoteTemplate=function(type){
+  const cat=document.getElementById('planCategory');
+  const msg=document.getElementById('planMessage');
+  const pri=document.getElementById('planPriority');
+  if(!msg)return;
+  const templates={
+    production:['Production','Today production priority: complete the recommended stage quantities shown in Smart Daily Plan. Verify stock before starting.'],
+    packing:['Packing','Today packing priority: complete Ready-to-Pack crates and box packing according to current cardboard and wrapping availability.'],
+    material:['Material Alert','Material alert: check cardboard availability against current wrapping stock before starting box packing.'],
+    kaizen:['Kaizen','Kaizen action: follow the Smart Daily Plan recommendations and record any abnormality, delay, material shortage or improvement opportunity.']
+  };
+  const t=templates[type]||templates.kaizen;
+  if(cat)cat.value=t[0];
+  if(pri && (type==='material'))pri.value='High';
+  msg.value=t[1];
+};
+
+window.useSmartDailyPlanNote=function(){
+  const msg=document.getElementById('planMessage');
+  const cat=document.getElementById('planCategory');
+  if(!msg)return;
+  // Recalculate from current live data, then convert the visible Smart Plan summary into a note.
+  try{ if(typeof renderSmartDailyPlan==='function') renderSmartDailyPlan(); }catch(e){}
+  const summary=document.getElementById('smartDailyPlanSummary');
+  const parts=[];
+  if(summary){
+    summary.querySelectorAll('div[style*="font-size:22px"]').forEach(el=>{
+      const card=el.parentElement;
+      const title=card?.querySelector('div[style*="text-transform:uppercase"]')?.textContent?.trim();
+      const sub=card?.querySelector('div[style*="font-size:10px"]')?.textContent?.trim();
+      if(title)parts.push(`${title}: ${el.textContent.trim()}${sub?` (${sub})`:''}`);
+    });
+  }
+  const lines=['Smart Daily Plan – Today:'];
+  if(parts.length) lines.push(...parts.map(x=>`• ${x}`));
+  else lines.push('• Review Smart Daily Plan recommendations for Punch, Wrap, Box and Crate work.');
+  msg.value=lines.join('\n');
+  if(cat)cat.value='Daily Plan';
+};
+
 function openPoEditModal(idx){const p=poList[idx];if(!p)return;document.getElementById('editPoId').value=p.id;document.getElementById('editPoDate').value=p.date||'';document.getElementById('editPoNumber').value=p.poNumber||'';document.getElementById('editPoProfile').value=p.profile||'';document.getElementById('editPoLength').value=p.length||'';document.getElementById('editPoQty').value=p.orderQty||0;document.getElementById('poEditModal').style.display='flex';}
 function closePoEditModal(){document.getElementById('poEditModal').style.display='none';}
 async function savePoEdit(){const id=document.getElementById('editPoId').value;const p=poList.find(x=>String(x.id)===String(id));if(!p)return;const vals={po_date:document.getElementById('editPoDate').value,po_number:document.getElementById('editPoNumber').value.trim(),profile:document.getElementById('editPoProfile').value.trim(),length:cleanLen(document.getElementById('editPoLength').value),order_qty:Math.max(1,parseInt(document.getElementById('editPoQty').value)||0)};try{const r=await supabaseClient.from('production_orders').update(vals).eq('id',id);if(r.error)throw r.error;Object.assign(p,{date:vals.po_date,poNumber:vals.po_number,profile:vals.profile,length:vals.length,orderQty:vals.order_qty});closePoEditModal();updatePoFilters();renderPoDetailsTable();renderPoCharts();renderBalanceWorkTable();showToast('PO updated.','success');}catch(e){showToast(dbErrorMessage(e,'PO update failed'),'error');}}
