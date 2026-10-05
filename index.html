@@ -217,6 +217,7 @@
         <button class="smart-category" type="button" data-category="packing" onclick="toggleNavCategory('packing', this)"><i class="fa-solid fa-boxes-stacked"></i><span>Packing & Shipment</span></button>
         <button class="smart-category" type="button" data-category="quality" onclick="toggleNavCategory('quality', this)"><i class="fa-solid fa-recycle"></i><span>Quality & Reject</span></button>
         <button class="smart-category smart-standalone" type="button" data-tab="cardboardTab" onclick="switchTab('cardboardTab', this)"><i class="fa-solid fa-box"></i><span>Cardboard Stock</span></button>
+        <button class="smart-category smart-standalone" type="button" data-tab="smartDailyPlanTab" onclick="switchTab('smartDailyPlanTab', this)" id="smartKaizenTopBtn"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Kaizen Smart Plan</span></button>
         <button class="smart-category" type="button" data-category="management" onclick="toggleNavCategory('management', this)"><i class="fa-solid fa-gear"></i><span>Management</span></button>
       </div>
       <div class="smart-subnav" id="smartSubnav">
@@ -241,7 +242,6 @@
         <div class="smart-submenu" data-menu="management">
           <button class="tab-btn" onclick="switchTab('masterListTab', this)"><i class="fa-solid fa-boxes-stacked"></i> Master Catalog</button>
           <button class="tab-btn" onclick="switchTab('dailyPlanTab', this)"><i class="fa-solid fa-note-sticky"></i> Daily Plan</button>
-          <button class="tab-btn" onclick="switchTab('smartDailyPlanTab', this)" id="tabBtn-smartDailyPlan"><i class="fa-solid fa-wand-magic-sparkles"></i> Smart Daily Plan</button>
           <button class="tab-btn admin-restricted-area" onclick="switchTab('historyTab', this)" id="tabBtn-history"><i class="fa-solid fa-clock-rotate-left"></i> History Logs</button>
         </div>
       </div>
@@ -261,7 +261,11 @@
             <h2 style="margin:4px 0 3px;color:#064e3b;"><i class="fa-solid fa-wand-magic-sparkles"></i> Smart Daily Plan</h2>
             <div style="font-size:12px;color:#475569;font-weight:700;">Current live stock → automatic recommendation for today's production & packing work</div>
           </div>
-          <button class="btn" style="background:#0f766e;border:1px solid #0f766e;" onclick="renderSmartDailyPlan()"><i class="fa-solid fa-rotate"></i> Recalculate</button>
+          <div style="display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end;">
+            <button class="btn" style="background:#0f766e;border:1px solid #0f766e;" onclick="renderSmartDailyPlan()"><i class="fa-solid fa-rotate"></i> Recalculate</button>
+            <button class="btn btn-accent" onclick="exportSmartDailyAll('excel')"><i class="fa-solid fa-file-excel"></i> Export All Excel</button>
+            <button class="btn" style="background:#dc2626;color:#fff;border:1px solid #dc2626;" onclick="exportSmartDailyAll('pdf')"><i class="fa-solid fa-file-pdf"></i> Export All PDF</button>
+          </div>
         </div>
         <div id="smartDailyPlanSummary" style="margin-top:18px;"></div>
       </div>
@@ -269,7 +273,7 @@
       <div class="card" style="margin-top:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
           <h3 style="margin:0;color:#075985;"><i class="fa-solid fa-list-check"></i> 1. CUT → PUNCH : Recommended Today</h3>
-          <span style="font-size:11px;font-weight:900;color:#475569;">Minimum: 100 Pcs</span>
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end;"><span style="font-size:11px;font-weight:900;color:#475569;">Minimum: 100 Pcs</span><button class="btn" style="padding:5px 9px;background:#0f766e;border:1px solid #0f766e;" onclick="exportSmartDailyStep('punch','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" style="padding:5px 9px;background:#dc2626;border:1px solid #dc2626;" onclick="exportSmartDailyStep('punch','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button></div>
         </div>
         <div id="smartPunchPlan" style="margin-top:12px;"></div>
       </div>
@@ -277,7 +281,7 @@
       <div class="card" style="margin-top:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
           <h3 style="margin:0;color:#7c3aed;"><i class="fa-solid fa-bolt"></i> 2. PUNCH/CUT → WRAPPING : Recommended Today</h3>
-          <span style="font-size:11px;font-weight:900;color:#475569;">Minimum: 200 Pcs</span>
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end;"><span style="font-size:11px;font-weight:900;color:#475569;">Minimum: 200 Pcs</span><button class="btn" style="padding:5px 9px;background:#0f766e;border:1px solid #0f766e;" onclick="exportSmartDailyStep('wrap','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" style="padding:5px 9px;background:#dc2626;border:1px solid #dc2626;" onclick="exportSmartDailyStep('wrap','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button></div>
         </div>
         <div id="smartWrapPlan" style="margin-top:12px;"></div>
       </div>
@@ -285,7 +289,7 @@
       <div class="card" style="margin-top:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
           <h3 style="margin:0;color:#047857;"><i class="fa-solid fa-box-open"></i> 3. BOX PACKING : What can be packed now?</h3>
-          <span style="font-size:11px;font-weight:900;color:#475569;">Wrap stock + cardboard + Master Catalog box capacity</span>
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end;"><span style="font-size:11px;font-weight:900;color:#475569;">Wrap stock + cardboard + Master Catalog box capacity</span><button class="btn" style="padding:5px 9px;background:#0f766e;border:1px solid #0f766e;" onclick="exportSmartDailyStep('box','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" style="padding:5px 9px;background:#dc2626;border:1px solid #dc2626;" onclick="exportSmartDailyStep('box','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button></div>
         </div>
         <div id="smartBoxPlan" style="margin-top:12px;"></div>
       </div>
@@ -293,18 +297,18 @@
       <div class="card" style="margin-top:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
           <h3 style="margin:0;color:#b45309;"><i class="fa-solid fa-boxes-stacked"></i> 4. CRATE PACKING : Ready-to-Pack Crates</h3>
-          <span style="font-size:11px;font-weight:900;color:#475569;">Uses the same Packing List readiness logic</span>
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end;"><span style="font-size:11px;font-weight:900;color:#475569;">Uses the same Packing List readiness logic</span><button class="btn" style="padding:5px 9px;background:#0f766e;border:1px solid #0f766e;" onclick="exportSmartDailyStep('crate','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" style="padding:5px 9px;background:#dc2626;border:1px solid #dc2626;" onclick="exportSmartDailyStep('crate','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button></div>
         </div>
         <div id="smartCratePlan" style="margin-top:12px;"></div>
       </div>
 
       <div class="card" style="margin-top:18px;">
-        <h3 style="margin:0;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> 5. Action Alerts / Bottlenecks</h3>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;"><h3 style="margin:0;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> 5. Action Alerts / Bottlenecks</h3><div style="display:flex;gap:7px;"><button class="btn" style="padding:5px 9px;background:#0f766e;border:1px solid #0f766e;" onclick="exportSmartDailyStep('alerts','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" style="padding:5px 9px;background:#dc2626;border:1px solid #dc2626;" onclick="exportSmartDailyStep('alerts','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button></div></div>
         <div id="smartAlerts" style="margin-top:12px;"></div>
       </div>
 
       <div class="card" style="margin-top:18px;">
-        <h3 style="margin:0;color:#334155;"><i class="fa-solid fa-circle-question"></i> 6. Why Not? — Waiting for Minimum / Material</h3>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;"><h3 style="margin:0;color:#334155;"><i class="fa-solid fa-circle-question"></i> 6. Why Not? — Waiting for Minimum / Material</h3><div style="display:flex;gap:7px;"><button class="btn" style="padding:5px 9px;background:#0f766e;border:1px solid #0f766e;" onclick="exportSmartDailyStep('why','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" style="padding:5px 9px;background:#dc2626;border:1px solid #dc2626;" onclick="exportSmartDailyStep('why','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button></div></div>
         <div id="smartWhyNot" style="margin-top:12px;"></div>
       </div>
 
