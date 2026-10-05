@@ -2343,3 +2343,5 @@ body.dark-mode #dashboardTab .pending-po-metric.still{background:#2a1c26;border-
   min-height:48px!important;
   padding:7px 8px!important;
 }
+
+#planMessage{width:100%;resize:vertical;min-height:78px;box-sizing:border-box;border:1px solid #fde047;background:#fff;border-radius:9px;padding:10px 12px;font:inherit;color:#334155;}#planMessage:focus{outline:2px solid rgba(245,158,11,.22);}
