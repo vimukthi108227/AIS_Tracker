@@ -1453,14 +1453,16 @@ function renderDashboard() {
   if(document.getElementById('kpiTotalStockPcs')) document.getElementById('kpiTotalStockPcs').textContent = `${totalStockPcs.toLocaleString()} Pcs`; 
   if(document.getElementById('kpiTotalStockWt')) document.getElementById('kpiTotalStockWt').textContent = `${totalStockWt.toFixed(2)} kg`;
 
-  // Last entered production day: do not depend on Supabase/history array order.
-  // The KPI should always show the most recent Daily Production entry.
-  const latestHistoryDateMs = (historyLogs || []).reduce((max, h) => {
+  // Last day with wrapping output: do not depend on Supabase/history array order.
+  // The KPI is specifically the latest day that has a Daily Production WRAP entry.
+  const latestWrapDateMs = (historyLogs || []).reduce((max, h) => {
+      const wrapPcs = Number(h?.wrapQty) || 0;
+      if (wrapPcs <= 0) return max;
       const ms = Date.parse(String(h?.date || ''));
       return Number.isFinite(ms) && ms > max ? ms : max;
   }, -Infinity);
-  let latestDate = Number.isFinite(latestHistoryDateMs)
-      ? new Date(latestHistoryDateMs).toISOString().slice(0,10)
+  let latestDate = Number.isFinite(latestWrapDateMs)
+      ? new Date(latestWrapDateMs).toISOString().slice(0,10)
       : '-';
   let todayPcs = 0, todayWt = 0;
 
@@ -1488,7 +1490,7 @@ function renderDashboard() {
       if(d.getMonth()===cm && d.getFullYear()===cy) { mProdWrapWt += wrapPcs * uw; }
   });
 
-  if(document.getElementById('latestOutputDate')) document.getElementById('latestOutputDate').textContent = latestDate; if(document.getElementById('dashboardOutputLabel')) document.getElementById('dashboardOutputLabel').textContent = selectedMonthKey === `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}` ? 'Latest Output' : 'Month-End Output';
+  if(document.getElementById('latestOutputDate')) document.getElementById('latestOutputDate').textContent = latestDate; if(document.getElementById('dashboardOutputLabel')) document.getElementById('dashboardOutputLabel').textContent = 'Last Day Output';
   if(document.getElementById('kpiTodayOutputPcs')) document.getElementById('kpiTodayOutputPcs').textContent = `${todayPcs.toLocaleString()} Pcs (Wrap)`;
   if(document.getElementById('kpiTodayOutputWt')) {
       document.getElementById('kpiTodayOutputWt').innerHTML = `${todayWt.toFixed(2)} kg <div style="font-size:11px; color:#059669; margin-top:4px; padding-top:4px; border-top:1px dashed #a7f3d0;"><i class="fa-solid fa-calendar-check"></i> Month Wrap Total: <b style="font-size:13px;">${mProdWrapWt.toFixed(2)} kg</b></div>`;
