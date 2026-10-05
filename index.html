@@ -241,7 +241,79 @@
         <div class="smart-submenu" data-menu="management">
           <button class="tab-btn" onclick="switchTab('masterListTab', this)"><i class="fa-solid fa-boxes-stacked"></i> Master Catalog</button>
           <button class="tab-btn" onclick="switchTab('dailyPlanTab', this)"><i class="fa-solid fa-note-sticky"></i> Daily Plan</button>
+          <button class="tab-btn" onclick="switchTab('smartDailyPlanTab', this)" id="tabBtn-smartDailyPlan"><i class="fa-solid fa-wand-magic-sparkles"></i> Smart Daily Plan</button>
           <button class="tab-btn admin-restricted-area" onclick="switchTab('historyTab', this)" id="tabBtn-history"><i class="fa-solid fa-clock-rotate-left"></i> History Logs</button>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- SMART DAILY PLAN / KAIZEN TAB
+         Read-only decision-support module.
+         It calculates recommendations from current master stock, cardboard stock,
+         production orders, shipments and packing-list records. It does not save,
+         edit, delete or reset any existing data. -->
+    <div id="smartDailyPlanTab" class="tab-content">
+      <div class="card" style="background:linear-gradient(135deg,#f0fdf4,#eff6ff);border:2px solid #99f6e4;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:11px;font-weight:900;letter-spacing:.08em;color:#0f766e;">KAIZEN • DECISION SUPPORT</div>
+            <h2 style="margin:4px 0 3px;color:#064e3b;"><i class="fa-solid fa-wand-magic-sparkles"></i> Smart Daily Plan</h2>
+            <div style="font-size:12px;color:#475569;font-weight:700;">Current live stock → automatic recommendation for today's production & packing work</div>
+          </div>
+          <button class="btn" style="background:#0f766e;border:1px solid #0f766e;" onclick="renderSmartDailyPlan()"><i class="fa-solid fa-rotate"></i> Recalculate</button>
+        </div>
+        <div id="smartDailyPlanSummary" style="margin-top:18px;"></div>
+      </div>
+
+      <div class="card" style="margin-top:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <h3 style="margin:0;color:#075985;"><i class="fa-solid fa-list-check"></i> 1. CUT → PUNCH : Recommended Today</h3>
+          <span style="font-size:11px;font-weight:900;color:#475569;">Minimum: 100 Pcs</span>
+        </div>
+        <div id="smartPunchPlan" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card" style="margin-top:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <h3 style="margin:0;color:#7c3aed;"><i class="fa-solid fa-bolt"></i> 2. PUNCH/CUT → WRAPPING : Recommended Today</h3>
+          <span style="font-size:11px;font-weight:900;color:#475569;">Minimum: 200 Pcs</span>
+        </div>
+        <div id="smartWrapPlan" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card" style="margin-top:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <h3 style="margin:0;color:#047857;"><i class="fa-solid fa-box-open"></i> 3. BOX PACKING : What can be packed now?</h3>
+          <span style="font-size:11px;font-weight:900;color:#475569;">Wrap stock + cardboard + Master Catalog box capacity</span>
+        </div>
+        <div id="smartBoxPlan" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card" style="margin-top:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <h3 style="margin:0;color:#b45309;"><i class="fa-solid fa-boxes-stacked"></i> 4. CRATE PACKING : Ready-to-Pack Crates</h3>
+          <span style="font-size:11px;font-weight:900;color:#475569;">Uses the same Packing List readiness logic</span>
+        </div>
+        <div id="smartCratePlan" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card" style="margin-top:18px;">
+        <h3 style="margin:0;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> 5. Action Alerts / Bottlenecks</h3>
+        <div id="smartAlerts" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card" style="margin-top:18px;">
+        <h3 style="margin:0;color:#334155;"><i class="fa-solid fa-circle-question"></i> 6. Why Not? — Waiting for Minimum / Material</h3>
+        <div id="smartWhyNot" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card" style="margin-top:18px;background:linear-gradient(135deg,#ecfdf5,#f8fafc);border:2px solid #a7f3d0;">
+        <h3 style="margin:0;color:#065f46;"><i class="fa-solid fa-trophy"></i> Kaizen Improvement Concept</h3>
+        <div style="margin-top:10px;color:#334155;font-size:13px;line-height:1.7;">
+          <b>Before:</b> Operator checks multiple pages and manually decides what to produce/pack.
+          <br><b>After:</b> AIS Tracker automatically converts live stock, material availability and Packing List status into a prioritized daily action plan.
+          <br><b>Result to measure:</b> planning time saved, waiting time reduced, cardboard shortages identified earlier, WIP converted faster, and shipment readiness improved.
         </div>
       </div>
     </div>
@@ -429,7 +501,7 @@
     <div id="balanceWorkTab" class="tab-content"><div class="card"><div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;"><h3 style="margin:0;"><i class="fa-solid fa-scale-balanced"></i> Balance Work & Pending Production Analysis</h3><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-accent" onclick="exportBalanceWorkExcel()"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" style="background:#dc2626;color:#fff;" onclick="exportBalanceWorkPdf()"><i class="fa-solid fa-file-pdf"></i> PDF</button></div></div><div class="balance-filterbar"><div><label><i class="fa-solid fa-filter"></i> PL Balance Filter</label><select id="balancePlFilter" onchange="renderBalanceWorkTable()"><option value="all">All Active PL Lines</option><option value="pending">Pending PL Balance Only</option><option value="available">Available Balance Only</option><option value="all_po">All Production Orders</option><option value="pending_po">Pending Production Order Balance</option><option value="available_po">Available Production Order Balance</option></select></div><div class="balance-filter-info" id="balancePlFilterInfo">Active PL balance is calculated from the latest active Packing List.</div></div><div class="table-container balance-work-container"><table id="balanceWorkTable" class="balance-work-table"><thead><tr><th>Profile</th><th>Item Code</th><th>Cut Length</th><th>Ex Length</th><th>Pcs / Ex</th><th>WIP + Box</th><th>Crate</th><th>Unshipped PO</th><th style="background: linear-gradient(180deg, #9f1239 0%, #e11d48 100%); color: #fff;">PO Pending</th><th style="background: linear-gradient(180deg, #c2410c 0%, #9a3412 100%); color: #fff;">PL Balance</th><th style="background: var(--primary-dark); color: #fff;">Req. Extrusions</th><th style="background: #0369a1; color: #fff;">Unboxed</th><th style="background: #b45309; color: #fff;">Req. Boxes</th><th style="background: #047857; color: #fff;">Cardboard</th></tr></thead><tbody id="balanceWorkTableBody"></tbody></table></div></div></div>
     
     <!-- PO Tab -->
-    <div id="poManagementTab" class="tab-content"><div class="card"><h3><i class="fa-solid fa-chart-pie"></i> Individual PO Fulfillment Status</h3><div id="poChartsContainerTab" class="po-charts-grid" style="justify-content: flex-start; max-height: auto; overflow: visible;"></div></div><div class="card admin-restricted-area"><h3><i class="fa-solid fa-file-excel"></i> Bulk Upload Production Orders</h3><div style="display: flex; gap:10px; align-items:center; margin-top: 12px; max-width: 500px; flex-wrap: wrap;"><input type="file" id="excelUpload" accept=".xlsx, .xls, .csv" style="padding: 8px; border: 2px dashed var(--accent-color); background: var(--emerald-light); cursor: pointer; flex: 1;"><button type="button" id="poUploadBtn" class="btn btn-accent btn-animated" onclick="processExcelUpload()"><i class="fa-solid fa-cloud-arrow-up"></i> Upload</button></div></div><div class="card"><details class="admin-restricted-area" style="margin-bottom: 14px; background: var(--emerald-light); padding: 12px; border-radius: 8px; border: 1px solid var(--emerald-border);"><summary style="font-weight:700; color:var(--primary-dark); cursor:pointer;"><i class="fa-solid fa-plus-circle"></i> Manually Add Single PO</summary><form id="poEntryForm" style="margin-top:14px;"><div class="form-grid"><div class="form-group"><label>PO Date</label><input type="date" id="poDate" required></div><div class="form-group"><label>PO Number</label><input type="text" id="poNumber" required></div><div class="form-group"><label>1. Select Profile</label><select id="poSelectProfile" onchange="onPoProfileSelect()" required></select></div><div class="form-group"><label>2. Select Item Code</label><select id="poSelectItemCode" onchange="onPoItemCodeSelect()" required></select></div><div class="form-group"><label>3. Length (mm)</label><select id="poSelectLength" required></select></div><div class="form-group"><label>Required Qty (Pcs)</label><input type="number" id="poOrderQty" min="1" required></div></div><div style="margin-top: 16px;"><button type="button" class="btn btn-accent btn-animated" onclick="saveNewPO()"><i class="fa-solid fa-save"></i> Save PO</button></div></form></details><div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;"><h3 style="margin:0;"><i class="fa-solid fa-filter"></i> View & Filter Production Orders</h3><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-accent" onclick="exportPoExcel()"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" style="background:#dc2626;color:#fff;" onclick="exportPoPdf()"><i class="fa-solid fa-file-pdf"></i> PDF</button></div></div><div class="form-grid"><div class="form-group"><label>Filter by PO Number:</label><select id="filterPoNumber" onchange="renderPoDetailsTable()"></select></div><div class="form-group"><label>1. Filter by Profile:</label><select id="filterPoProfile" onchange="onPoFilterProfileChange()"></select></div><div class="form-group"><label>2. Filter by Item Code:</label><select id="filterPoItemCode" onchange="renderPoDetailsTable()"></select></div></div><div class="table-container" style="margin-top: 14px;"><table><thead><tr><th>PO Date</th><th>PO Number</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Unit Wt</th><th>Required Qty</th><th>Action</th></tr></thead><tbody id="poDetailsTableBody"></tbody></table></div></div></div>
+    <div id="poManagementTab" class="tab-content"><div class="card"><h3><i class="fa-solid fa-chart-pie"></i> Individual PO Fulfillment Status</h3><div id="poChartsContainerTab" class="po-charts-grid" style="justify-content: flex-start; max-height: auto; overflow: visible;"></div></div><div class="card admin-restricted-area"><h3><i class="fa-solid fa-file-excel"></i> Bulk Upload Production Orders</h3><div style="display: flex; gap:10px; align-items:center; margin-top: 12px; max-width: 500px; flex-wrap: wrap;"><input type="file" id="excelUpload" accept=".xlsx, .xls, .csv" style="padding: 8px; border: 2px dashed var(--accent-color); background: var(--emerald-light); cursor: pointer; flex: 1;"><button type="button" id="poUploadBtn" class="btn btn-accent btn-animated" onclick="processExcelUpload()"><i class="fa-solid fa-cloud-arrow-up"></i> Upload</button></div></div><div class="card"><details class="admin-restricted-area" style="margin-bottom: 14px; background: var(--emerald-light); padding: 12px; border-radius: 8px; border: 1px solid var(--emerald-border);"><summary style="font-weight:700; color:var(--primary-dark); cursor:pointer;"><i class="fa-solid fa-plus-circle"></i> Manually Add Single PO</summary><form id="poEntryForm" style="margin-top:14px;"><div class="form-grid"><div class="form-group"><label>PO Date</label><input type="date" id="poDate" required></div><div class="form-group"><label>PO Number</label><input type="text" id="poNumber" required></div><div class="form-group"><label>1. Select Profile</label><select id="poSelectProfile" onchange="onPoProfileSelect()" required></select></div><div class="form-group"><label>2. Select Item Code</label><select id="poSelectItemCode" onchange="onPoItemCodeSelect()" required></select></div><div class="form-group"><label>3. Length (mm)</label><select id="poSelectLength" required></select></div><div class="form-group"><label>Required Qty (Pcs)</label><input type="number" id="poOrderQty" min="1" required></div></div><div style="margin-top: 16px;"><button type="button" class="btn btn-accent btn-animated" onclick="saveNewPO()"><i class="fa-solid fa-save"></i> Save PO</button></div></form></details><div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;"><h3 style="margin:0;"><i class="fa-solid fa-filter"></i> View & Filter Production Orders</h3><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-accent" onclick="exportPoExcel()"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" style="background:#dc2626;color:#fff;" onclick="exportPoPdf()"><i class="fa-solid fa-file-pdf"></i> PDF</button></div></div><div class="form-grid"><div class="form-group"><label>Filter by PO Number:</label><select id="filterPoNumber" onchange="renderPoDetailsTable()"></select></div><div class="form-group"><label>1. Filter by Profile:</label><select id="filterPoProfile" onchange="onPoFilterProfileChange()"></select></div><div class="form-group"><label>2. Filter by Item Code:</label><select id="filterPoItemCode" onchange="renderPoDetailsTable()"></select></div></div><div class="table-container" style="margin-top: 14px;"><table><thead><tr><th>PO Date</th><th>PO Number</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Unit Wt</th><th>Required Qty</th><th>Shipped Qty</th><th>Remaining Qty</th><th>Action</th></tr></thead><tbody id="poDetailsTableBody"></tbody></table></div></div></div>
 
     <!-- PACKING LIST TAB -->
     <div id="packingListTab" class="tab-content">
