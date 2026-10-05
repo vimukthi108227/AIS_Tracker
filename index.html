@@ -324,19 +324,86 @@
 
     <!-- DAILY PLAN TAB -->
     <div id="dailyPlanTab" class="tab-content">
-      <div class="card" style="background: rgba(255,255,255,0.8); border: 2px dashed #fcd34d;">
-        <h3 style="margin-top:0; color: #b45309;"><i class="fa-solid fa-thumbtack"></i> Daily Operations Plan & Instructions Board</h3>
-        <div id="planInputArea" style="display:none; background: #fffbeb; padding: 18px; border-radius: var(--radius-md); margin-bottom: 24px; border: 1px solid #fde047; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
-          <h4 style="margin-top:0; color: #d97706;"><i class="fa-solid fa-pen-to-square"></i> Pin a New Instruction</h4>
+      <div class="card" style="background:rgba(255,255,255,.88);border:2px dashed #fcd34d;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div>
+            <h3 style="margin:0;color:#b45309;"><i class="fa-solid fa-thumbtack"></i> Daily Operations Plan & Instructions Board</h3>
+            <div style="margin-top:4px;color:#78716c;font-size:12px;font-weight:700;">
+              Smart daily notes • priority • responsible section • completion tracking
+            </div>
+          </div>
+          <div id="dailyPlanRoleBadge" style="font-size:11px;font-weight:900;color:#92400e;background:#fff7ed;border:1px solid #fed7aa;padding:6px 10px;border-radius:999px;"></div>
+        </div>
+
+        <div id="planInputArea" style="display:none;background:#fffbeb;padding:18px;border-radius:var(--radius-md);margin-top:18px;margin-bottom:20px;border:1px solid #fde047;box-shadow:0 4px 10px rgba(0,0,0,.05);">
+          <h4 style="margin-top:0;color:#d97706;"><i class="fa-solid fa-pen-to-square"></i> Add Daily Plan / Instruction</h4>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+            <button type="button" class="btn" style="background:#0f766e;border:1px solid #0f766e;padding:7px 11px;" onclick="useSmartDailyPlanNote()">
+              <i class="fa-solid fa-wand-magic-sparkles"></i> Use Smart Plan
+            </button>
+            <button type="button" class="btn" style="background:#2563eb;border:1px solid #2563eb;padding:7px 11px;" onclick="setDailyNoteTemplate('production')">Production</button>
+            <button type="button" class="btn" style="background:#7c3aed;border:1px solid #7c3aed;padding:7px 11px;" onclick="setDailyNoteTemplate('packing')">Packing</button>
+            <button type="button" class="btn" style="background:#b45309;border:1px solid #b45309;padding:7px 11px;" onclick="setDailyNoteTemplate('material')">Material Alert</button>
+            <button type="button" class="btn" style="background:#be123c;border:1px solid #be123c;padding:7px 11px;" onclick="setDailyNoteTemplate('kaizen')">Kaizen</button>
+          </div>
+
           <div class="form-grid">
             <div class="form-group"><label>Target Date</label><input type="date" id="planDate"></div>
-            <div class="form-group"><label>Target User/Section</label><select id="planUser"><option value="All Sections">All Sections</option><option value="Cut Stage Operator">Cut Stage Operator</option><option value="Punching Stage Operator">Punching Stage Operator</option><option value="Wrapping Stage Operator">Wrapping Stage Operator</option><option value="Box Packing Operator">Box Packing Operator</option><option value="Crate Packing Operator">Crate Packing Operator</option></select></div>
-            <div class="form-group"><label>Priority Level</label><select id="planPriority"><option value="Normal">Normal</option><option value="High">High Priority 🔴</option></select></div>
+            <div class="form-group"><label>Target User / Section</label>
+              <select id="planUser">
+                <option value="All Sections">All Sections</option>
+                <option value="Cut Stage Operator">Cut Stage Operator</option>
+                <option value="Punching Stage Operator">Punching Stage Operator</option>
+                <option value="Wrapping Stage Operator">Wrapping Stage Operator</option>
+                <option value="Box Packing Operator">Box Packing Operator</option>
+                <option value="Crate Packing Operator">Crate Packing Operator</option>
+              </select>
+            </div>
+            <div class="form-group"><label>Priority Level</label>
+              <select id="planPriority"><option value="Normal">Normal</option><option value="High">High Priority 🔴</option></select>
+            </div>
+            <div class="form-group"><label>Note Type</label>
+              <select id="planCategory">
+                <option value="Daily Plan">Daily Plan</option>
+                <option value="Production">Production</option>
+                <option value="Packing">Packing</option>
+                <option value="Material Alert">Material Alert</option>
+                <option value="Quality">Quality</option>
+                <option value="Shipment">Shipment</option>
+                <option value="Kaizen">Kaizen</option>
+                <option value="General">General</option>
+              </select>
+            </div>
           </div>
-          <div class="form-group" style="margin-top:14px;"><label>Instruction Message</label><input type="text" id="planMessage" placeholder="Type the instruction or plan here..." style="width: 100%; border: 1px solid #fde047; background: #fff;"></div>
-          <button class="btn btn-animated" style="margin-top:14px; background: #d97706; border: 1px solid #b45309;" onclick="saveDailyInstruction()"><i class="fa-solid fa-paper-plane"></i> Pin Instruction</button>
+
+          <div class="form-group" style="margin-top:14px;">
+            <label>Instruction / Plan Note</label>
+            <textarea id="planMessage" rows="3" placeholder="Type the instruction, today's plan, problem or action..."></textarea>
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+            <button class="btn btn-animated" style="background:#d97706;border:1px solid #b45309;" onclick="saveDailyInstruction()">
+              <i class="fa-solid fa-paper-plane"></i> Save Note
+            </button>
+            <button type="button" class="btn" style="background:#64748b;border:1px solid #64748b;" onclick="clearDailyNoteForm()">
+              <i class="fa-solid fa-eraser"></i> Clear
+            </button>
+          </div>
         </div>
-        <div id="instructionBoardContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; padding: 15px;"></div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px;">
+          <div style="font-weight:900;color:#92400e;"><i class="fa-solid fa-list-check"></i> Active Notes</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <select id="dailyNoteFilter" onchange="renderDailyInstructions()" style="padding:7px 10px;border:1px solid #fde68a;border-radius:9px;">
+              <option value="All">All Notes</option><option value="Pending">Pending</option><option value="Completed">Completed</option>
+            </select>
+            <select id="dailyNoteCategoryFilter" onchange="renderDailyInstructions()" style="padding:7px 10px;border:1px solid #fde68a;border-radius:9px;">
+              <option value="All">All Types</option><option value="Daily Plan">Daily Plan</option><option value="Production">Production</option><option value="Packing">Packing</option><option value="Material Alert">Material Alert</option><option value="Quality">Quality</option><option value="Shipment">Shipment</option><option value="Kaizen">Kaizen</option><option value="General">General</option>
+            </select>
+          </div>
+        </div>
+        <div id="instructionBoardContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding:15px 0 5px;"></div>
       </div>
     </div>
 
