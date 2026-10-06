@@ -4335,9 +4335,30 @@ function renderPoDetailsTable(){
   }).join(''):'<tr><td colspan="11" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No production orders match the filters.</td></tr>';
 }
 
+function updateShipmentHistoryProfileFilter(){
+  const select=document.getElementById('shipmentHistoryProfileFilter');
+  if(!select)return;
+  const current=select.value;
+  const profiles=[...new Set(shipmentList.map(s=>String(s.profile||'').trim()).filter(Boolean))]
+    .sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
+  select.innerHTML='<option value="">All Profiles</option>'+profiles.map(p=>`<option value="${String(p).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}">${String(p).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</option>`).join('');
+  if(profiles.includes(current))select.value=current;
+}
 function renderShipmentHistoryTable(){
   const body=document.getElementById('shipmentHistoryTableBody'); if(!body)return;
-  body.innerHTML=shipmentList.length?shipmentList.map((s,i)=>{ const masterItemCode=getShipmentMasterItemCode(s)||'-'; return `<tr><td>${s.date||'-'}</td><td>${s.poNumber||'-'}</td><td>${s.profile||'-'}</td><td><b style="color:var(--primary-dark);">${masterItemCode}</b></td><td>${s.length||'-'} mm</td><td>${s.month||'-'}</td><td>${s.container||'-'}</td><td>${Number(s.shippedQty||0).toLocaleString()}</td><td>${Number(s.remainingBalance||0).toLocaleString()}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openShipmentEditModal(${i})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`; }).join(''):'<tr><td colspan="10" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No shipment records.</td></tr>';
+  updateShipmentHistoryProfileFilter();
+  const selectedProfile=String(document.getElementById('shipmentHistoryProfileFilter')?.value||'').trim();
+  const rows=selectedProfile
+    ? shipmentList.map((s,i)=>({s,i})).filter(x=>String(x.s.profile||'').trim()===selectedProfile)
+    : shipmentList.map((s,i)=>({s,i}));
+  if(!rows.length){
+    body.innerHTML='<tr><td colspan="10" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No shipment records'+(selectedProfile?' for Profile '+selectedProfile:'')+'.</td></tr>';
+    return;
+  }
+  body.innerHTML=rows.map(({s,i})=>{
+    const masterItemCode=getShipmentMasterItemCode(s)||'-';
+    return `<tr><td>${s.date||'-'}</td><td>${s.poNumber||'-'}</td><td>${s.profile||'-'}</td><td><b style="color:var(--primary-dark);">${masterItemCode}</b></td><td>${s.length||'-'} mm</td><td>${s.month||'-'}</td><td>${s.container||'-'}</td><td>${Number(s.shippedQty||0).toLocaleString()}</td><td>${Number(s.remainingBalance||0).toLocaleString()}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openShipmentEditModal(${i})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`;
+  }).join('');
 }
 window.renderShipmentHistoryTable=renderShipmentHistoryTable;
 function dailyNoteEscape(v){
