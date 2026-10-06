@@ -1250,6 +1250,17 @@ function populateRejProfile() { const sel = document.getElementById('rejProfile'
 function onRejProfileSelect() { const p = document.getElementById('rejProfile').value; const sel = document.getElementById('rejItemCode'); sel.innerHTML = '<option value="">-- Choose Item Code --</option>'; document.getElementById('rejLength').innerHTML = '<option value="">-- Choose Length --</option>'; document.getElementById('rejWeight').value=''; if(!p) return; const items = masterData.filter(m => String(m.profile).trim() === p && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => sel.appendChild(new Option(ic, ic))); }
 function onRejItemCodeSelect() { const p = document.getElementById('rejProfile').value; const ic = document.getElementById('rejItemCode').value; const sel = document.getElementById('rejLength'); sel.innerHTML = '<option value="">-- Choose Length --</option>'; document.getElementById('rejWeight').value=''; if(!p || !ic) return; const matches = masterData.filter(m => String(m.profile).trim() === p && m.itemCode === ic); matches.forEach(m => sel.appendChild(new Option(`${m.length} mm`, m.length))); if(matches.length === 1) { sel.value = matches[0].length; calcRejWeight(); } }
 function calcRejWeight() { const p = document.getElementById('rejProfile') ? document.getElementById('rejProfile').value : null; const ic = document.getElementById('rejItemCode') ? document.getElementById('rejItemCode').value : null; const l = document.getElementById('rejLength') ? document.getElementById('rejLength').value : null; const pcs = parseInt(document.getElementById('rejPcs').value)||0; if(!p || !ic || !l || pcs<=0) { if(document.getElementById('rejWeight')) document.getElementById('rejWeight').value=''; return; } const matched = masterData.find(m => String(m.profile).trim()===p && m.itemCode===ic && cleanLen(m.length)===cleanLen(l)); if(matched && document.getElementById('rejWeight')) { document.getElementById('rejWeight').value = (pcs * (matched.unitWeight || 0)).toFixed(2); } }
+function getRejectUpstreamStage(stage, profile, length) {
+  const stg=String(stage||'').toLowerCase();
+  if(stg.includes('punch')) return 'Cut';
+  if(stg.includes('wrap')) {
+    // Profiles that bypass Punching go directly Cut -> Wrapping,
+    // so a Wrapping reject must reduce Cut stock for those profiles.
+    return (typeof isPunchBypassed === 'function' && isPunchBypassed(profile,length)) ? 'Cut' : 'Punch';
+  }
+  return null;
+}
+
 async function saveRejectEntry() {
   if(isAppBusy) return; isAppBusy=true;
   try {
@@ -1258,36 +1269,47 @@ async function saveRejectEntry() {
     if(!d||!p||!ic||!l||pcs<=0) return showToast('Please complete all Reject fields.','warning');
     const matched=masterData.find(m=>String(m.profile).trim()===p && String(m.itemCode).trim()===ic && cleanLen(m.length)===l);
     if(!matched) return showToast('Selected profile/length is not in Master Catalog.','error');
+
     const wt=parseFloat((pcs*(matched.unitWeight||0)).toFixed(2));
-    const punchStage=String(stg).toLowerCase().includes('punch'), wrapStage=String(stg).toLowerCase().includes('wrap');
-    const nextCut=Math.max(0,(matched.cutQty||0)-(punchStage?pcs:0));
-    const nextPunch=Math.max(0,(matched.punchQty||0)-(wrapStage?pcs:0));
+    const upstreamStage=getRejectUpstreamStage(stg,p,l);
+    if(!upstreamStage) return showToast('Please select Punching or Wrapping reject stage.','warning');
+
+    const currentUpstream=upstreamStage==='Cut' ? Number(matched.cutQty)||0 : Number(matched.punchQty)||0;
+    if(pcs>currentUpstream){
+      return showToast(`${stg} Reject cannot be saved. ${upstreamStage} Stage has only ${currentUpstream.toLocaleString()} Pcs available; you entered ${pcs.toLocaleString()} Pcs.`,'error');
+    }
+
+    const nextCut=upstreamStage==='Cut' ? currentUpstream-pcs : Number(matched.cutQty)||0;
+    const nextPunch=upstreamStage==='Punch' ? currentUpstream-pcs : Number(matched.punchQty)||0;
     const entry={reject_date:d,shift:sh,team:tm,location:loc,stage:stg,profile:p,item_code:ic,length:l,pcs,weight:wt};
     let stockChanged=false;
     try {
-      if(matched.db_id && (punchStage||wrapStage)){
-        const {error:stockError}=await supabaseClient.from('master_catalog').update({cut_qty:nextCut,punch_qty:nextPunch}).eq('id',matched.db_id);
-        if(stockError) throw new Error(`Reject stock update failed: ${stockError.message}`);
-        stockChanged=true;
-      }
+      if(!matched.db_id) throw new Error('Selected Master Catalog row is not linked to Supabase. Reject cannot be saved safely.');
+      const {error:stockError}=await supabaseClient.from('master_catalog').update({cut_qty:nextCut,punch_qty:nextPunch}).eq('id',matched.db_id);
+      if(stockError) throw new Error(`Reject stock update failed: ${stockError.message}`);
+      stockChanged=true;
       const {error:insertError}=await supabaseClient.from('reject_logs').insert([entry]);
       if(insertError) throw new Error(`Reject save failed: ${insertError.message}`);
     } catch(err){
-      if(stockChanged && matched.db_id){ try{ await supabaseClient.from('master_catalog').update({cut_qty:matched.cutQty,punch_qty:matched.punchQty}).eq('id',matched.db_id); }catch(rb){ console.error('Reject stock rollback failed:',rb); } }
+      if(stockChanged && matched.db_id){
+        try{ await supabaseClient.from('master_catalog').update({cut_qty:matched.cutQty,punch_qty:matched.punchQty}).eq('id',matched.db_id); }
+        catch(rb){ console.error('Reject stock rollback failed:',rb); }
+      }
       throw err;
     }
+
+    const previousCut=Number(matched.cutQty)||0;
+    const previousPunch=Number(matched.punchQty)||0;
     matched.cutQty=nextCut; matched.punchQty=nextPunch;
-    const rejectPrevious={cutQty:Number(matched.cutQty)||0,punchQty:Number(matched.punchQty)||0};
-    // The local object is already updated below; calculate the exact values before this entry.
-    rejectPrevious.cutQty=nextCut+(punchStage?pcs:0);
-    rejectPrevious.punchQty=nextPunch+(wrapStage?pcs:0);
     aisRegisterUndo(`Reject Entry • ${p} / ${l} • ${pcs} Pcs`,async()=>{
       await aisDeleteLatest('reject_logs',{reject_date:entry.reject_date,shift:entry.shift,team:entry.team,location:entry.location,stage:entry.stage,profile:entry.profile,item_code:entry.item_code,length:entry.length,pcs:entry.pcs,weight:entry.weight});
-      if(matched.db_id) await aisUpdateById('master_catalog',matched.db_id,{cut_qty:rejectPrevious.cutQty,punch_qty:rejectPrevious.punchQty});
+      if(matched.db_id) await aisUpdateById('master_catalog',matched.db_id,{cut_qty:previousCut,punch_qty:previousPunch});
     },'rejectTrackerTab');
+
     rejectLogs.unshift({...entry,id:-Date.now()});
     renderRejectTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable();
-    showToast('Reject saved successfully.','success'); document.getElementById('rejectEntryForm').reset(); document.getElementById('rejDate').value=d;
+    showToast(`${stg} Reject saved. ${upstreamStage} Stage reduced by ${pcs.toLocaleString()} Pcs.`,'success');
+    document.getElementById('rejectEntryForm').reset(); document.getElementById('rejDate').value=d;
   } catch(e){ console.error(e); showToast(e.message||'Reject save failed.','error'); } finally { isAppBusy=false; }
 }
 function renderRejectTable() { try { const subTab = document.getElementById('rejectEntrySubTab'); let filterDiv = document.getElementById('rejectFilterContainer'); if (!filterDiv && subTab) { filterDiv = document.createElement('div'); filterDiv.id = 'rejectFilterContainer'; filterDiv.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; background: rgba(16, 185, 129, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px dashed var(--emerald-border); flex-wrap: wrap; gap: 15px;"><div><label style="font-weight:800; margin-right:10px; color:var(--primary-dark);"><i class="fa-solid fa-calendar-days"></i> Filter by Month:</label><input type="month" id="rejectMonthFilter" onchange="renderRejectTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700;"></div><div style="display:flex; gap: 12px; font-weight: 800; font-size: 13.5px; flex-wrap: wrap;"><div style="background: #fee2e2; color: #9f1239; padding: 8px 14px; border-radius: 6px;"><i class="fa-solid fa-dumpster"></i> Total: <span id="rejSumTotal">0.00</span> kg</div></div></div>`; const tableContainer = subTab.querySelector('.table-container'); subTab.insertBefore(filterDiv, tableContainer); const now = new Date(); document.getElementById('rejectMonthFilter').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; } const selectedMonthVal = document.getElementById('rejectMonthFilter') ? document.getElementById('rejectMonthFilter').value : ''; let filteredLogs = rejectLogs; let sumTotal = 0; if (selectedMonthVal) filteredLogs = rejectLogs.filter(r => r.reject_date && r.reject_date.startsWith(selectedMonthVal)); filteredLogs.forEach(r => { sumTotal += (parseFloat(r.weight) || 0); }); if (document.getElementById('rejSumTotal')) document.getElementById('rejSumTotal').textContent = sumTotal.toFixed(2); const tb = document.getElementById('rejectTableBody'); if(!tb) return; let html = ''; if(filteredLogs.length===0) html = `<tr><td colspan="10" style="text-align:center;">No Reject Records Found.</td></tr>`; else { filteredLogs.forEach(r => { html += `<tr><td>${r.reject_date}</td><td>${r.shift}</td><td>${r.location}</td><td>${r.stage}</td><td><b>${r.profile}</b></td><td>${r.item_code}</td><td>${r.length}</td><td>${r.pcs}</td><td>${r.weight} kg</td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-danger" onclick="deleteRejectItem(${r.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock"></i>`}</td></tr>`; }); } tb.innerHTML = html; } catch(e) {} }
@@ -1295,20 +1317,27 @@ window.deleteRejectItem = function(id) { if(currentUserRole !== 'Admin') return;
   const row=rejectLogs.find(r=>Number(r.id)===Number(id)); if(!row) return;
   try {
     const matched=masterData.find(m=>recKey(m.profile)===recKey(row.profile)&&recKey(m.itemCode)===recKey(row.item_code)&&cleanLen(m.length)===cleanLen(row.length));
-    const stage=String(row.stage||'').toLowerCase();
-    const restoreCut=stage.includes('punch'); const restorePunch=stage.includes('wrap');
-    if((restoreCut||restorePunch) && (!matched || !matched.db_id)) throw new Error('Matching Master Catalog stock row was not found. Delete cancelled.');
-    let previous={cutQty:matched?.cutQty||0,punchQty:matched?.punchQty||0};
-    if(matched && matched.db_id && (restoreCut||restorePunch)) {
-      const nextCut=restoreCut ? previous.cutQty+(Number(row.pcs)||0) : previous.cutQty;
-      const nextPunch=restorePunch ? previous.punchQty+(Number(row.pcs)||0) : previous.punchQty;
-      const {error:stockError}=await supabaseClient.from('master_catalog').update({cut_qty:nextCut,punch_qty:nextPunch}).eq('id',matched.db_id);
-      if(stockError) throw new Error(`Stock reversal failed: ${stockError.message}`);
-      matched.cutQty=nextCut; matched.punchQty=nextPunch;
-    }
+    const upstreamStage=getRejectUpstreamStage(row.stage,row.profile,row.length);
+    if(!upstreamStage || !matched || !matched.db_id) throw new Error('Matching Master Catalog stock row was not found. Delete cancelled.');
+
+    const previous={cutQty:Number(matched.cutQty)||0,punchQty:Number(matched.punchQty)||0};
+    const qty=Number(row.pcs)||0;
+    const nextCut=upstreamStage==='Cut' ? previous.cutQty+qty : previous.cutQty;
+    const nextPunch=upstreamStage==='Punch' ? previous.punchQty+qty : previous.punchQty;
+
+    const {error:stockError}=await supabaseClient.from('master_catalog').update({cut_qty:nextCut,punch_qty:nextPunch}).eq('id',matched.db_id);
+    if(stockError) throw new Error(`Stock reversal failed: ${stockError.message}`);
+    matched.cutQty=nextCut; matched.punchQty=nextPunch;
+
     const {error:deleteError}=await supabaseClient.from('reject_logs').delete().eq('id',id);
-    if(deleteError){ if(matched?.db_id&&(restoreCut||restorePunch)) await supabaseClient.from('master_catalog').update({cut_qty:previous.cutQty,punch_qty:previous.punchQty}).eq('id',matched.db_id); throw new Error(`Reject delete failed: ${deleteError.message}`); }
-    rejectLogs=rejectLogs.filter(r=>Number(r.id)!==Number(id)); renderRejectTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable(); showToast('Reject deleted and stock reversed successfully.','success');
+    if(deleteError){
+      await supabaseClient.from('master_catalog').update({cut_qty:previous.cutQty,punch_qty:previous.punchQty}).eq('id',matched.db_id);
+      matched.cutQty=previous.cutQty; matched.punchQty=previous.punchQty;
+      throw new Error(`Reject delete failed: ${deleteError.message}`);
+    }
+    rejectLogs=rejectLogs.filter(r=>Number(r.id)!==Number(id));
+    renderRejectTable(); renderDashboard(); renderProfileSummaryTable(); renderBalanceWorkTable();
+    showToast(`Reject deleted. ${upstreamStage} Stage restored by ${qty.toLocaleString()} Pcs.`,'success');
   } catch(e){ console.error(e); showToast(e.message||'Reject delete failed.','error'); }
 }); }
 function recKey(v){ return String(v ?? '').trim().toLowerCase(); }
