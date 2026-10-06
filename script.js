@@ -285,7 +285,7 @@ window.exportCardboardPdf=function(){
     exportDataToPdf(data,'AIS_Cardboard_History','AIS Tracker - Cardboard History','Cardboard Stock');
 };
 window.exportShipmentsPdf=function(){
-    const data=shipmentList.map(s=>({'Shipment Date':s.date,'PO Number':s.poNumber,'Profile':s.profile,'Length (mm)':s.length,'Container No':s.container,'Shipped Qty':s.shippedQty,'Remaining':s.remainingBalance}));
+    const data=shipmentList.map(s=>({'Shipment Date':s.date,'PO Number':s.poNumber,'Profile':s.profile,'Item Code':getShipmentMasterItemCode(s)||'-','Length (mm)':s.length,'Container No':s.container,'Shipped Qty':s.shippedQty,'Remaining':s.remainingBalance}));
     exportDataToPdf(data,'AIS_Shipment_History','AIS Tracker - Shipment History','Shipment History');
 };
 window.exportHistoryPdf=function(){
@@ -335,7 +335,7 @@ window.exportPoExcel = function() {
     exportTableToExcel(data, "AIS_Production_Orders", "Production Orders");
 };
 window.exportCardboardExcel = function() { const data = cardboardStockList.map(c => ({ "Date": c.date, "Transaction Type": c.type, "Incoming": c.incoming, "Consumed": c.used })); exportTableToExcel(data, "AIS_Cardboard_History", "Cardboard"); };
-window.exportShipmentsExcel = function() { const data = shipmentList.map(s => ({ "Shipment Date": s.date, "PO Number": s.poNumber, "Profile": s.profile, "Length (mm)": s.length, "Container No": s.container, "Shipped Qty": s.shippedQty, "Remaining": s.remainingBalance })); exportTableToExcel(data, "AIS_Shipment_History", "Shipments"); };
+window.exportShipmentsExcel = function() { const data = shipmentList.map(s => ({ "Shipment Date": s.date, "PO Number": s.poNumber, "Profile": s.profile, "Item Code": getShipmentMasterItemCode(s)||"-", "Length (mm)": s.length, "Container No": s.container, "Shipped Qty": s.shippedQty, "Remaining": s.remainingBalance })); exportTableToExcel(data, "AIS_Shipment_History", "Shipments"); };
 window.exportHistoryExcel = function() { const data = historyLogs.map(h => ({ "Date": h.date, "Time": h.timestamp, "Shift": h.shift, "Profile": h.profile, "Length (mm)": h.length, "Cut Qty": h.cutQty, "Punch Qty": h.punchQty, "Wrap Qty": h.wrapQty, "Box Qty": h.boxQty, "Crate Qty": h.crateQty })); exportTableToExcel(data, "AIS_Production_History", "History"); };
 window.exportRejectExcel = function() { const data = rejectLogs.map(r => ({ "Date": r.reject_date, "Shift": r.shift, "Location": r.location, "Stage": r.stage, "Profile": r.profile, "Item Code": r.item_code, "Length (mm)": r.length, "Reject Qty": r.pcs, "Weight (kg)": r.weight })); exportTableToExcel(data, "AIS_Reject_History", "Rejects"); };
 window.exportRecoverExcel = function() {
@@ -683,7 +683,7 @@ async function loadDataFromSupabase(isSilent = false) {
       itemCode: resolveMasterItemCode(item.profile, item.length, item.item_code),
       length: cleanLen(item.length), orderQty: item.order_qty
     }));
-    shipmentList = shipData.map(item => ({ id: item.id, date: item.shipment_date, month: item.shipment_month, poNumber: item.po_number, profile: item.profile, length: cleanLen(item.length), container: item.container, shippedQty: item.shipped_qty, remainingBalance: item.remaining_balance }));
+    shipmentList = shipData.map(item => ({ id: item.id, date: item.shipment_date, month: item.shipment_month, poNumber: item.po_number, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), container: item.container, shippedQty: item.shipped_qty, remainingBalance: item.remaining_balance }));
     packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate 1`, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date }));
     historyLogs = logData.map(item => ({ id: item.id, date: item.log_date, shift: item.shift, profile: item.profile, length: cleanLen(item.length), cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, timestamp: item.log_time || item.created_at || new Date().toISOString() }));
     rejectLogs = rjData; recoverLogs = rcData; dailyInstructionsList = (instData || []).map(normalizeDailyInstructionRow);
@@ -3104,6 +3104,13 @@ async function saveNewPO() {
 
 function deletePoItem(id) { if (currentUserRole !== 'Admin') return; showConfirm("Delete Production Order?", async () => { await supabaseClient.from('production_orders').delete().eq('id', id); poList = poList.filter(p => p.id !== id); updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); renderDashboard(); populateShipmentPoDropdown(); populatePlPoDropdown(); renderBalanceWorkTable(); showToast("Deleted", "success"); }); }
 
+function getShipmentMasterItemCode(shipment){
+  const profile=String(shipment?.profile||'').trim();
+  const length=cleanLen(shipment?.length||'');
+  if(!profile || !length) return '';
+  const matches=masterData.filter(m=>String(m.profile||'').trim()===profile && cleanLen(m.length)===length && String(m.itemCode||'').trim());
+  return matches.length ? String(matches[0].itemCode).trim() : '';
+}
 function populateShipmentPoDropdown() { const poSelect = document.getElementById('shipSelectPo'); if(!poSelect) return; poSelect.innerHTML = '<option value="">-- Choose PO Number --</option>'; [...new Set(poList.map(p => String(p.poNumber).trim()))].forEach(po => poSelect.appendChild(new Option(po, po))); }
 function onShipmentPoSelect() { const poNum = document.getElementById('shipSelectPo').value; const profileSelect = document.getElementById('shipSelectProfile'); profileSelect.innerHTML = '<option value="">-- Select Profile --</option>'; document.getElementById('shipSelectItemCode').innerHTML = '<option value="">-- Select Item Code --</option>'; document.getElementById('shipSelectLength').innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('shipTotalOrderQty').value = ''; if (!poNum) return; const poItems = poList.filter(p => String(p.poNumber).trim() === String(poNum).trim()); [...new Set(poItems.map(p => String(p.profile).trim()))].forEach(prof => profileSelect.appendChild(new Option(prof, prof))); }
 function onShipmentProfileSelect() { const poNum = document.getElementById('shipSelectPo').value; const profile = document.getElementById('shipSelectProfile').value; const itemSelect = document.getElementById('shipSelectItemCode'); itemSelect.innerHTML = '<option value="">-- Select Item Code --</option>'; document.getElementById('shipSelectLength').innerHTML = '<option value="">-- Select Length --</option>'; document.getElementById('shipTotalOrderQty').value = ''; if (!poNum || !profile) return; const poItems = poList.filter(p => String(p.poNumber).trim() === poNum && String(p.profile).trim() === profile); const uniqueItems = []; poItems.forEach(p => { const matchedCat = masterData.find(m => String(m.profile) === profile && cleanLen(m.length) === cleanLen(p.length)); if(matchedCat && matchedCat.itemCode && !uniqueItems.includes(matchedCat.itemCode)) { uniqueItems.push(matchedCat.itemCode); itemSelect.appendChild(new Option(matchedCat.itemCode, matchedCat.itemCode)); } }); }
@@ -3167,7 +3174,7 @@ async function saveShipmentEntry(){
   }
 
   const shipmentLocalId=-Date.now();
-  shipmentList.unshift({id:shipmentLocalId,date:shipDate,month,poNumber:poNum,profile,length,container,shippedQty:qtyToShip,remainingBalance:newRemaining});
+  shipmentList.unshift({id:shipmentLocalId,date:shipDate,month,poNumber:poNum,profile,itemCode:getShipmentMasterItemCode({profile,length}) || itemCode,length,container,shippedQty:qtyToShip,remainingBalance:newRemaining});
   aisRegisterUndo(`Shipment • ${poNum} • ${qtyToShip} Pcs`,async()=>{
     await aisDeleteLatest('shipments',{shipment_date:newShipment.shipment_date,shipment_month:newShipment.shipment_month,po_number:newShipment.po_number,profile:newShipment.profile,length:newShipment.length,container:newShipment.container,shipped_qty:newShipment.shipped_qty,remaining_balance:newShipment.remaining_balance});
     await aisUpdateById('master_catalog',cat.db_id,{cut_qty:before.cutQty,punch_qty:before.punchQty,wrap_qty:before.wrapQty,box_qty:before.boxQty,crate_qty:before.crateQty});
@@ -4330,7 +4337,7 @@ function renderPoDetailsTable(){
 
 function renderShipmentHistoryTable(){
   const body=document.getElementById('shipmentHistoryTableBody'); if(!body)return;
-  body.innerHTML=shipmentList.length?shipmentList.map((s,i)=>`<tr><td>${s.date||'-'}</td><td>${s.poNumber||'-'}</td><td>${s.profile||'-'}</td><td>${s.itemCode||'-'}</td><td>${s.length||'-'} mm</td><td>${s.month||'-'}</td><td>${s.container||'-'}</td><td>${Number(s.shippedQty||0).toLocaleString()}</td><td>${Number(s.remainingBalance||0).toLocaleString()}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openShipmentEditModal(${i})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):'<tr><td colspan="10" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No shipment records.</td></tr>';
+  body.innerHTML=shipmentList.length?shipmentList.map((s,i)=>{ const masterItemCode=getShipmentMasterItemCode(s)||'-'; return `<tr><td>${s.date||'-'}</td><td>${s.poNumber||'-'}</td><td>${s.profile||'-'}</td><td><b style="color:var(--primary-dark);">${masterItemCode}</b></td><td>${s.length||'-'} mm</td><td>${s.month||'-'}</td><td>${s.container||'-'}</td><td>${Number(s.shippedQty||0).toLocaleString()}</td><td>${Number(s.remainingBalance||0).toLocaleString()}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openShipmentEditModal(${i})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteShipmentItem(${s.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`; }).join(''):'<tr><td colspan="10" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No shipment records.</td></tr>';
 }
 window.renderShipmentHistoryTable=renderShipmentHistoryTable;
 function dailyNoteEscape(v){
