@@ -1223,6 +1223,220 @@ window.exportSmartDailyAll = function(type) {
   }
 };
 
+
+/* -------------------------------------------------------------------------
+ * NEXT PL 15–17T PLANNING — READ / PLAN ONLY
+ * Uses existing PO, shipment and Master Catalog/current-stock data.
+ * This module never writes to Supabase and never mutates production/stock data.
+ * ------------------------------------------------------------------------- */
+let nextPlSelection = {};
+
+function nextPlNum(v){
+  const n=Number(String(v??0).replace(/,/g,'').trim());
+  return Number.isFinite(n)?Math.max(0,n):0;
+}
+function nextPlProfileKey(v){
+  const s=String(v??'').trim().toLowerCase().replace(/\s+/g,'');
+  return s.replace(/^al[-_]?/,'');
+}
+function nextPlSameProfile(a,b){ return nextPlProfileKey(a)===nextPlProfileKey(b); }
+function nextPlEsc(v){
+  return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+function nextPlCatalogForPo(po){
+  const p=String(po?.profile??'').trim();
+  const ic=String(po?.itemCode??'').trim();
+  const l=cleanLen(po?.length);
+  if(!p || !l) return null;
+  let m=masterData.find(x=>nextPlSameProfile(x.profile,p) && String(x.itemCode??'').trim()===ic && cleanLen(x.length)===l);
+  if(m) return m;
+  m=masterData.find(x=>nextPlSameProfile(x.profile,p) && cleanLen(x.length)===l);
+  return m||null;
+}
+function nextPlGetRows(){
+  if(!Array.isArray(poList)||!Array.isArray(masterData)) return [];
+  const shipmentPool=new Map();
+  (shipmentList||[]).forEach(sh=>{
+    const key=`${String(sh?.poNumber??'').trim()}|${nextPlProfileKey(sh?.profile)}|${cleanLen(sh?.length)}`;
+    shipmentPool.set(key,(shipmentPool.get(key)||0)+nextPlNum(sh?.shippedQty));
+  });
+
+  const raw=(poList||[]).map((po,i)=>({po,i})).filter(x=>nextPlNum(x.po?.orderQty)>0 && String(x.po?.poNumber??'').trim() && String(x.po?.profile??'').trim() && cleanLen(x.po?.length));
+  raw.sort((a,b)=>{
+    const da=new Date(a.po?.date||0).getTime(), db=new Date(b.po?.date||0).getTime();
+    return da-db || String(a.po?.poNumber??'').localeCompare(String(b.po?.poNumber??''),undefined,{numeric:true,sensitivity:'base'}) || a.i-b.i;
+  });
+
+  const lines=[];
+  raw.forEach(({po,i})=>{
+    const shipKey=`${String(po?.poNumber??'').trim()}|${nextPlProfileKey(po?.profile)}|${cleanLen(po?.length)}`;
+    const pool=shipmentPool.get(shipKey)||0;
+    const order=nextPlNum(po?.orderQty);
+    const shipped=Math.min(order,pool);
+    shipmentPool.set(shipKey,Math.max(0,pool-shipped));
+    const pending=Math.max(0,order-shipped);
+    if(!pending) return;
+    const m=nextPlCatalogForPo(po);
+    if(!m) return;
+    const unitWeight=nextPlNum(m.unitWeight);
+    const profile=String(m.profile??po.profile??'').trim();
+    const itemCode=String(m.itemCode??po.itemCode??'').trim();
+    const length=cleanLen(m.length??po.length);
+    const key=`${nextPlProfileKey(profile)}|${itemCode.toLowerCase()}|${length}`;
+    lines.push({
+      key,rowKey:String(po?.id??`local-${i}`),poIndex:i,date:po?.date||'',poNumber:String(po?.poNumber??'').trim(),
+      profile,itemCode,length,unitWeight,pendingQty:pending,orderQty:order,shippedQty:shipped,
+      stockCut:0,stockPunch:0,stockWrap:0,stockBox:0,stockCrate:0,stockTotal:0,stockReady:0,stockWip:0,availableForPo:0,
+      selectedQty:nextPlNum(nextPlSelection[String(po?.id??`local-${i}`)]),master:m
+    });
+  });
+
+  // Snapshot the current Master Catalog stock by canonical Profile + Item Code + Length.
+  const stockMap=new Map();
+  (masterData||[]).forEach(m=>{
+    const p=String(m?.profile??'').trim(), ic=String(m?.itemCode??'').trim(), l=cleanLen(m?.length);
+    if(!p||!ic||!l)return;
+    const key=`${nextPlProfileKey(p)}|${ic.toLowerCase()}|${l}`;
+    const g=stockMap.get(key)||{cut:0,punch:0,wrap:0,box:0,crate:0,unitWeight:nextPlNum(m.unitWeight),master:m};
+    g.cut+=nextPlNum(m.cutQty); g.punch+=nextPlNum(m.punchQty); g.wrap+=nextPlNum(m.wrapQty); g.box+=nextPlNum(m.boxQty); g.crate+=nextPlNum(m.crateQty);
+    if(!g.unitWeight)g.unitWeight=nextPlNum(m.unitWeight);
+    stockMap.set(key,g);
+  });
+
+  // Allocate the same physical stock only once across PO lines, respecting priority.
+  const priority=document.getElementById('nextPlPriority')?.value||'oldest';
+  const allocationOrder=[...lines].sort((a,b)=>{
+    const da=new Date(a.date||0).getTime(), db=new Date(b.date||0).getTime();
+    const d=priority==='newest'?db-da:da-db;
+    return d || (priority==='newest'
+      ? String(b.poNumber).localeCompare(String(a.poNumber),undefined,{numeric:true,sensitivity:'base'})
+      : String(a.poNumber).localeCompare(String(b.poNumber),undefined,{numeric:true,sensitivity:'base'}));
+  });
+  const remainingStock=new Map();
+  stockMap.forEach((g,key)=>remainingStock.set(key,{...g}));
+  allocationOrder.forEach(line=>{
+    const g=remainingStock.get(line.key);
+    if(!g)return;
+    line.stockCut=g.cut; line.stockPunch=g.punch; line.stockWrap=g.wrap; line.stockBox=g.box; line.stockCrate=g.crate;
+    line.stockTotal=g.cut+g.punch+g.wrap+g.box+g.crate;
+    line.stockReady=g.crate+g.box+g.wrap;
+    line.stockWip=g.cut+g.punch;
+    line.availableForPo=Math.min(line.pendingQty,Math.max(0,g.cut+g.punch+g.wrap+g.box+g.crate));
+    const take=line.availableForPo;
+    let left=take;
+    // Reduce the same stock snapshot so a later PO cannot count it again.
+    const stages=['crate','box','wrap','punch','cut'];
+    stages.forEach(st=>{const x=Math.min(g[st],left);g[st]-=x;left-=x;});
+  });
+  return lines;
+}
+function nextPlRefreshFilters(rows){
+  const poSel=document.getElementById('nextPlPoFilter'), pfSel=document.getElementById('nextPlProfileFilter');
+  if(!poSel||!pfSel)return;
+  const poCur=poSel.value, pfCur=pfSel.value;
+  const pos=[...new Set(rows.map(r=>r.poNumber).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'}));
+  const pfs=[]; rows.forEach(r=>{if(r.profile&&!pfs.some(x=>nextPlSameProfile(x,r.profile)))pfs.push(r.profile);});
+  pfs.sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'}));
+  poSel.innerHTML='<option value="">All POs</option>'+pos.map(x=>`<option value="${nextPlEsc(x)}">${nextPlEsc(x)}</option>`).join('');
+  pfSel.innerHTML='<option value="">All Profiles</option>'+pfs.map(x=>`<option value="${nextPlEsc(x)}">${nextPlEsc(x)}</option>`).join('');
+  if(pos.includes(poCur))poSel.value=poCur;
+  if(pfs.some(x=>nextPlSameProfile(x,pfCur)))pfSel.value=pfs.find(x=>nextPlSameProfile(x,pfCur))||'';
+}
+function nextPlSetQty(rowKey,value){
+  const row=nextPlGetRows().find(r=>r.rowKey===String(rowKey));
+  const max=row?row.availableForPo:0;
+  let qty=Math.max(0,Math.floor(nextPlNum(value)));
+  if(qty>max){qty=max;showToast(`Selected Qty cannot exceed available ${max.toLocaleString()} Pcs.`,'warning');}
+  nextPlSelection[String(rowKey)]=qty;
+  renderNextPlPlanning();
+}
+function nextPlFilteredRows(){
+  const rows=nextPlGetRows();
+  const po=document.getElementById('nextPlPoFilter')?.value||'', pf=document.getElementById('nextPlProfileFilter')?.value||'';
+  return rows.filter(r=>(!po||r.poNumber===po)&&(!pf||nextPlSameProfile(r.profile,pf)));
+}
+function renderNextPlPlanning(){
+  const body=document.getElementById('nextPlPlanningBody'); if(!body)return;
+  const all=nextPlGetRows();
+  nextPlRefreshFilters(all);
+  const rows=nextPlFilteredRows();
+  const min=Math.max(0,nextPlNum(document.getElementById('nextPlMinKg')?.value||15000));
+  const max=Math.max(min,nextPlNum(document.getElementById('nextPlMaxKg')?.value||17000));
+  const priority=document.getElementById('nextPlPriority')?.value||'oldest';
+  rows.sort((a,b)=>{
+    const da=new Date(a.date||0).getTime(),db=new Date(b.date||0).getTime();
+    const d=priority==='newest'?db-da:da-db;
+    return d||(priority==='newest'?String(b.poNumber).localeCompare(String(a.poNumber),undefined,{numeric:true}):String(a.poNumber).localeCompare(String(b.poNumber),undefined,{numeric:true}));
+  });
+  let selectedWeight=0,selectedPcs=0,availableWeight=0,selectedLines=0;
+  const uniqueStockKeys=new Set();
+  rows.forEach(r=>{r.selectedQty=Math.min(nextPlNum(nextPlSelection[r.rowKey]),r.availableForPo);nextPlSelection[r.rowKey]=r.selectedQty;selectedPcs+=r.selectedQty;selectedWeight+=r.selectedQty*r.unitWeight;if(!uniqueStockKeys.has(r.key)){availableWeight+=r.stockTotal*r.unitWeight;uniqueStockKeys.add(r.key);}if(r.selectedQty>0)selectedLines++;});
+  if(!rows.length){body.innerHTML='<tr><td colspan="14" style="padding:28px;text-align:center;color:#64748b;font-weight:800;">No pending PO lines with matching Master Catalog data.</td></tr>';}else{
+    body.innerHTML=rows.map((r,i)=>`<tr>
+      <td><span style="display:inline-block;min-width:25px;padding:3px 6px;border-radius:999px;background:${i<3?'#dcfce7':'#f1f5f9'};color:${i<3?'#047857':'#475569'};font-weight:900;">${i+1}</span></td>
+      <td>${nextPlEsc(r.date||'-')}</td><td><b>${nextPlEsc(r.poNumber)}</b></td><td><b>${nextPlEsc(r.profile)}</b></td><td>${nextPlEsc(r.itemCode||'-')}</td><td>${nextPlEsc(r.length)} mm</td>
+      <td>${r.unitWeight.toFixed(4)} kg</td><td class="next-pl-pending">${r.pendingQty.toLocaleString()}</td><td>${r.stockTotal.toLocaleString()}</td><td class="next-pl-stock-ready">${r.stockReady.toLocaleString()}</td><td class="next-pl-stock-wip">${r.stockWip.toLocaleString()}</td><td class="next-pl-available">${r.availableForPo.toLocaleString()}</td><td>${r.pendingQty>0?Math.min(100,(r.availableForPo/r.pendingQty)*100).toFixed(0):0}%</td><td>${Math.max(0,r.pendingQty-r.availableForPo).toLocaleString()}</td>
+      <td><input class="next-pl-select-input" type="number" min="0" max="${Math.floor(r.availableForPo)}" step="1" value="${Math.floor(r.selectedQty)}" onchange="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)" oninput="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)"></td>
+      <td class="next-pl-weight">${(r.selectedQty*r.unitWeight).toFixed(2)} kg</td>
+    </tr>`).join('');
+  }
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
+  set('nextPlSelectedWeight',`${selectedWeight.toFixed(2)} kg`); set('nextPlSelectedPcs',selectedPcs.toLocaleString()); set('nextPlSelectedLines',`${selectedLines} selected lines`); set('nextPlAvailableWeight',`${availableWeight.toFixed(2)} kg`);
+  set('nextPlToMin',`${Math.max(0,min-selectedWeight).toFixed(2)} kg`); set('nextPlToMax',`${Math.max(0,max-selectedWeight).toFixed(2)} kg`);
+  const status=document.getElementById('nextPlTargetStatus'); const alert=document.getElementById('nextPlAlert');
+  if(status){status.textContent=selectedWeight>=min&&selectedWeight<=max?'TARGET READY':selectedWeight>max?'OVER MAXIMUM':`Need ${(min-selectedWeight).toFixed(2)} kg more to minimum`;status.style.color=selectedWeight>=min&&selectedWeight<=max?'#047857':selectedWeight>max?'#be123c':'#b45309';}
+  if(alert){
+    if(selectedWeight>=min&&selectedWeight<=max)alert.innerHTML=`<div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;"><i class="fa-solid fa-circle-check"></i> <b>Next PL target ready:</b> ${selectedWeight.toFixed(2)} kg selected within ${min.toLocaleString()}–${max.toLocaleString()} kg.</div>`;
+    else if(selectedWeight>max)alert.innerHTML=`<div style="background:#fff1f2;border:1px solid #fecdd3;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> <b>Over maximum:</b> reduce ${(selectedWeight-max).toFixed(2)} kg.</div>`;
+    else alert.innerHTML=`<div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;"><i class="fa-solid fa-circle-info"></i> Select another ${Math.max(0,min-selectedWeight).toFixed(2)} kg to reach the minimum target.</div>`;
+  }
+}
+function nextPlAutoBuild(){
+  const min=Math.max(0,nextPlNum(document.getElementById('nextPlMinKg')?.value||15000));
+  const max=Math.max(min,nextPlNum(document.getElementById('nextPlMaxKg')?.value||17000));
+  const rows=nextPlFilteredRows();
+  // Clear current temporary selection first; then build from priority order.
+  nextPlSelection={};
+  let total=0;
+  for(const r of rows){
+    if(total>=min)break;
+    if(r.availableForPo<=0||r.unitWeight<=0)continue;
+    const room=max-total;
+    let qty=Math.min(r.availableForPo,Math.floor(room/r.unitWeight));
+    if(qty<=0)continue;
+    // If this whole line can fit under the max, take it. Otherwise take only the quantity that fits.
+    nextPlSelection[r.rowKey]=qty;
+    total+=qty*r.unitWeight;
+  }
+  // If rounding/weight constraints left us below minimum, fill the remaining gap from any unselected line without exceeding max.
+  if(total<min){
+    for(const r of rows){
+      if(total>=min)break;
+      const used=nextPlNum(nextPlSelection[r.rowKey]);
+      const extra=Math.min(Math.max(0,r.availableForPo-used),Math.floor((max-total)/Math.max(r.unitWeight,0.000001)));
+      if(extra>0){nextPlSelection[r.rowKey]=used+extra;total+=extra*r.unitWeight;}
+    }
+  }
+  renderNextPlPlanning();
+  showToast(total>=min&&total<=max?`Auto plan ready: ${total.toFixed(2)} kg selected.`:`Auto plan reached ${total.toFixed(2)} kg; manually adjust to target.` ,total>=min&&total<=max?'success':'warning');
+}
+function nextPlClearSelection(){nextPlSelection={};renderNextPlPlanning();showToast('Temporary planning selection cleared.','success');}
+function nextPlExportExcel(){
+  const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
+  if(!rows.length)return showToast('No selected planning lines to export.','warning');
+  if(typeof XLSX==='undefined'||!XLSX.utils||!XLSX.writeFile)return showToast('Excel export library is not loaded.','error');
+  const out=rows.map((r,i)=>({Priority:i+1,'PO Date':r.date,'PO Number':r.poNumber,Profile:r.profile,'Item Code':r.itemCode,Length:r.length,'Unit Weight (kg)':r.unitWeight,'PO Pending (Pcs)':r.pendingQty,'Current Stock (Pcs)':r.stockTotal,'Available for PO (Pcs)':r.availableForPo,'Selected Pcs':nextPlNum(nextPlSelection[r.rowKey]),'Selected Weight (kg)':nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight}));
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(out),'Next PL Plan');XLSX.writeFile(wb,`AIS_Next_PL_15-17T_Plan_${new Date().toISOString().slice(0,10)}.xlsx`);showToast('Next PL planning Excel downloaded.','success');
+}
+function nextPlPrint(){
+  const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
+  if(!rows.length)return showToast('No selected planning lines to print.','warning');
+  const min=Math.max(0,nextPlNum(document.getElementById('nextPlMinKg')?.value||15000)),max=Math.max(min,nextPlNum(document.getElementById('nextPlMaxKg')?.value||17000));
+  const total=rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0);
+  const w=window.open('','_blank','width=1200,height=800');if(!w)return;
+  w.document.write(`<html><head><title>AIS Next PL Plan</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#0f172a}h2{margin:0 0 4px;color:#075985}p{color:#475569;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:15px;font-size:11px}th,td{border:1px solid #cbd5e1;padding:6px;text-align:center}th{background:#075985;color:#fff}tfoot td{font-weight:900;background:#f1f5f9}</style></head><body><h2>AIS Tracker • Next PL 15–17T Planning</h2><p>Target: ${min.toLocaleString()}–${max.toLocaleString()} kg • Selected: <b>${total.toFixed(2)} kg</b> • Generated: ${new Date().toLocaleString('en-GB')}</p><table><thead><tr><th>Priority</th><th>PO</th><th>Profile</th><th>Item Code</th><th>Length</th><th>PO Pending</th><th>Select Pcs</th><th>Unit Wt</th><th>Weight</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${nextPlEsc(r.poNumber)}</td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.itemCode)}</td><td>${nextPlEsc(r.length)} mm</td><td>${r.pendingQty.toLocaleString()}</td><td>${nextPlNum(nextPlSelection[r.rowKey]).toLocaleString()}</td><td>${r.unitWeight.toFixed(4)}</td><td>${(nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight).toFixed(2)}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="8">TOTAL SELECTED WEIGHT</td><td>${total.toFixed(2)} kg</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`);w.document.close();
+}
+
 function switchTab(tabId, btn) {
   setDashboardNavPlacement(tabId);
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active')); 
@@ -1234,6 +1448,7 @@ function switchTab(tabId, btn) {
   setTimeout(() => {
       if (tabId === 'dashboardTab') renderDashboard(); 
       if (tabId === 'balanceWorkTab') renderBalanceWorkTable(); 
+      if (tabId === 'nextPlPlanningTab') renderNextPlPlanning(); 
       if (tabId === 'cardboardTab') renderCardboardStock(); 
       if (tabId === 'historyTab') renderHistoryData(); 
       if (tabId === 'masterListTab') renderMasterCatalog(); 
@@ -3244,169 +3459,164 @@ window.downloadProductionOrderSample = function () {
   a.remove();
 };
 
-window.processExcelUpload = async function () {
-  if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') {
-    return showToast('Only Admin / Planner can upload Production Orders.', 'warning');
+window.previewProductionOrderExcel = function(input){
+  const el=document.getElementById('poExcelFileStatus');
+  const file=input?.files?.[0];
+  if(!el) return;
+  if(!file){ el.textContent='No file selected.'; el.style.color='#475569'; return; }
+  const ok=/\.(xlsx|xls|csv)$/i.test(file.name);
+  el.textContent = ok ? `Selected: ${file.name} • ${(file.size/1024).toFixed(1)} KB` : 'Invalid file type. Please select .xlsx, .xls or .csv.';
+  el.style.color = ok ? '#047857' : '#b91c1c';
+};
+
+function poExcelNormalizeProfile(value){
+  const s=normalizePoExcelText(value).toLowerCase();
+  if(!s) return '';
+  return s.replace(/\bprofile\b/g,'').replace(/^al[\s\-_]*/,'').replace(/\.0+$/,'').replace(/[^a-z0-9]/g,'');
+}
+function poExcelNormalizeItem(value){
+  return normalizePoExcelText(value).toLowerCase().replace(/\s+/g,'').replace(/[^a-z0-9._\-\/]/g,'');
+}
+function poExcelProfileMatches(a,b){ return poExcelNormalizeProfile(a)===poExcelNormalizeProfile(b); }
+function findPoMasterByProfileItem(profile,itemCode){
+  const p=poExcelNormalizeProfile(profile), i=poExcelNormalizeItem(itemCode);
+  return masterData.filter(m=>poExcelNormalizeProfile(m.profile)===p && poExcelNormalizeItem(m.itemCode)===i);
+}
+
+// Many Alumex item codes carry the cut length at the end of the code.
+// Examples: ...24 -> 2400 mm, ...96 -> 9600 mm, ...130 -> 1300 mm, ...72E -> 7200 mm.
+// This is used ONLY when the exact Profile + Item Code is missing from Master Catalog,
+// so an otherwise valid PO Excel is not rejected just because the catalog is incomplete.
+function inferPoLengthFromItemCode(itemCode){
+  const s=normalizePoExcelText(itemCode).toUpperCase();
+  const m=s.match(/(\d{2,3})(?:[A-Z]+)?$/);
+  if(!m) return '';
+  const digits=m[1];
+  const n=parseInt(digits,10);
+  if(!Number.isFinite(n)||n<=0) return '';
+  return String(n*(digits.length===2?100:10));
+}
+
+function poExcelGetRowValue(vals, idx){ return idx>=0 && idx<vals.length ? vals[idx] : ''; }
+function poExcelFindHeaderRow(matrix, aliases){
+  for(let r=0;r<Math.min(matrix.length,40);r++){
+    const row=Array.isArray(matrix[r])?matrix[r]:[];
+    const headers=row.map(v=>String(v??''));
+    const pi=poExcelHeaderIndex(headers,aliases.po), pri=poExcelHeaderIndex(headers,aliases.profile), ii=poExcelHeaderIndex(headers,aliases.item), qi=poExcelHeaderIndex(headers,aliases.qty);
+    if(pi>=0&&pri>=0&&ii>=0&&qi>=0) return {row:r,pi,pri,ii,qi,headers};
   }
-  if (isAppBusy) return;
-  const input = document.getElementById('excelUpload');
-  const file = input?.files?.[0];
-  if (!file) return showToast('Please select a .xls, .xlsx or .csv file first.', 'warning');
-  if (typeof XLSX === 'undefined') return showToast('Excel library is not loaded. Please refresh the page.', 'error');
+  return null;
+}
 
-  isAppBusy = true;
-  const btn = document.getElementById('poUploadBtn');
-  const oldBtnHtml = btn?.innerHTML || '';
-  try {
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...'; }
+window.processExcelUpload = async function(){
+  if(currentUserRole!=='Admin'&&currentUserRole!=='Planner') return showToast('Only Admin / Planner can upload Production Orders.','warning');
+  if(isAppBusy) return showToast('Another save/upload is already running. Please wait.','warning');
+  const input=document.getElementById('excelUpload'), file=input?.files?.[0];
+  if(!file) return showToast('Please select the Production Order Excel file first.','warning');
+  if(!/\.(xlsx|xls|csv)$/i.test(file.name)) return showToast('Invalid file. Select .xlsx, .xls or .csv only.','error');
+  if(typeof XLSX==='undefined') return showToast('Excel reader is not loaded. Refresh the page and try again.','error');
 
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-    if (!workbook.SheetNames?.length) throw new Error('No worksheet found in the selected file.');
+  isAppBusy=true;
+  const btn=document.getElementById('poUploadBtn'), oldBtn=btn?.innerHTML||'';
+  try{
+    if(btn){btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Reading Excel...';}
+    // Make sure the Master Catalog is loaded before matching Profile + Item Code.
+    if(!Array.isArray(masterData)||masterData.length===0){
+      if(typeof loadDataFromSupabase==='function') await loadDataFromSupabase(true);
+    }
+    if(!Array.isArray(masterData)||masterData.length===0) throw new Error('Master Catalog is not loaded. Please wait for data sync to finish, then try again.');
 
-    const aliases = {
-      po: ['PO Number', 'PO number', 'PO #', 'PO No', 'PO', 'Purchase Order', 'Order No', 'Order Number'],
-      profile: ['Profile', 'Profile #', 'Profile No', 'Profile Number', 'Profile Code'],
-      item: ['Item Code', 'Item code', 'Item', 'Code', 'Part No', 'Part Number'],
-      qty: ['Quantity (Pcs.)', 'Quantity Pcs', 'Quantity', 'Qty', 'qty', 'Order Qty', 'Required Qty', 'Pcs', 'Pcs Qty', 'Total Qty']
+    const buffer=await file.arrayBuffer();
+    const workbook=XLSX.read(buffer,{type:'array',cellDates:true,raw:true});
+    if(!workbook.SheetNames?.length) throw new Error('No worksheet found in the selected Excel file.');
+
+    const aliases={
+      po:['PO Number','PO number','PO #','PO No','PO No.','PO','Purchase Order','Order No','Order Number','PO Number '],
+      profile:['Profile','Profile #','Profile No','Profile No.','Profile Number','Profile Code'],
+      item:['Item Code','Item code','Item','Item No','Item No.','Code','Part No','Part Number'],
+      qty:['Quantity (Pcs.)','Quantity (Pcs)','Quantity Pcs','Quantity','Qty','qty','Order Qty','Order Quantity','Required Qty','Required Quantity','Pcs','Pcs Qty','Pcs.','Total Qty']
     };
 
-    let parsedRows = null;
-    let sourceSheet = '';
-    let headerInfo = null;
-
-    // Search every worksheet. This also handles workbooks where the PO table
-    // is not on the first sheet.
-    for (const sheetName of workbook.SheetNames) {
-      const ws = workbook.Sheets[sheetName];
-      const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
-      for (let r = 0; r < Math.min(matrix.length, 30); r++) {
-        const row = Array.isArray(matrix[r]) ? matrix[r] : [];
-        const headers = row.map(v => String(v ?? ''));
-        const pi = poExcelHeaderIndex(headers, aliases.po);
-        const pri = poExcelHeaderIndex(headers, aliases.profile);
-        const ii = poExcelHeaderIndex(headers, aliases.item);
-        const qi = poExcelHeaderIndex(headers, aliases.qty);
-        if (pi >= 0 && pri >= 0 && ii >= 0 && qi >= 0) {
-          parsedRows = matrix.slice(r + 1).map(vals => ({ vals, pi, pri, ii, qi })).filter(x =>
-            x.vals.some(v => String(v ?? '').trim() !== '')
-          );
-          sourceSheet = sheetName;
-          headerInfo = { pi, pri, ii, qi, headers };
-          break;
-        }
-      }
-      if (parsedRows) break;
+    let found=null;
+    for(const sheetName of workbook.SheetNames){
+      const ws=workbook.Sheets[sheetName];
+      const matrix=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:true,blankrows:false});
+      const h=poExcelFindHeaderRow(matrix,aliases);
+      if(h){found={sheetName,matrix,h};break;}
     }
+    if(!found) throw new Error('Excel headers not found. Required columns: PO Number, Profile, Item Code, Quantity (Pcs.). The system accepts the sample format shown on this page.');
 
-    if (!parsedRows || !headerInfo) {
-      throw new Error('Required headers not found. Use: PO Number, Profile, Item Code, Quantity (Pcs.).');
-    }
+    const poDate=poExcelDateFromInput();
+    const rows=found.matrix.slice(found.h.row+1);
+    const newRows=[],errors=[],uploadKeys=new Set();
+    const existingKeys=new Set(poList.map(p=>`${normalizePoExcelText(p.poNumber).toLowerCase()}|${poExcelNormalizeProfile(p.profile)}|${cleanLen(p.length)}`));
 
-    const poDate = poExcelDateFromInput();
-    const newRows = [];
-    const errors = [];
-    const uploadKeys = new Set();
-    const existingKeys = new Set(
-      poList.map(p => `${normalizePoExcelText(p.poNumber).toLowerCase()}|${normalizePoExcelText(p.profile).toLowerCase()}|${cleanLen(p.length)}`)
-    );
+    rows.forEach((vals,index)=>{
+      const excelRow=found.h.row+index+2;
+      const poNumber=normalizePoExcelText(poExcelGetRowValue(vals,found.h.pi));
+      const profileRaw=normalizePoExcelText(poExcelGetRowValue(vals,found.h.pri));
+      const itemCode=normalizePoExcelText(poExcelGetRowValue(vals,found.h.ii));
+      const rawQty=poExcelGetRowValue(vals,found.h.qi);
+      const qty=poExcelNumber(rawQty);
+      const allBlank=!poNumber&&!profileRaw&&!itemCode&&!String(rawQty??'').trim();
+      if(allBlank) return;
+      if(!poNumber) return errors.push(`Row ${excelRow}: PO Number is missing.`);
+      if(!profileRaw) return errors.push(`Row ${excelRow}: Profile is missing.`);
+      if(!itemCode) return errors.push(`Row ${excelRow}: Item Code is missing.`);
+      if(!Number.isFinite(qty)||qty<=0) return errors.push(`Row ${excelRow}: Quantity must be greater than 0.`);
+      if(Math.floor(qty)!==qty) return errors.push(`Row ${excelRow}: Quantity must be a whole number.`);
 
-    parsedRows.forEach((entry, idx) => {
-      const excelRow = idx + 2 + (headerInfo.headers ? 0 : 0);
-      const vals = entry.vals;
-      const poNumber = normalizePoExcelText(vals[entry.pi]);
-      const profileRaw = normalizePoExcelText(vals[entry.pri]);
-      const itemCode = normalizePoExcelText(vals[entry.ii]);
-      const qty = poExcelNumber(vals[entry.qi]);
+      const matches=findPoMasterByProfileItem(profileRaw,itemCode);
+      let storedProfile=normalizePoExcelText(profileRaw), length='';
 
-      if (!poNumber && !profileRaw && !itemCode && !String(vals[entry.qi] ?? '').trim()) return;
-      if (!poNumber) return errors.push(`Row ${excelRow}: PO Number is missing.`);
-      if (!profileRaw) return errors.push(`Row ${excelRow}: Profile is missing.`);
-      if (!itemCode) return errors.push(`Row ${excelRow}: Item Code is missing.`);
-      if (!Number.isFinite(qty) || qty <= 0) return errors.push(`Row ${excelRow}: Quantity must be greater than 0.`);
-      if (Math.floor(qty) !== qty) return errors.push(`Row ${excelRow}: Quantity must be a whole number.`);
-
-      const matches = findPoMasterByProfileItem(profileRaw, itemCode);
-      if (matches.length === 0) {
-        return errors.push(`Row ${excelRow}: Profile ${profileRaw} + Item Code ${itemCode} was not found in Master Catalog.`);
+      if(matches.length>0){
+        const uniqueLengths=[...new Set(matches.map(m=>cleanLen(m.length)).filter(Boolean))];
+        if(uniqueLengths.length!==1) return errors.push(`Row ${excelRow}: ${profileRaw} + ${itemCode} matches multiple lengths (${uniqueLengths.join(', ')} mm). Master Catalog needs one unique length for this Item Code.`);
+        const master=matches[0];
+        storedProfile=normalizePoExcelText(master.profile);
+        length=cleanLen(master.length);
+      }else{
+        // Fallback for a missing Master Catalog line: resolve the cut length from
+        // the user's existing item-code convention instead of rejecting the whole PO.
+        // Do not create or modify Master Catalog data here.
+        length=inferPoLengthFromItemCode(itemCode);
+        if(!length) return errors.push(`Row ${excelRow}: Profile ${profileRaw} + Item Code ${itemCode} was not found in Master Catalog and its length could not be safely inferred from the Item Code.`);
       }
-      if (matches.length > 1) {
-        const lengths = [...new Set(matches.map(m => cleanLen(m.length)))].join(', ');
-        return errors.push(`Row ${excelRow}: Profile ${profileRaw} + Item Code ${itemCode} matches multiple lengths (${lengths}). Fix Master Catalog before uploading.`);
-      }
 
-      const master = matches[0];
-      const storedProfile = normalizePoExcelText(master.profile);
-      const length = cleanLen(master.length);
-      const key = `${poNumber.toLowerCase()}|${storedProfile.toLowerCase()}|${length}`;
-      if (existingKeys.has(key)) return errors.push(`Row ${excelRow}: PO ${poNumber} / ${storedProfile} / ${length} mm already exists. Existing data was not changed.`);
-      if (uploadKeys.has(key)) return errors.push(`Row ${excelRow}: duplicate PO/Profile/Length line in this Excel file.`);
+      const key=`${poNumber.toLowerCase()}|${poExcelNormalizeProfile(storedProfile)}|${length}`;
+      if(existingKeys.has(key)) return errors.push(`Row ${excelRow}: PO ${poNumber} / ${storedProfile} / ${length} mm already exists. Existing data was not changed.`);
+      if(uploadKeys.has(key)) return errors.push(`Row ${excelRow}: duplicate PO/Profile/Length line in this Excel file.`);
       uploadKeys.add(key);
-
-      newRows.push({
-        po_date: poDate,
-        po_number: poNumber,
-        profile: storedProfile,
-        length,
-        order_qty: Math.round(qty)
-      });
+      newRows.push({po_date:poDate,po_number:poNumber,profile:storedProfile,length,order_qty:Math.round(qty)});
     });
 
-    if (errors.length) {
-      const preview = errors.slice(0, 12).join('\n');
-      const extra = errors.length > 12 ? `\n...and ${errors.length - 12} more error(s).` : '';
-      throw new Error(`Upload stopped. No rows were saved.\n\n${preview}${extra}`);
+    if(errors.length){
+      const preview=errors.slice(0,15).join('\n');
+      throw new Error(`Upload stopped. NO rows were saved.\n\n${preview}${errors.length>15?`\n...and ${errors.length-15} more error(s).`:''}`);
     }
-    if (!newRows.length) throw new Error('No valid Production Order rows were found in the selected Excel file.');
+    if(!newRows.length) throw new Error('No valid Production Order rows were found in the selected Excel file.');
 
-    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
-    // Bulk insert is intentionally used instead of upsert/update: existing
-    // Production Orders must never be overwritten by an Excel upload.
-    const result = await supabaseClient.from('production_orders').insert(newRows);
-    if (result.error) throw new Error(dbErrorMessage(result.error, 'Production Order Excel upload failed'));
+    if(btn) btn.innerHTML=`<i class="fa-solid fa-spinner fa-spin"></i> Saving ${newRows.length} rows...`;
+    // INSERT only: never overwrite existing Production Orders.
+    const result=await supabaseClient.from('production_orders').insert(newRows);
+    if(result.error) throw new Error(dbErrorMessage(result.error,`Production Order Excel upload failed (${result.error.code||'DB'})`));
 
-    newRows.slice().reverse().forEach((row, i) => {
-      const master = masterData.find(m => poExcelProfileMatches(m.profile, row.profile) && cleanLen(m.length) === cleanLen(row.length));
-      poList.unshift({
-        id: -Date.now() - i,
-        date: row.po_date,
-        poNumber: row.po_number,
-        profile: row.profile,
-        itemCode: master?.itemCode || resolveMasterItemCode(row.profile, row.length, ''),
-        length: cleanLen(row.length),
-        orderQty: row.order_qty
-      });
-    });
-
-    // Register one safe in-session Undo for the complete upload. It only removes
-    // the records that were just inserted, identified by their exact values.
-    aisRegisterUndo(`Production Order Excel • ${newRows.length} row(s)`, async () => {
-      for (const row of newRows.slice().reverse()) {
-        await aisDeleteLatest('production_orders', {
-          po_date: row.po_date,
-          po_number: row.po_number,
-          profile: row.profile,
-          length: row.length,
-          order_qty: row.order_qty
-        });
-      }
-    }, 'poManagementTab');
-
-    updatePoFilters();
-    renderPoDetailsTable();
-    renderPoCharts();
-    renderDashboard();
-    populateShipmentPoDropdown();
-    populatePlPoDropdown();
-    renderBalanceWorkTable();
-    showToast(`${newRows.length} Production Order row(s) uploaded successfully from ${sourceSheet}.`, 'success');
-    input.value = '';
-  } catch (e) {
-    console.error('Production Order Excel upload error:', e);
-    showToast(String(e?.message || e).replace(/\n/g, ' • '), 'error');
-  } finally {
-    isAppBusy = false;
-    if (btn) { btn.disabled = false; btn.innerHTML = oldBtnHtml || '<i class="fa-solid fa-cloud-arrow-up"></i> Upload'; }
+    // Reload from Supabase so the UI uses real database IDs/data instead of temporary IDs.
+    if(typeof loadDataFromSupabase==='function') await loadDataFromSupabase(true);
+    updatePoFilters();renderPoDetailsTable();renderPoCharts();renderDashboard();populateShipmentPoDropdown();populatePlPoDropdown();renderBalanceWorkTable();
+    aisRegisterUndo(`Production Order Excel • ${newRows.length} row(s)`,async()=>{
+      for(const row of newRows.slice().reverse()) await aisDeleteLatest('production_orders',{po_date:row.po_date,po_number:row.po_number,profile:row.profile,length:row.length,order_qty:row.order_qty});
+      await loadDataFromSupabase(true);
+    },'poManagementTab');
+    showToast(`${newRows.length} Production Order row(s) uploaded successfully from ${found.sheetName}.`,'success');
+    input.value='';
+    const status=document.getElementById('poExcelFileStatus');if(status){status.textContent='Upload complete. Select another Excel file when needed.';status.style.color='#047857';}
+  }catch(e){
+    console.error('Production Order Excel upload error:',e);
+    showToast(String(e?.message||e).replace(/\n/g,' • '),'error');
+  }finally{
+    isAppBusy=false;
+    if(btn){btn.disabled=false;btn.innerHTML=oldBtn||'<i class="fa-solid fa-cloud-arrow-up"></i> Upload Excel';}
   }
 };
 
