@@ -1225,7 +1225,7 @@ window.exportSmartDailyAll = function(type) {
 
 
 /* -------------------------------------------------------------------------
- * NEXT PL 15–17T PLANNING — READ / PLAN ONLY
+ * NEXT PL 15–19T PLANNING — READ / PLAN ONLY
  * Uses existing PO, shipment and Master Catalog/current-stock data.
  * This module never writes to Supabase and never mutates production/stock data.
  * ------------------------------------------------------------------------- */
@@ -1411,7 +1411,7 @@ function nextPlSetViewMode(v){ nextPlViewMode=String(v||'suggested'); renderNext
 function nextPlGetCurrentSummary(){
   const info=nextPlCurrentPackingInfo();
   const targetMin=Math.max(0,nextPlNum(document.getElementById('nextPlMinKg')?.value||15000));
-  const targetMax=Math.max(targetMin,nextPlNum(document.getElementById('nextPlMaxKg')?.value||17000));
+  const targetMax=Math.max(targetMin,nextPlNum(document.getElementById('nextPlMaxKg')?.value||19000));
   const targetTotal=Math.max(0,nextPlNum(document.getElementById('nextPlTargetWeight')?.value||targetMin));
   return {...info,targetMin,targetMax,targetTotal,remainingMin:Math.max(0,targetMin-info.weight),remainingMax:Math.max(0,targetMax-info.weight),remainingTarget:Math.max(0,targetTotal-info.weight)};
 }
@@ -1456,6 +1456,7 @@ function nextPlRenderQuickManual(rows){
   const selectedRows=rows.filter(r=>pf.value&&ls.value&&nextPlSameProfile(r.profile,pf.value)&&cleanLen(r.length)===cleanLen(ls.value)&&nextPlNum(r.pendingQty)>0);
   if(!selectedRows.length){
     body.innerHTML='<tr><td colspan="8" class="next-pl-summary-empty">Select a Profile + Length. Only PO lines with shipment balance &gt; 0 will appear here.</td></tr>';
+    const emptyFoot=document.getElementById('nextPlQuickPoFoot'); if(emptyFoot) emptyFoot.innerHTML='<tr class="next-pl-total-row"><td colspan="3">TOTAL</td><td>0 Pcs</td><td>0.00 kg</td><td>0 Pcs</td><td>0 Pcs</td><td>0.00 kg</td></tr>';
     if(note)note.innerHTML='<i class="fa-solid fa-circle-info"></i> Select Profile + Length first. Zero shipment-balance POs are hidden automatically.';
     return;
   }
@@ -1482,6 +1483,11 @@ function nextPlRenderQuickManual(rows){
       <td><span class="next-pl-quick-weight" data-po="${nextPlEsc(g.po)}">0.00 kg</span><button type="button" class="btn btn-accent next-pl-quick-add" onclick="nextPlQuickAdd(${JSON.stringify(g.po)}, ${JSON.stringify(g.rows.map(r=>({rowKey:r.rowKey,pendingQty:r.pendingQty,unitWeight:r.unitWeight})))}, this)"><i class="fa-solid fa-plus"></i> Add</button></td>
     </tr>`;
   }).join('');
+  const quickBalancePcs=gs.reduce((sum,g)=>sum+g.balancePcs,0), quickBalanceWt=gs.reduce((sum,g)=>sum+g.balanceWeight,0), quickReady=gs.reduce((sum,g)=>sum+g.ready,0);
+  const quickPlannedPcs=selectedRows.reduce((sum,r)=>sum+nextPlNum(nextPlSelection[r.rowKey]),0);
+  const quickPlannedWt=selectedRows.reduce((sum,r)=>sum+nextPlNum(nextPlSelection[r.rowKey])*Math.max(0,nextPlNum(r.unitWeight)),0);
+  const quickFoot=document.getElementById('nextPlQuickPoFoot');
+  if(quickFoot)quickFoot.innerHTML=`<tr class="next-pl-total-row"><td colspan="3">TOTAL — SELECTED PROFILE / LENGTH</td><td>${quickBalancePcs.toLocaleString()} Pcs</td><td>${quickBalanceWt.toFixed(2)} kg</td><td>${quickReady.toLocaleString()} Pcs</td><td>${quickPlannedPcs.toLocaleString()} Pcs</td><td>${quickPlannedWt.toFixed(2)} kg</td></tr>`;
   if(note)note.innerHTML='<i class="fa-solid fa-circle-check"></i> <b>'+nextPlEsc(pf.value)+' / '+nextPlEsc(ls.value)+' mm</b> selected. Only POs with shipment balance &gt; 0 are shown. Enter Send Pcs; weight is calculated automatically.';
 }
 function nextPlQuickPreview(input,po,parts){
@@ -1566,14 +1572,24 @@ function nextPlRenderProfileSummary(rows){
   const pg=new Map(); const pog=new Map();
   selectedRows.forEach(r=>{
     const q=nextPlNum(nextPlSelection[r.rowKey]), wt=q*r.unitWeight;
-    const pk=nextPlProfileKey(r.profile), p=pg.get(pk)||{profile:r.profile,pcs:0,weight:0,po:new Set(),stock:0,cut:0,pending:0};
-    p.pcs+=q;p.weight+=wt;p.po.add(r.poNumber);p.stock+=Math.min(r.availableForPo,q);p.cut+=Math.max(0,q-Math.min(r.availableForPo,q));p.pending+=r.pendingQty;pg.set(pk,p);
-    const ok=r.poNumber+'|'+pk, g=pog.get(ok)||{po:r.poNumber,profile:r.profile,pcs:0,weight:0,pending:0,pendingWeight:0}; g.pcs+=q;g.weight+=wt;g.pending+=Math.max(0,r.pendingQty-q);g.pendingWeight+=Math.max(0,r.pendingQty-q)*Math.max(0,r.unitWeight);pog.set(ok,g);
+    const pk=nextPlProfileKey(r.profile), p=pg.get(pk)||{profile:r.profile,pcs:0,weight:0,po:new Set(),stock:0,cut:0,pending:0,pendingWeight:0};
+    const linePending=Math.max(0,r.pendingQty), linePendingAfter=Math.max(0,linePending-q);
+    p.pcs+=q; p.weight+=wt; p.po.add(r.poNumber); p.stock+=Math.min(r.availableForPo,q); p.cut+=Math.max(0,q-Math.min(r.availableForPo,q)); p.pending+=linePendingAfter; p.pendingWeight+=linePendingAfter*Math.max(0,r.unitWeight); pg.set(pk,p);
+    const ok=r.poNumber+'|'+pk, g=pog.get(ok)||{po:r.poNumber,profile:r.profile,pcs:0,weight:0,poBalanceWeight:0,pending:0,pendingWeight:0};
+    g.pcs+=q; g.weight+=wt; g.poBalanceWeight+=linePending*Math.max(0,r.unitWeight); g.pending+=linePendingAfter; g.pendingWeight+=linePendingAfter*Math.max(0,r.unitWeight); pog.set(ok,g);
   });
-  const ps=[...pg.values()].sort((a,b)=>b.weight-a.weight); const pos=[...pog.values()].sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true})||String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true}));
+  const ps=[...pg.values()].sort((a,b)=>b.weight-a.weight);
+  const pos=[...pog.values()].sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true})||String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true}));
   box.innerHTML=ps.length?ps.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.profile)}</b></td><td>${[...g.po].map(nextPlEsc).join(', ')}</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight">${g.weight.toFixed(2)} kg</td><td>${g.stock.toLocaleString()}</td><td>${g.cut.toLocaleString()}</td></tr>`).join(''):`<tr><td colspan="7" class="next-pl-summary-empty">Auto Build or manually select Pcs to see the expected Next PL profile totals.</td></tr>`;
-  poBox.innerHTML=pos.length?pos.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.po)}</b></td><td>${nextPlEsc(g.profile)}</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight">${g.weight.toFixed(2)} kg</td><td>${g.pending.toLocaleString()}</td></tr>`).join(''):`<tr><td colspan="6" class="next-pl-summary-empty">No PO-wise Next PL selections yet.</td></tr>`;
+  poBox.innerHTML=pos.length?pos.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.po)}</b></td><td>${nextPlEsc(g.profile)}</td><td class="next-pl-po-balance-weight">${g.poBalanceWeight.toFixed(2)} kg</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight next-pl-plan-weight">${g.weight.toFixed(2)} kg</td><td class="next-pl-pending-weight">${g.pendingWeight.toFixed(2)} kg</td></tr>`).join(''):`<tr><td colspan="7" class="next-pl-summary-empty">No PO-wise Next PL selections yet.</td></tr>`;
+  const totalProfilePcs=ps.reduce((s,g)=>s+g.pcs,0), totalProfileWt=ps.reduce((s,g)=>s+g.weight,0), totalStock=ps.reduce((s,g)=>s+g.stock,0), totalCut=ps.reduce((s,g)=>s+g.cut,0);
+  const pfTable=box.closest('table');
+  if(pfTable){let tf=pfTable.querySelector('tfoot');if(!tf){tf=document.createElement('tfoot');pfTable.appendChild(tf);}tf.innerHTML=`<tr class="next-pl-total-row"><td colspan="3">TOTAL PROFILE PLAN</td><td>${totalProfilePcs.toLocaleString()}</td><td>${totalProfileWt.toFixed(2)} kg</td><td>${totalStock.toLocaleString()}</td><td>${totalCut.toLocaleString()}</td></tr>`;}
+  const totalPoBalance=pos.reduce((s,g)=>s+g.poBalanceWeight,0), totalPoPcs=pos.reduce((s,g)=>s+g.pcs,0), totalPoPlan=pos.reduce((s,g)=>s+g.weight,0), totalPoPending=pos.reduce((s,g)=>s+g.pendingWeight,0);
+  const poTable=poBox.closest('table');
+  if(poTable){let tf=poTable.querySelector('tfoot');if(!tf){tf=document.createElement('tfoot');poTable.appendChild(tf);}tf.innerHTML=`<tr class="next-pl-total-row"><td colspan="3">TOTAL PO PLAN</td><td>${totalPoBalance.toFixed(2)} kg</td><td>${totalPoPcs.toLocaleString()}</td><td>${totalPoPlan.toFixed(2)} kg</td><td>${totalPoPending.toFixed(2)} kg</td></tr>`;}
 }
+
 function nextPlRenderPoWeightChart(rows){
   const canvas=document.getElementById('nextPlPoWeightChart');
   if(!canvas || typeof Chart==='undefined')return;
@@ -1582,13 +1598,14 @@ function nextPlRenderPoWeightChart(rows){
   try{if(nextPlPoWeightChartInstance)nextPlPoWeightChartInstance.destroy();}catch(e){}
   const groups=new Map();
   (rows||[]).forEach(r=>{
-    const pending=Math.max(0,nextPlNum(r.pendingQty))*Math.max(0,nextPlNum(r.unitWeight));
+    const poBalance=Math.max(0,nextPlNum(r.pendingQty))*Math.max(0,nextPlNum(r.unitWeight));
     const selected=Math.min(Math.max(0,nextPlNum(nextPlSelection[r.rowKey])),Math.max(0,nextPlNum(r.pendingQty)))*Math.max(0,nextPlNum(r.unitWeight));
+    const pending=Math.max(0,poBalance-selected);
     const key=String(r.poNumber);
-    const g=groups.get(key)||{po:r.poNumber,next:0,pending:0};
-    g.next+=selected; g.pending+=Math.max(0,pending-selected); groups.set(key,g);
+    const g=groups.get(key)||{po:r.poNumber,next:0,pending:0,total:0};
+    g.next+=selected; g.pending+=pending; g.total+=poBalance; groups.set(key,g);
   });
-  const data=[...groups.values()].filter(g=>g.next>0||g.pending>0).sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true,sensitivity:'base'}));
+  const data=[...groups.values()].filter(g=>g.total>0).sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true,sensitivity:'base'}));
   if(!data.length){
     canvas.style.display='none';
     const parent=canvas.parentElement;
@@ -1598,12 +1615,13 @@ function nextPlRenderPoWeightChart(rows){
   nextPlPoWeightChartInstance=new Chart(canvas.getContext('2d'),{
     type:'bar',
     data:{labels:data.map(g=>String(g.po)),datasets:[
-      {label:'Next PL Weight',data:data.map(g=>Number(g.next.toFixed(2))),backgroundColor:'#0f766e',borderRadius:6},
-      {label:'Pending After Next PL',data:data.map(g=>Number(g.pending.toFixed(2))),backgroundColor:'#e11d48',borderRadius:6}
+      {label:'Next PL Planning Weight',data:data.map(g=>Number(g.next.toFixed(2))),backgroundColor:'#0f766e',borderRadius:7,borderSkipped:false},
+      {label:'Pending Weight After Next PL',data:data.map(g=>Number(g.pending.toFixed(2))),backgroundColor:'#e11d48',borderRadius:7,borderSkipped:false}
     ]},
-    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'top',labels:{font:{weight:'700'}}},tooltip:{callbacks:{label:(ctx)=>`${ctx.dataset.label}: ${Number(ctx.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`}}},scales:{x:{stacked:false,ticks:{autoSkip:false,maxRotation:45,minRotation:0}},y:{beginAtZero:true,title:{display:true,text:'Weight (kg)'}}}}
+    options:{responsive:true,maintainAspectRatio:false,animation:{duration:1100,easing:'easeOutQuart'},animations:{y:{duration:1100,easing:'easeOutQuart'}},interaction:{mode:'index',intersect:false},plugins:{legend:{position:'top',labels:{font:{weight:'700'},usePointStyle:true,padding:18}},tooltip:{callbacks:{label:(ctx)=>`${ctx.dataset.label}: ${Number(ctx.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`,afterBody:(items)=>{const i=items?.[0]?.dataIndex;return i==null?'':`Total PO Balance: ${data[i].total.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`;}}}},scales:{x:{stacked:true,ticks:{autoSkip:false,maxRotation:45,minRotation:0,font:{weight:'700'}}},y:{stacked:true,beginAtZero:true,title:{display:true,text:'Weight (kg)'},ticks:{callback:(v)=>Number(v).toLocaleString()}}}}
   });
 }
+
 function renderNextPlPlanning(){
   const body=document.getElementById('nextPlPlanningBody'); if(!body)return;
   const all=nextPlGetRows(); nextPlRefreshFilters(all); nextPlRenderManualControls(all); nextPlRenderQuickManual(all); nextPlRenderShipmentBalance(all);
@@ -1611,12 +1629,12 @@ function renderNextPlPlanning(){
   const summary=nextPlGetCurrentSummary();
   const priority=document.getElementById('nextPlPriority')?.value||'oldest';
   rows.sort((a,b)=>{const da=new Date(a.date||0).getTime(),db=new Date(b.date||0).getTime();const d=priority==='newest'?db-da:da-db;return d||(priority==='newest'?String(b.poNumber).localeCompare(String(a.poNumber),undefined,{numeric:true}):String(a.poNumber).localeCompare(String(b.poNumber),undefined,{numeric:true}));});
-  let selectedWeight=0,selectedPcs=0,selectedLines=0,availableWeight=0,cutWeight=0,currentPlWeight=summary.weight;
+  let selectedWeight=0,selectedPcs=0,selectedLines=0,availableWeight=0,cutWeight=0,currentPlWeight=summary.weight,pendingAfterNextWeight=0;
   const uniqueStockKeys=new Set();
   rows.forEach(r=>{
     const rowCap=nextPlManualOverride[r.rowKey]?r.pendingQty:r.availableForPo;
     r.selectedQty=r.excluded?0:Math.min(nextPlNum(nextPlSelection[r.rowKey]),rowCap); nextPlSelection[r.rowKey]=r.selectedQty;
-    selectedPcs+=r.selectedQty; selectedWeight+=r.selectedQty*r.unitWeight; cutWeight+=r.needCutWeight; if(r.selectedQty>0)selectedLines++;
+    selectedPcs+=r.selectedQty; selectedWeight+=r.selectedQty*r.unitWeight; pendingAfterNextWeight+=Math.max(0,r.pendingQty-r.selectedQty)*Math.max(0,r.unitWeight); cutWeight+=r.needCutWeight; if(r.selectedQty>0)selectedLines++;
     if(!uniqueStockKeys.has(r.key)){availableWeight+=r.stockTotal*r.unitWeight;uniqueStockKeys.add(r.key);}
   });
   const remainingMin=Math.max(0,summary.targetMin-currentPlWeight), remainingMax=Math.max(0,summary.targetMax-currentPlWeight);
@@ -1626,9 +1644,20 @@ function renderNextPlPlanning(){
     <td>${nextPlEsc(r.date||'-')}</td><td><b>${nextPlEsc(r.poNumber)}</b></td><td><b>${nextPlEsc(r.profile)}</b></td><td>${nextPlEsc(r.itemCode||'-')}</td><td>${nextPlEsc(r.length)} mm</td>
     <td>${r.unitWeight.toFixed(4)} kg</td><td class="next-pl-pending">${r.pendingQty.toLocaleString()} <small style="display:block;color:#be123c;font-weight:800;">${r.remainingPoWeight.toFixed(2)} kg</small></td><td>${r.currentPlQty.toLocaleString()} <small style="display:block;color:#047857;font-weight:800;">${r.currentPlWeight.toFixed(2)} kg</small></td><td>${r.stockTotal.toLocaleString()}</td><td>${r.stockReady.toLocaleString()}</td><td>${r.stockWip.toLocaleString()}</td><td class="next-pl-available">${r.availableForPo.toLocaleString()}</td><td>${r.needCutQty.toLocaleString()}</td><td>${r.needCutWeight.toFixed(2)} kg</td><td><input class="next-pl-select-input ${nextPlManualOverride[r.rowKey]?'manual':''}" type="number" min="0" max="${Math.floor(nextPlManualOverride[r.rowKey]?r.pendingQty:r.availableForPo)}" step="1" value="${Math.floor(r.selectedQty)}" ${r.excluded?'disabled':''} onchange="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)" oninput="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)"></td><td class="next-pl-weight">${(r.selectedQty*r.unitWeight).toFixed(2)} kg</td><td><label class="next-pl-skip"><input type="checkbox" ${r.excluded?'checked':''} onchange="nextPlToggleExclude('${nextPlEsc(r.rowKey)}',this.checked)"> Skip</label>${nextPlManualOverride[r.rowKey]?'<div class="next-pl-manual-badge">Manual</div>':''}</td>
   </tr>`).join('');
+  const totalBalanceWeight=rows.reduce((s,r)=>s+Math.max(0,r.remainingPoWeight),0);
+  const totalCurrentPlWeight=rows.reduce((s,r)=>s+Math.max(0,r.currentPlWeight),0);
+  const totalStockWeight=rows.reduce((s,r)=>s+Math.max(0,r.stockTotal)*Math.max(0,r.unitWeight),0);
+  const totalReadyWeight=rows.reduce((s,r)=>s+Math.max(0,r.stockReady)*Math.max(0,r.unitWeight),0);
+  const totalWipWeight=rows.reduce((s,r)=>s+Math.max(0,r.stockWip)*Math.max(0,r.unitWeight),0);
+  const totalAvailableWeight=rows.reduce((s,r)=>s+Math.max(0,r.availableForPo)*Math.max(0,r.unitWeight),0);
+  const totalNeedCutWeight=rows.reduce((s,r)=>s+Math.max(0,r.needCutWeight),0);
+  const totalSelectedPcs=rows.reduce((s,r)=>s+Math.max(0,r.selectedQty),0);
+  const totalSelectedWeight=rows.reduce((s,r)=>s+Math.max(0,r.selectedQty)*Math.max(0,r.unitWeight),0);
+  const mainFoot=document.getElementById('nextPlPlanningFoot');
+  if(mainFoot)mainFoot.innerHTML=`<tr class="next-pl-total-row"><td colspan="7">TOTAL — VISIBLE PO LINES</td><td>${totalBalanceWeight.toFixed(2)} kg</td><td>${totalCurrentPlWeight.toFixed(2)} kg</td><td>${totalStockWeight.toFixed(2)} kg</td><td>${totalReadyWeight.toFixed(2)} kg</td><td>${totalWipWeight.toFixed(2)} kg</td><td>${totalAvailableWeight.toFixed(2)} kg</td><td>${totalNeedCutWeight.toFixed(2)} kg</td><td>${totalSelectedPcs.toLocaleString()} Pcs</td><td>${totalSelectedWeight.toFixed(2)} kg</td><td>-</td></tr>`;
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
   set('nextPlCurrentPLWeight',`${currentPlWeight.toFixed(2)} kg`); set('nextPlCurrentPLPcs',`${summary.pcs.toLocaleString()} Pcs`); set('nextPlRemainingMin',`${remainingMin.toFixed(2)} kg`); set('nextPlRemainingMax',`${remainingMax.toFixed(2)} kg`);
-  set('nextPlSelectedWeight',`${selectedWeight.toFixed(2)} kg`); set('nextPlSelectedPcs',selectedPcs.toLocaleString()); set('nextPlSelectedLines',`${selectedLines} selected lines`); set('nextPlAvailableWeight',`${availableWeight.toFixed(2)} kg`); set('nextPlToMin',`${Math.max(0,remainingMin-selectedWeight).toFixed(2)} kg`); set('nextPlToMax',`${Math.max(0,remainingMax-selectedWeight).toFixed(2)} kg`); set('nextPlNeedCutWeight',`${cutWeight.toFixed(2)} kg`);
+  set('nextPlSelectedWeight',`${selectedWeight.toFixed(2)} kg`); set('nextPlTotalNextWeight',`${(currentPlWeight+selectedWeight).toFixed(2)} kg`); set('nextPlPendingAfterNextWeight',`${pendingAfterNextWeight.toFixed(2)} kg`); set('nextPlSelectedPcs',selectedPcs.toLocaleString()); set('nextPlSelectedLines',`${selectedLines} selected lines`); set('nextPlAvailableWeight',`${availableWeight.toFixed(2)} kg`); set('nextPlToMin',`${Math.max(0,remainingMin-selectedWeight).toFixed(2)} kg`); set('nextPlToMax',`${Math.max(0,remainingMax-selectedWeight).toFixed(2)} kg`); set('nextPlNeedCutWeight',`${cutWeight.toFixed(2)} kg`);
   nextPlRenderProfileSummary(all);
   nextPlRenderPoWeightChart(all);
   const totalPlPlusSelection=currentPlWeight+selectedWeight;
@@ -1641,7 +1670,7 @@ function renderNextPlPlanning(){
   }
   if(alert){
     const active=`${summary.container||'Current PL'} • ${currentPlWeight.toFixed(2)} kg already planned`;
-    if(totalPlPlusSelection>17000 || targetTotal>17000)alert.innerHTML=`<div style="background:#fff1f2;border:1px solid #fda4af;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> <b>WARNING — Next PL is over 17 tons:</b> ${totalPlPlusSelection.toFixed(2)} kg total (${(totalPlPlusSelection/1000).toFixed(2)} T). Please reduce the planned Pcs or target weight before finalizing the Packing List.</div>`;
+    if(totalPlPlusSelection>19000 || targetTotal>19000)alert.innerHTML=`<div style="background:#fff1f2;border:1px solid #fda4af;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> <b>WARNING — Next PL is over 19 tons:</b> ${totalPlPlusSelection.toFixed(2)} kg total (${(totalPlPlusSelection/1000).toFixed(2)} T). Please reduce the planned Pcs or target weight before finalizing the Packing List.</div>`;
     else if(Math.abs(totalPlPlusSelection-targetTotal)<0.01)alert.innerHTML=`<div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;"><i class="fa-solid fa-circle-check"></i> <b>Next PL target ready:</b> ${totalPlPlusSelection.toFixed(2)} kg total (${currentPlWeight.toFixed(2)} kg existing + ${selectedWeight.toFixed(2)} kg new).</div>`;
     else if(totalPlPlusSelection>summary.targetMax)alert.innerHTML=`<div style="background:#fff1f2;border:1px solid #fecdd3;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> <b>Over maximum:</b> reduce ${(totalPlPlusSelection-summary.targetMax).toFixed(2)} kg. ${active}.</div>`;
     else alert.innerHTML=`<div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;"><i class="fa-solid fa-circle-info"></i> <b>${active}.</b> Select another ${Math.max(0,targetTotal-totalPlPlusSelection).toFixed(2)} kg to reach the manual target of ${targetTotal.toLocaleString()} kg.</div>`;
@@ -1661,7 +1690,7 @@ function nextPlAutoBuild(){
   const targetTotal=Math.max(0,nextPlNum(summary.targetTotal));
   const targetNew=Math.max(0,targetTotal-summary.weight);
   let total=0;
-  if(targetTotal>17000)showToast(`Target is ${(targetTotal/1000).toFixed(2)}T, which is above the 17T limit. Warning will remain visible.`,'warning');
+  if(targetTotal>19000)showToast(`Target is ${(targetTotal/1000).toFixed(2)}T, which is above the 19T warning limit. Warning will remain visible.`,'warning');
   for(const r of rows){
     if(total>=targetNew)break;
     if(r.availableForPo<=0||r.unitWeight<=0)continue;
@@ -1683,13 +1712,13 @@ function nextPlExportExcel(){
   if(typeof XLSX==='undefined'||!XLSX.utils||!XLSX.writeFile)return showToast('Excel export library is not loaded.','error');
   const out=rows.map((r,i)=>({Priority:i+1,'PO Date':r.date,'PO Number':r.poNumber,Profile:r.profile,'Item Code':r.itemCode,Length:r.length,'Unit Weight (kg)':r.unitWeight,'Original PO Pending (Pcs)':r.originalPendingQty,'Already in Current PL (Pcs)':r.currentPlQty,'Remaining PO Qty (Pcs)':r.pendingQty,'Current Stock (Pcs)':r.stockTotal,'Need Cut (Pcs)':r.needCutQty,'Need Cut Weight (kg)':r.needCutWeight,'Selected Pcs':nextPlNum(nextPlSelection[r.rowKey]),'Selected Weight (kg)':nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight}));
   out.push({'PO Date':'','PO Number':'TOTAL CURRENT PL','Profile':'','Item Code':'','Length':'','Unit Weight (kg)':'','Original PO Pending (Pcs)':'','Already in Current PL (Pcs)':summary.pcs,'Remaining PO Qty (Pcs)':'','Current Stock (Pcs)':'','Need Cut (Pcs)':'','Need Cut Weight (kg)':'','Selected Pcs':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey]),0),'Selected Weight (kg)':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0)+summary.weight});
-  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(out),'Next PL Plan');XLSX.writeFile(wb,`AIS_Next_PL_15-17T_Plan_${new Date().toISOString().slice(0,10)}.xlsx`);showToast('Next PL planning Excel downloaded.','success');
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(out),'Next PL Plan');XLSX.writeFile(wb,`AIS_Next_PL_15-19T_Plan_${new Date().toISOString().slice(0,10)}.xlsx`);showToast('Next PL planning Excel downloaded.','success');
 }
 function nextPlPrint(){
   const summary=nextPlGetCurrentSummary(); const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0); if(!rows.length)return showToast('No selected planning lines to print.','warning');
   const totalNew=rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0),grand=summary.weight+totalNew;
   const w=window.open('','_blank','width=1300,height=850');if(!w)return;
-  w.document.write(`<html><head><title>AIS Next PL Plan</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#0f172a}h2{margin:0 0 4px;color:#075985}p{color:#475569;font-size:12px}.kpi{display:inline-block;margin:3px 12px 3px 0;padding:7px 10px;border:1px solid #cbd5e1;border-radius:6px}table{width:100%;border-collapse:collapse;margin-top:15px;font-size:10px}th,td{border:1px solid #cbd5e1;padding:5px;text-align:center}th{background:#075985;color:#fff}tfoot td{font-weight:900;background:#f1f5f9}</style></head><body><h2>AIS Tracker • Next PL 15–17T Planning</h2><p><span class="kpi">Current PL: <b>${summary.weight.toFixed(2)} kg</b></span><span class="kpi">New Selection: <b>${totalNew.toFixed(2)} kg</b></span><span class="kpi">Total Planned: <b>${grand.toFixed(2)} kg</b></span><span class="kpi">Target: <b>${summary.targetMin.toLocaleString()}–${summary.targetMax.toLocaleString()} kg</b></span></p><table><thead><tr><th>Priority</th><th>PO</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Remaining PO</th><th>Stock</th><th>Need Cut</th><th>Select Pcs</th><th>Unit Wt</th><th>Weight</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${nextPlEsc(r.poNumber)}</td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.itemCode)}</td><td>${nextPlEsc(r.length)} mm</td><td>${r.pendingQty.toLocaleString()}</td><td>${r.stockTotal.toLocaleString()}</td><td>${r.needCutQty.toLocaleString()}</td><td>${nextPlNum(nextPlSelection[r.rowKey]).toLocaleString()}</td><td>${r.unitWeight.toFixed(4)}</td><td>${(nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight).toFixed(2)}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="10">CURRENT + NEW TOTAL WEIGHT</td><td>${grand.toFixed(2)} kg</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`);w.document.close();
+  w.document.write(`<html><head><title>AIS Next PL Plan</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#0f172a}h2{margin:0 0 4px;color:#075985}p{color:#475569;font-size:12px}.kpi{display:inline-block;margin:3px 12px 3px 0;padding:7px 10px;border:1px solid #cbd5e1;border-radius:6px}table{width:100%;border-collapse:collapse;margin-top:15px;font-size:10px}th,td{border:1px solid #cbd5e1;padding:5px;text-align:center}th{background:#075985;color:#fff}tfoot td{font-weight:900;background:#f1f5f9}</style></head><body><h2>AIS Tracker • Next PL 15–19T Planning</h2><p><span class="kpi">Current PL: <b>${summary.weight.toFixed(2)} kg</b></span><span class="kpi">New Selection: <b>${totalNew.toFixed(2)} kg</b></span><span class="kpi">Total Planned: <b>${grand.toFixed(2)} kg</b></span><span class="kpi">Target: <b>${summary.targetMin.toLocaleString()}–${summary.targetMax.toLocaleString()} kg</b></span></p><table><thead><tr><th>Priority</th><th>PO</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Remaining PO</th><th>Stock</th><th>Need Cut</th><th>Select Pcs</th><th>Unit Wt</th><th>Weight</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${nextPlEsc(r.poNumber)}</td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.itemCode)}</td><td>${nextPlEsc(r.length)} mm</td><td>${r.pendingQty.toLocaleString()}</td><td>${r.stockTotal.toLocaleString()}</td><td>${r.needCutQty.toLocaleString()}</td><td>${nextPlNum(nextPlSelection[r.rowKey]).toLocaleString()}</td><td>${r.unitWeight.toFixed(4)}</td><td>${(nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight).toFixed(2)}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="10">CURRENT + NEW TOTAL WEIGHT</td><td>${grand.toFixed(2)} kg</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`);w.document.close();
 }
 
 function switchTab(tabId, btn) {
