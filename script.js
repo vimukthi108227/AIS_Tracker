@@ -3168,6 +3168,238 @@ async function saveSingleStageEdit() {
 function populatePoProfileDropdown() { const select = document.getElementById('poSelectProfile'); if(!select) return; select.innerHTML = '<option value="">-- Choose Profile --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }
 function onPoProfileSelect() { const profile = document.getElementById('poSelectProfile').value; const itemSelect = document.getElementById('poSelectItemCode'); itemSelect.innerHTML = '<option value="">-- Choose Item Code --</option>'; document.getElementById('poSelectLength').innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile) return; const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => itemSelect.appendChild(new Option(ic, ic))); }
 function onPoItemCodeSelect() { const profile = document.getElementById('poSelectProfile').value; const itemCode = document.getElementById('poSelectItemCode').value; const lengthSelect = document.getElementById('poSelectLength'); lengthSelect.innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile || !itemCode) return; const matches = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode === itemCode); matches.forEach(m => lengthSelect.appendChild(new Option(`${m.length} mm`, m.length))); if(matches.length === 1) lengthSelect.value = matches[0].length; }
+// ===== Production Order Excel Bulk Upload =====
+// Accepts .xls / .xlsx / .csv and flexible header names without changing
+// the existing Production Order data model. Length is always resolved from
+// Master Catalog using Profile + Item Code, so the Excel file does not need
+// to contain a length column.
+function normalizePoExcelHeader(value) {
+  return String(value ?? '')
+    .trim().toLowerCase()
+    .replace(/[\s_\-#()./\\:]+/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function normalizePoExcelText(value) {
+  return String(value ?? '').trim().replace(/\s+/g, ' ');
+}
+
+function poExcelNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const s = String(value ?? '').replace(/,/g, '').trim();
+  if (!s) return NaN;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function poExcelHeaderIndex(headers, aliases) {
+  const wanted = aliases.map(normalizePoExcelHeader);
+  return headers.findIndex(h => wanted.includes(normalizePoExcelHeader(h)));
+}
+
+function poExcelProfileMatches(a, b) {
+  const x = normalizePoExcelText(a).toLowerCase();
+  const y = normalizePoExcelText(b).toLowerCase();
+  if (x === y) return true;
+  // Some source PO files use AL-1038 while the Master Catalog may use 1038.
+  return x.replace(/^al[-\s]?/, '') === y.replace(/^al[-\s]?/, '');
+}
+
+function findPoMasterByProfileItem(profile, itemCode) {
+  const p = normalizePoExcelText(profile).toLowerCase();
+  const i = normalizePoExcelText(itemCode).toLowerCase();
+  return masterData.filter(m =>
+    poExcelProfileMatches(m.profile, p) &&
+    normalizePoExcelText(m.itemCode).toLowerCase() === i
+  );
+}
+
+function poExcelDateFromInput() {
+  const el = document.getElementById('poUploadDate');
+  return el?.value || new Date().toISOString().slice(0, 10);
+}
+
+window.downloadProductionOrderTemplate = function () {
+  if (typeof XLSX === 'undefined') return showToast('Excel library is not loaded. Please refresh the page.', 'error');
+  const rows = [
+    ['PO Number', 'Profile', 'Item Code', 'Quantity (Pcs.)'],
+    ['364523', 'AL-1038', 'OX-TFBE96', 1100],
+    ['364523', 'AL-1042', 'RA-UNLF', 324]
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+  ws['!cols'] = [{ wch: 16 }, { wch: 16 }, { wch: 24 }, { wch: 18 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Production Orders');
+  XLSX.writeFile(wb, 'AIS_Production_Order_Upload_Template.xlsx');
+};
+
+window.processExcelUpload = async function () {
+  if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') {
+    return showToast('Only Admin / Planner can upload Production Orders.', 'warning');
+  }
+  if (isAppBusy) return;
+  const input = document.getElementById('excelUpload');
+  const file = input?.files?.[0];
+  if (!file) return showToast('Please select a .xls, .xlsx or .csv file first.', 'warning');
+  if (typeof XLSX === 'undefined') return showToast('Excel library is not loaded. Please refresh the page.', 'error');
+
+  isAppBusy = true;
+  const btn = document.getElementById('poUploadBtn');
+  const oldBtnHtml = btn?.innerHTML || '';
+  try {
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...'; }
+
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+    if (!workbook.SheetNames?.length) throw new Error('No worksheet found in the selected file.');
+
+    const aliases = {
+      po: ['PO Number', 'PO #', 'PO No', 'PO', 'Purchase Order', 'Order No', 'Order Number'],
+      profile: ['Profile', 'Profile #', 'Profile No', 'Profile Number', 'Profile Code'],
+      item: ['Item Code', 'Item code', 'Item', 'Code', 'Part No', 'Part Number'],
+      qty: ['Quantity (Pcs.)', 'Quantity Pcs', 'Quantity', 'Qty', 'Order Qty', 'Required Qty', 'Pcs', 'Pcs Qty', 'Total Qty']
+    };
+
+    let parsedRows = null;
+    let sourceSheet = '';
+    let headerInfo = null;
+
+    // Search every worksheet. This also handles workbooks where the PO table
+    // is not on the first sheet.
+    for (const sheetName of workbook.SheetNames) {
+      const ws = workbook.Sheets[sheetName];
+      const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+      for (let r = 0; r < Math.min(matrix.length, 30); r++) {
+        const row = Array.isArray(matrix[r]) ? matrix[r] : [];
+        const headers = row.map(v => String(v ?? ''));
+        const pi = poExcelHeaderIndex(headers, aliases.po);
+        const pri = poExcelHeaderIndex(headers, aliases.profile);
+        const ii = poExcelHeaderIndex(headers, aliases.item);
+        const qi = poExcelHeaderIndex(headers, aliases.qty);
+        if (pi >= 0 && pri >= 0 && ii >= 0 && qi >= 0) {
+          parsedRows = matrix.slice(r + 1).map(vals => ({ vals, pi, pri, ii, qi })).filter(x =>
+            x.vals.some(v => String(v ?? '').trim() !== '')
+          );
+          sourceSheet = sheetName;
+          headerInfo = { pi, pri, ii, qi, headers };
+          break;
+        }
+      }
+      if (parsedRows) break;
+    }
+
+    if (!parsedRows || !headerInfo) {
+      throw new Error('Required headers not found. Use: PO Number, Profile, Item Code, Quantity (Pcs.).');
+    }
+
+    const poDate = poExcelDateFromInput();
+    const newRows = [];
+    const errors = [];
+    const uploadKeys = new Set();
+    const existingKeys = new Set(
+      poList.map(p => `${normalizePoExcelText(p.poNumber).toLowerCase()}|${normalizePoExcelText(p.profile).toLowerCase()}|${cleanLen(p.length)}`)
+    );
+
+    parsedRows.forEach((entry, idx) => {
+      const excelRow = idx + 2 + (headerInfo.headers ? 0 : 0);
+      const vals = entry.vals;
+      const poNumber = normalizePoExcelText(vals[entry.pi]);
+      const profileRaw = normalizePoExcelText(vals[entry.pri]);
+      const itemCode = normalizePoExcelText(vals[entry.ii]);
+      const qty = poExcelNumber(vals[entry.qi]);
+
+      if (!poNumber && !profileRaw && !itemCode && !String(vals[entry.qi] ?? '').trim()) return;
+      if (!poNumber) return errors.push(`Row ${excelRow}: PO Number is missing.`);
+      if (!profileRaw) return errors.push(`Row ${excelRow}: Profile is missing.`);
+      if (!itemCode) return errors.push(`Row ${excelRow}: Item Code is missing.`);
+      if (!Number.isFinite(qty) || qty <= 0) return errors.push(`Row ${excelRow}: Quantity must be greater than 0.`);
+      if (Math.floor(qty) !== qty) return errors.push(`Row ${excelRow}: Quantity must be a whole number.`);
+
+      const matches = findPoMasterByProfileItem(profileRaw, itemCode);
+      if (matches.length === 0) {
+        return errors.push(`Row ${excelRow}: Profile ${profileRaw} + Item Code ${itemCode} was not found in Master Catalog.`);
+      }
+      if (matches.length > 1) {
+        const lengths = [...new Set(matches.map(m => cleanLen(m.length)))].join(', ');
+        return errors.push(`Row ${excelRow}: Profile ${profileRaw} + Item Code ${itemCode} matches multiple lengths (${lengths}). Fix Master Catalog before uploading.`);
+      }
+
+      const master = matches[0];
+      const storedProfile = normalizePoExcelText(master.profile);
+      const length = cleanLen(master.length);
+      const key = `${poNumber.toLowerCase()}|${storedProfile.toLowerCase()}|${length}`;
+      if (existingKeys.has(key)) return errors.push(`Row ${excelRow}: PO ${poNumber} / ${storedProfile} / ${length} mm already exists. Existing data was not changed.`);
+      if (uploadKeys.has(key)) return errors.push(`Row ${excelRow}: duplicate PO/Profile/Length line in this Excel file.`);
+      uploadKeys.add(key);
+
+      newRows.push({
+        po_date: poDate,
+        po_number: poNumber,
+        profile: storedProfile,
+        length,
+        order_qty: Math.round(qty)
+      });
+    });
+
+    if (errors.length) {
+      const preview = errors.slice(0, 12).join('\n');
+      const extra = errors.length > 12 ? `\n...and ${errors.length - 12} more error(s).` : '';
+      throw new Error(`Upload stopped. No rows were saved.\n\n${preview}${extra}`);
+    }
+    if (!newRows.length) throw new Error('No valid Production Order rows were found in the selected Excel file.');
+
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+    // Bulk insert is intentionally used instead of upsert/update: existing
+    // Production Orders must never be overwritten by an Excel upload.
+    const result = await supabaseClient.from('production_orders').insert(newRows);
+    if (result.error) throw new Error(dbErrorMessage(result.error, 'Production Order Excel upload failed'));
+
+    newRows.slice().reverse().forEach((row, i) => {
+      const master = masterData.find(m => poExcelProfileMatches(m.profile, row.profile) && cleanLen(m.length) === cleanLen(row.length));
+      poList.unshift({
+        id: -Date.now() - i,
+        date: row.po_date,
+        poNumber: row.po_number,
+        profile: row.profile,
+        itemCode: master?.itemCode || resolveMasterItemCode(row.profile, row.length, ''),
+        length: cleanLen(row.length),
+        orderQty: row.order_qty
+      });
+    });
+
+    // Register one safe in-session Undo for the complete upload. It only removes
+    // the records that were just inserted, identified by their exact values.
+    aisRegisterUndo(`Production Order Excel • ${newRows.length} row(s)`, async () => {
+      for (const row of newRows.slice().reverse()) {
+        await aisDeleteLatest('production_orders', {
+          po_date: row.po_date,
+          po_number: row.po_number,
+          profile: row.profile,
+          length: row.length,
+          order_qty: row.order_qty
+        });
+      }
+    }, 'poManagementTab');
+
+    updatePoFilters();
+    renderPoDetailsTable();
+    renderPoCharts();
+    renderDashboard();
+    populateShipmentPoDropdown();
+    populatePlPoDropdown();
+    renderBalanceWorkTable();
+    showToast(`${newRows.length} Production Order row(s) uploaded successfully from ${sourceSheet}.`, 'success');
+    input.value = '';
+  } catch (e) {
+    console.error('Production Order Excel upload error:', e);
+    showToast(String(e?.message || e).replace(/\n/g, ' • '), 'error');
+  } finally {
+    isAppBusy = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = oldBtnHtml || '<i class="fa-solid fa-cloud-arrow-up"></i> Upload'; }
+  }
+};
+
 async function saveNewPO() {
   if(isAppBusy)return; isAppBusy=true;
   try{
