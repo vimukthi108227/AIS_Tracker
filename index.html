@@ -232,6 +232,7 @@
           <button class="tab-btn admin-restricted-area" onclick="switchTab('adminEntryTab', this)" id="tabBtn-adminEntry"><i class="fa-solid fa-pen-to-square"></i> Production Entry</button>
           <button class="tab-btn" onclick="switchTab('publicStockTab', this)"><i class="fa-solid fa-chart-column"></i> Current Stock Levels</button>
           <button class="tab-btn" onclick="switchTab('balanceWorkTab', this)"><i class="fa-solid fa-scale-balanced"></i> Balance Work</button>
+          <button class="tab-btn" onclick="switchTab('nextPlPlanningTab', this)"><i class="fa-solid fa-bullseye"></i> Next PL 15–17T Planning</button>
         </div>
         <div class="smart-submenu" data-menu="orders">
           <button class="tab-btn admin-restricted-area" onclick="switchTab('poManagementTab', this)" id="tabBtn-po"><i class="fa-solid fa-file-invoice"></i> Production Orders (PO)</button>
@@ -575,6 +576,56 @@
     <!-- Balance Work Tab -->
     <div id="balanceWorkTab" class="tab-content"><div class="card"><div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;"><h3 style="margin:0;"><i class="fa-solid fa-scale-balanced"></i> Balance Work & Pending Production Analysis</h3><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-accent" onclick="exportBalanceWorkExcel()"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" style="background:#dc2626;color:#fff;" onclick="exportBalanceWorkPdf()"><i class="fa-solid fa-file-pdf"></i> PDF</button></div></div><div class="balance-filterbar"><div><label><i class="fa-solid fa-filter"></i> PL Balance Filter</label><select id="balancePlFilter" onchange="renderBalanceWorkTable()"><option value="all">All Active PL Lines</option><option value="pending">Pending PL Balance Only</option><option value="available">Available Balance Only</option><option value="all_po">All Production Orders</option><option value="pending_po">Pending Production Order Balance</option><option value="available_po">Available Production Order Balance</option></select></div><div class="balance-filter-info" id="balancePlFilterInfo">Active PL balance is calculated from the latest active Packing List.</div></div><div class="table-container balance-work-container"><table id="balanceWorkTable" class="balance-work-table"><thead><tr><th>Profile</th><th>Item Code</th><th>Cut Length</th><th>Ex Length</th><th>Pcs / Ex</th><th>WIP + Box</th><th>Crate</th><th>Unshipped PO</th><th style="background: linear-gradient(180deg, #9f1239 0%, #e11d48 100%); color: #fff;">PO Pending</th><th style="background: linear-gradient(180deg, #c2410c 0%, #9a3412 100%); color: #fff;">PL Balance</th><th style="background: var(--primary-dark); color: #fff;">Req. Extrusions</th><th style="background: #0369a1; color: #fff;">Unboxed</th><th style="background: #b45309; color: #fff;">Req. Boxes</th><th style="background: #047857; color: #fff;">Cardboard</th></tr></thead><tbody id="balanceWorkTableBody"></tbody></table></div></div></div>
     
+    <!-- NEXT PL PLANNING TAB -->
+    <div id="nextPlPlanningTab" class="tab-content">
+      <div class="card next-pl-hero">
+        <div class="next-pl-head">
+          <div>
+            <div class="next-pl-kicker"><i class="fa-solid fa-route"></i> NEXT PACKING LIST • PRODUCTION PLANNING</div>
+            <h3 style="margin:4px 0 5px;"><i class="fa-solid fa-bullseye"></i> Next PL 15–17 Ton Planning</h3>
+            <p style="margin:0;color:#475569;font-size:12px;line-height:1.55;max-width:850px;">මේ tab එක <b>view / planning only</b>. Production Orders, Current Stock, Shipments හෝ Packing List data වෙනස් කරන්නේ නැහැ. පරණ PO → අලුත් PO priority එකට Current Stock සහ PO Pending එක බලලා next shipment එකට 15–17T target එක ඉක්මනින් build කරන්න.</p>
+          </div>
+          <div class="next-pl-actions">
+            <button class="btn btn-accent" type="button" onclick="nextPlAutoBuild()"><i class="fa-solid fa-wand-magic-sparkles"></i> Auto Build 15–17T</button>
+            <button class="btn" type="button" style="background:#0f766e;color:#fff;" onclick="nextPlClearSelection()"><i class="fa-solid fa-eraser"></i> Clear</button>
+            <button class="btn" type="button" style="background:#2563eb;color:#fff;" onclick="nextPlExportExcel()"><i class="fa-solid fa-file-excel"></i> Excel</button>
+            <button class="btn" type="button" style="background:#64748b;color:#fff;" onclick="nextPlPrint()"><i class="fa-solid fa-print"></i> Print</button>
+          </div>
+        </div>
+        <div class="next-pl-controls">
+          <div class="next-pl-control"><label>Target Minimum (kg)</label><input id="nextPlMinKg" type="number" min="0" step="100" value="15000" oninput="renderNextPlPlanning()"></div>
+          <div class="next-pl-control"><label>Target Maximum (kg)</label><input id="nextPlMaxKg" type="number" min="0" step="100" value="17000" oninput="renderNextPlPlanning()"></div>
+          <div class="next-pl-control"><label>PO Priority</label><select id="nextPlPriority" onchange="renderNextPlPlanning()"><option value="oldest">Old PO → New PO</option><option value="newest">New PO → Old PO</option></select></div>
+          <div class="next-pl-control"><label>Filter PO</label><select id="nextPlPoFilter" onchange="renderNextPlPlanning()"><option value="">All POs</option></select></div>
+          <div class="next-pl-control"><label>Filter Profile</label><select id="nextPlProfileFilter" onchange="renderNextPlPlanning()"><option value="">All Profiles</option></select></div>
+        </div>
+      </div>
+
+      <div class="next-pl-kpis" id="nextPlKpis">
+        <div class="next-pl-kpi"><span><i class="fa-solid fa-weight-hanging"></i> Selected Weight</span><b id="nextPlSelectedWeight">0.00 kg</b><small id="nextPlTargetStatus">Target: 15,000–17,000 kg</small></div>
+        <div class="next-pl-kpi"><span><i class="fa-solid fa-circle-down"></i> To Minimum</span><b id="nextPlToMin">15,000.00 kg</b><small>Remaining to reach minimum</small></div>
+        <div class="next-pl-kpi"><span><i class="fa-solid fa-circle-up"></i> Room to Maximum</span><b id="nextPlToMax">17,000.00 kg</b><small>Available within target maximum</small></div>
+        <div class="next-pl-kpi"><span><i class="fa-solid fa-cubes"></i> Selected Pcs</span><b id="nextPlSelectedPcs">0</b><small id="nextPlSelectedLines">0 selected lines</small></div>
+        <div class="next-pl-kpi"><span><i class="fa-solid fa-boxes-stacked"></i> Available Stock Weight</span><b id="nextPlAvailableWeight">0.00 kg</b><small>Current stock across displayed lines</small></div>
+      </div>
+
+      <div id="nextPlAlert" class="next-pl-alert"></div>
+
+      <div class="card" style="margin-top:14px;padding:0;overflow:hidden;">
+        <div class="next-pl-table-head"><div><h4><i class="fa-solid fa-list-check"></i> PO-wise Profile / Length Availability</h4><p>Suggested quantity is allocated from Current Stock against each PO balance, oldest order first. <b>Select Qty</b> can be edited manually for planning.</p></div><div class="next-pl-readonly-badge"><i class="fa-solid fa-eye"></i> VIEW / PLAN ONLY</div></div>
+        <div class="table-container next-pl-table-wrap">
+          <table class="next-pl-table" id="nextPlPlanningTable">
+            <thead><tr>
+              <th>Priority</th><th>PO Date</th><th>PO Number</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Unit Wt</th><th>PO Pending</th><th>Current Stock</th><th>Ready Stock</th><th>WIP Stock</th><th>Available for This PO</th><th>Coverage</th><th>Production Gap</th><th>Select Pcs</th><th>Selected Weight</th>
+            </tr></thead>
+            <tbody id="nextPlPlanningBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="next-pl-note"><i class="fa-solid fa-shield-halved"></i><div><b>Data Safety</b><br>This planning tab reads live PO / Shipment / Master Catalog stock data only. Manual quantity edits here are <b>temporary planning selections</b>; they do not deduct Current Stock, change PO balances, create shipments, or modify Supabase records.</div></div>
+    </div>
+
     <!-- PO Tab -->
     <div id="poManagementTab" class="tab-content"><div class="card"><h3><i class="fa-solid fa-chart-pie"></i> Individual PO Fulfillment Status</h3><div id="poChartsContainerTab" class="po-charts-grid" style="justify-content: flex-start; max-height: auto; overflow: visible;"></div></div><div class="card admin-restricted-area" id="poExcelUploadCard">
 <h3><i class="fa-solid fa-file-excel"></i> Bulk Upload Production Orders</h3>
@@ -591,12 +642,12 @@
       <tr><td style="padding:7px;border:1px solid #e2e8f0;text-align:center;">364523</td><td style="padding:7px;border:1px solid #e2e8f0;">1047</td><td style="padding:7px;border:1px solid #e2e8f0;">RP-M4TC36</td><td style="padding:7px;border:1px solid #e2e8f0;text-align:right;">1,632</td></tr>
     </tbody></table></div>
   <div style="margin-top:9px;color:#075985;font-weight:800;"><i class="fa-solid fa-circle-check"></i> Profile එක Excel එකේ 1038 වගේ තිබුණත්, AL-1038 වගේ තිබුණත් system එක Master Catalog එකට match කරනවා.</div>
-  <div style="margin-top:3px;color:#475569;">Length Excel එකට දාන්න අවශ්‍ය නැහැ. <b>Profile + Item Code → Master Catalog → Length</b> ලෙස system එක automatically ගන්නවා.</div>
+  <div style="margin-top:3px;color:#475569;">Length Excel එකට දාන්න අවශ්‍ය නැහැ. <b>Profile + Item Code → Master Catalog → Length</b> ලෙස system එක automatically ගන්නවා. Master Catalog එකේ exact item එකක් නැත්නම්, code එකේ අග තියෙන length pattern එක (උදා: 24→2400 mm, 130→1300 mm, 72E→7200 mm) safely use කරනවා; Master Catalog එක වෙනස් කරන්නේ නැහැ.</div>
   <div style="margin-top:5px;color:#9f1239;font-weight:800;">Existing Production Order data overwrite/delete කරන්නේ නැහැ. Duplicate line එකක් තිබුණොත් upload එක stop කරලා error එක පෙන්වනවා.</div>
 </div>
 <div style="display:flex;gap:10px;align-items:flex-end;margin-top:12px;max-width:900px;flex-wrap:wrap;">
   <div class="form-group" style="margin:0;min-width:170px;"><label>1. PO Date</label><input type="date" id="poUploadDate"></div>
-  <div style="flex:1;min-width:280px;"><label style="display:block;font-weight:700;margin-bottom:5px;">2. Select Production Order Excel</label><input type="file" id="excelUpload" accept=".xlsx, .xls, .csv" style="width:100%;box-sizing:border-box;padding:8px;border:2px dashed var(--accent-color);background:var(--emerald-light);cursor:pointer;"></div>
+  <div style="flex:1;min-width:280px;"><label style="display:block;font-weight:700;margin-bottom:5px;">2. Select Production Order Excel</label><input type="file" id="excelUpload" accept=".xlsx,.xls,.csv" style="width:100%;box-sizing:border-box;padding:8px;border:2px dashed var(--accent-color);background:var(--emerald-light);cursor:pointer;" onchange="previewProductionOrderExcel(this)"><div id="poExcelFileStatus" style="margin-top:6px;font-size:11.5px;color:#475569;min-height:18px;">No file selected.</div></div>
   <button type="button" id="poUploadBtn" class="btn btn-accent btn-animated" onclick="processExcelUpload()"><i class="fa-solid fa-cloud-arrow-up"></i> 3. Upload Excel</button>
   <button type="button" class="btn" onclick="downloadProductionOrderTemplate()"><i class="fa-solid fa-download"></i> Blank Template</button>
   <button type="button" class="btn" style="background:#1e40af;color:#fff;" onclick="downloadProductionOrderSample()"><i class="fa-solid fa-file-excel"></i> Exact Sample</button>
@@ -692,7 +743,7 @@
 
   </div>
 
-  <script src="script.js"></script>
+  <script src="script.js?v=20261007-1625"></script>
 
 <script>
 (function(){
