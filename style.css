@@ -2345,3 +2345,44 @@ body.dark-mode #dashboardTab .pending-po-metric.still{background:#2a1c26;border-
 }
 
 #planMessage{width:100%;resize:vertical;min-height:78px;box-sizing:border-box;border:1px solid #fde047;background:#fff;border-radius:9px;padding:10px 12px;font:inherit;color:#334155;}#planMessage:focus{outline:2px solid rgba(245,158,11,.22);}
+
+/* ------------------------------------------------------------------
+   NEXT PL 15–17T PLANNING
+   ------------------------------------------------------------------ */
+.next-pl-hero{background:linear-gradient(135deg,#f0fdf4 0%,#eff6ff 55%,#fff 100%);border:1px solid #bbf7d0;}
+.next-pl-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;}
+.next-pl-kicker{font-size:10px;font-weight:900;letter-spacing:.12em;color:#047857;}
+.next-pl-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center;}
+.next-pl-controls{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;padding:12px;background:rgba(255,255,255,.78);border:1px solid #dbeafe;border-radius:12px;}
+.next-pl-control{min-width:155px;flex:1;}
+.next-pl-control label{display:block;font-size:10px;font-weight:900;color:#475569;margin-bottom:5px;}
+.next-pl-control input,.next-pl-control select{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:8px 9px;background:#fff;font-weight:750;color:#0f172a;}
+.next-pl-kpis{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:10px;margin:14px 0;}
+.next-pl-kpi{background:#fff;border:1px solid #dbeafe;border-radius:12px;padding:12px;box-shadow:0 5px 14px rgba(15,23,42,.05);}
+.next-pl-kpi span{display:block;color:#475569;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.04em;}
+.next-pl-kpi b{display:block;margin-top:5px;color:#0f172a;font-size:20px;line-height:1.15;}
+.next-pl-kpi small{display:block;margin-top:4px;color:#64748b;font-size:10px;font-weight:700;}
+.next-pl-alert{min-height:0;margin-bottom:10px;}
+.next-pl-alert:empty{display:none;}
+.next-pl-alert>div{border-radius:10px;padding:10px 12px;font-size:12px;font-weight:750;}
+.next-pl-table-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid #e2e8f0;background:#f8fafc;}
+.next-pl-table-head h4{margin:0;color:#0f3f46;}
+.next-pl-table-head p{margin:4px 0 0;color:#64748b;font-size:10.5px;}
+.next-pl-readonly-badge{padding:6px 9px;border-radius:999px;background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;font-size:10px;font-weight:900;white-space:nowrap;}
+.next-pl-table-wrap{max-height:560px;overflow:auto;}
+.next-pl-table{min-width:1450px;width:100%;border-collapse:separate;border-spacing:0;font-size:11px;}
+.next-pl-table th{position:sticky;top:0;z-index:2;background:#075985;color:#fff;padding:8px 7px;text-align:center;white-space:nowrap;font-size:10px;}
+.next-pl-table td{padding:7px;border-bottom:1px solid #e2e8f0;text-align:center;white-space:nowrap;color:#334155;}
+.next-pl-table tbody tr:nth-child(even){background:#f8fafc;}
+.next-pl-table tbody tr:hover{background:#eff6ff;}
+.next-pl-select-input{width:92px;padding:6px 7px;border:2px solid #93c5fd;border-radius:7px;text-align:right;font-weight:900;color:#0f172a;background:#fff;}
+.next-pl-select-input:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.12);}
+.next-pl-weight{font-weight:900;color:#047857;}
+.next-pl-available{font-weight:900;color:#0369a1;}
+.next-pl-pending{font-weight:900;color:#be123c;}
+.next-pl-stock-ready{font-weight:900;color:#047857;}
+.next-pl-stock-wip{font-weight:900;color:#b45309;}
+.next-pl-note{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding:11px 13px;border:1px solid #cbd5e1;background:#f8fafc;border-radius:10px;color:#475569;font-size:11px;line-height:1.55;}
+.next-pl-note>i{color:#2563eb;font-size:16px;margin-top:2px;}
+@media(max-width:900px){.next-pl-kpis{grid-template-columns:repeat(2,minmax(145px,1fr));}.next-pl-controls{display:grid;grid-template-columns:repeat(2,minmax(140px,1fr));}.next-pl-control{min-width:0;}}
+@media(max-width:600px){.next-pl-kpis{grid-template-columns:1fr 1fr;}.next-pl-controls{grid-template-columns:1fr;}.next-pl-actions{width:100%;}.next-pl-actions .btn{flex:1;}}
