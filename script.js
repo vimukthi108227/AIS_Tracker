@@ -1526,6 +1526,9 @@ function nextPlQuickAdd(po,parts,button){
     else {nextPlManualOverride[p.rowKey]=false;nextPlSelection[p.rowKey]=0;}
   });
   renderNextPlPlanning();
+  const msg=`<i class="fa-solid fa-circle-check"></i><div><b>Added to Next PL successfully</b><span>PO ${nextPlEsc(po)} • ${qty.toLocaleString()} Pcs • ${addedWeight.toFixed(2)} kg added to the plan.</span></div>`;
+  const notice=document.getElementById('nextPlManualNotice');
+  if(notice){notice.innerHTML=msg;notice.className='next-pl-manual-notice success show';}
   showToast(`${addedWeight.toFixed(2)} kg is now planned from PO ${po}. Existing selection was updated, not duplicated.`,'success');
 }
 function nextPlManualProfileChanged(){
@@ -1541,7 +1544,10 @@ function nextPlAddManual(){
   const cap=Math.max(0,row.pendingQty);
   nextPlSelection[row.rowKey]=Math.min(qty,cap);
   if(qty>cap)showToast(`Only ${cap.toLocaleString()} Pcs remain on this PO after the current PL.`,'warning');
+  const addedWeight=nextPlSelection[row.rowKey]*Math.max(0,row.unitWeight);
   renderNextPlPlanning();
+  const notice=document.getElementById('nextPlManualNotice');
+  if(notice){notice.innerHTML=`<i class="fa-solid fa-circle-check"></i><div><b>Added to Next PL successfully</b><span>PO ${nextPlEsc(po)} • Profile ${nextPlEsc(pf)} • ${nextPlSelection[row.rowKey].toLocaleString()} Pcs • ${addedWeight.toFixed(2)} kg.</span></div>`;notice.className='next-pl-manual-notice success show';}
 }
 function nextPlShipmentBalanceFor(poNumber,profile){
   const rows=nextPlGetRows().filter(r=>r.poNumber===String(poNumber||'') && nextPlSameProfile(r.profile,profile));
@@ -1609,12 +1615,12 @@ function nextPlRenderPoWeightChart(rows){
   try{if(nextPlPoWeightChartInstance)nextPlPoWeightChartInstance.destroy();}catch(e){}
   const groups=new Map();
   (rows||[]).forEach(r=>{
-    const poBalance=Math.max(0,nextPlNum(r.pendingQty))*Math.max(0,nextPlNum(r.unitWeight));
+    const balance=Math.max(0,nextPlNum(r.pendingQty))*Math.max(0,nextPlNum(r.unitWeight));
     const selected=Math.min(Math.max(0,nextPlNum(nextPlSelection[r.rowKey])),Math.max(0,nextPlNum(r.pendingQty)))*Math.max(0,nextPlNum(r.unitWeight));
-    const pending=Math.max(0,poBalance-selected);
+    const pending=Math.max(0,balance-selected);
     const key=String(r.poNumber);
-    const g=groups.get(key)||{po:r.poNumber,next:0,pending:0,total:0};
-    g.next+=selected; g.pending+=pending; g.total+=poBalance; groups.set(key,g);
+    const g=groups.get(key)||{po:r.poNumber,planning:0,pending:0,total:0};
+    g.planning+=selected; g.pending+=pending; g.total+=balance; groups.set(key,g);
   });
   const data=[...groups.values()].filter(g=>g.total>0).sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true,sensitivity:'base'}));
   if(!data.length){
@@ -1626,10 +1632,25 @@ function nextPlRenderPoWeightChart(rows){
   nextPlPoWeightChartInstance=new Chart(canvas.getContext('2d'),{
     type:'bar',
     data:{labels:data.map(g=>String(g.po)),datasets:[
-      {label:'Next PL Planning Weight',data:data.map(g=>Number(g.next.toFixed(2))),backgroundColor:'#0f766e',borderRadius:7,borderSkipped:false},
-      {label:'Pending Weight After Next PL',data:data.map(g=>Number(g.pending.toFixed(2))),backgroundColor:'#e11d48',borderRadius:7,borderSkipped:false}
+      {label:'Next PL Planning Weight',data:data.map(g=>Number(g.planning.toFixed(2))),backgroundColor:'#0f766e',borderRadius:8,borderSkipped:false,maxBarThickness:42},
+      {label:'Pending Weight After Next PL',data:data.map(g=>Number(g.pending.toFixed(2))),backgroundColor:'#f59e0b',borderRadius:8,borderSkipped:false,maxBarThickness:42}
     ]},
-    options:{responsive:true,maintainAspectRatio:false,animation:{duration:1100,easing:'easeOutQuart'},animations:{y:{duration:1100,easing:'easeOutQuart'}},interaction:{mode:'index',intersect:false},plugins:{legend:{position:'top',labels:{font:{weight:'700'},usePointStyle:true,padding:18}},tooltip:{callbacks:{label:(ctx)=>`${ctx.dataset.label}: ${Number(ctx.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`,afterBody:(items)=>{const i=items?.[0]?.dataIndex;return i==null?'':`Total PO Balance: ${data[i].total.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`;}}}},scales:{x:{stacked:true,ticks:{autoSkip:false,maxRotation:45,minRotation:0,font:{weight:'700'}}},y:{stacked:true,beginAtZero:true,title:{display:true,text:'Weight (kg)'},ticks:{callback:(v)=>Number(v).toLocaleString()}}}}
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      animation:{duration:900,easing:'easeOutQuart'},
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'top',labels:{font:{weight:'700'},usePointStyle:true,padding:18}},
+        tooltip:{callbacks:{
+          label:(ctx)=>`${ctx.dataset.label}: ${Number(ctx.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`,
+          afterBody:(items)=>{const i=items?.[0]?.dataIndex;if(i==null)return '';const g=data[i];const share=g.total>0?(g.planning/g.total*100):0;return [`Total PO Balance: ${g.total.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`,`Next PL share: ${share.toFixed(1)}%`];}
+        }}
+      },
+      scales:{
+        x:{stacked:false,grid:{display:false},ticks:{autoSkip:false,maxRotation:35,minRotation:0,font:{weight:'700'}}},
+        y:{stacked:false,beginAtZero:true,title:{display:true,text:'Weight (kg)',font:{weight:'700'}},ticks:{callback:(v)=>Number(v).toLocaleString()},grid:{color:'rgba(15,118,110,.10)'}}
+      }
+    }
   });
 }
 
