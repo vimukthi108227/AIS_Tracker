@@ -3081,7 +3081,89 @@ function toggleBoxCountInput() { const stage = document.getElementById('editStag
 function syncBoxCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const pcs = parseInt(document.getElementById('editStageValue').value) || 0; const capacity = parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity) || 100; const boxes = capacity > 0 ? (pcs / capacity) : 0; document.getElementById('editBoxCountValue').value = boxes % 1 === 0 ? boxes : parseFloat(boxes.toFixed(2)); }
 function syncPcsCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const boxes = parseFloat(document.getElementById('editBoxCountValue').value) || 0; const capacity = parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity) || 100; document.getElementById('editStageValue').value = Math.round(boxes * capacity); }
 function closeStockEditModal() { document.getElementById('stockEditModal').style.display = 'none'; }
-async function saveSingleStageEdit() { try { const index=parseInt(document.getElementById('editItemIndex').value); const stage=document.getElementById('editStageSelect').value; const newQty=Math.max(0,parseInt(document.getElementById('editStageValue').value)||0); const item=masterData[index]; if(!item?.db_id) throw new Error('Stock edit failed: catalog record is not linked to Supabase.'); const oldQty=Number(item[stage])||0; const field=stage.replace('Qty','_qty'); const updated={}; updated[field]=newQty; await dbUpdate('master_catalog',updated,item.db_id,'Stock edit failed'); item[stage]=newQty; aisRegisterUndo(`Stock Edit • ${item.profile} / ${item.length} • ${stage}`,async()=>{const back={};back[field]=oldQty;await aisUpdateById('master_catalog',item.db_id,back);},'publicStockTab'); closeStockEditModal(); showToast('Stock edit saved successfully.','success'); renderProfileSummaryTable(); renderDashboard(); renderBalanceWorkTable(); } catch(e){console.error(e);await loadDataFromSupabase(true).catch(()=>{});showToast(e.message||'Stock edit failed.','error');} }
+async function saveSingleStageEdit() {
+  if(isAppBusy) return;
+  isAppBusy=true;
+  try {
+    const index=parseInt(document.getElementById('editItemIndex').value);
+    const stage=document.getElementById('editStageSelect').value;
+    const newQty=Math.max(0,parseInt(document.getElementById('editStageValue').value)||0);
+    const item=masterData[index];
+    if(!item?.db_id) throw new Error('Stock edit failed: catalog record is not linked to Supabase.');
+
+    const field=stage.replace('Qty','_qty');
+    const oldQty=Number(item[stage])||0;
+
+    // IMPORTANT DATA-SAFETY FIX:
+    // Older versions could contain duplicate Master Catalog rows for the same
+    // Profile + Item Code + Length. loadDataFromSupabase() intentionally merges
+    // those rows for display, so editing only one DB row allowed the old quantity
+    // in another duplicate row to come back after the next sync/reload.
+    // A manual Current Stock edit means "set the displayed stock to this exact
+    // value". Therefore, when duplicates exist, the selected canonical row gets
+    // the new value and the duplicate rows for THIS STAGE are explicitly zeroed.
+    // Other stages are left untouched, so unrelated stock is never changed.
+    const profileKey=String(item.profile||'').trim();
+    const itemCodeKey=String(item.itemCode||'').trim();
+    const lengthKey=cleanLen(item.length);
+    let duplicateRows=[];
+    try{
+      let q=supabaseClient.from('master_catalog').select(`id,profile,item_code,length,${field}`).eq('profile',profileKey).eq('length',lengthKey);
+      if(itemCodeKey) q=q.eq('item_code',itemCodeKey);
+      const res=await q;
+      if(res.error) throw res.error;
+      duplicateRows=(res.data||[]).filter(r=>String(r.profile||'').trim()===profileKey&&cleanLen(r.length)===lengthKey&&String(r.item_code||'').trim()===itemCodeKey);
+    }catch(lookupErr){
+      // If duplicate discovery is blocked by an RLS SELECT policy, do not guess.
+      // The canonical-row update below is still safe, but the user is warned that
+      // a full duplicate cleanup could not be verified.
+      console.warn('Master duplicate lookup skipped:',lookupErr);
+      duplicateRows=[];
+    }
+
+    const beforeRows=duplicateRows.map(r=>({id:r.id,value:Number(r[field])||0}));
+    const rowsToUpdate=duplicateRows.length
+      ? duplicateRows.map(r=>({id:r.id,value:r.id===item.db_id?newQty:0}))
+      : [{id:item.db_id,value:newQty}];
+
+    // Save every affected row and fail the whole edit if any write fails.
+    const changedRows=[];
+    try{
+      for(const r of rowsToUpdate){
+        const payload={}; payload[field]=r.value;
+        const result=await supabaseClient.from('master_catalog').update(payload).eq('id',r.id);
+        if(result.error) throw result.error;
+        changedRows.push(r);
+      }
+    }catch(saveErr){
+      // Best-effort rollback of rows already changed by this edit.
+      for(const r of changedRows){
+        const old=beforeRows.find(x=>String(x.id)===String(r.id));
+        if(old){ const payload={}; payload[field]=old.value; try{await supabaseClient.from('master_catalog').update(payload).eq('id',old.id);}catch(rb){console.error('Stock edit rollback failed:',rb);} }
+      }
+      throw saveErr;
+    }
+
+    item[stage]=newQty;
+    aisRegisterUndo(`Stock Edit • ${item.profile} / ${item.length} • ${stage}`,async()=>{
+      if(beforeRows.length){
+        for(const r of beforeRows){ const payload={}; payload[field]=r.value; await aisUpdateById('master_catalog',r.id,payload); }
+      }else{
+        const back={}; back[field]=oldQty; await aisUpdateById('master_catalog',item.db_id,back);
+      }
+    },'publicStockTab');
+
+    closeStockEditModal();
+    showToast(duplicateRows.length>1
+      ? `Stock edit saved. ${duplicateRows.length} duplicate catalog row(s) were safely synchronized; old stock will not return.`
+      : 'Stock edit saved successfully.','success');
+    renderProfileSummaryTable(); renderDashboard(); renderBalanceWorkTable();
+  } catch(e){
+    console.error('Stock edit error:',e);
+    await loadDataFromSupabase(true).catch(()=>{});
+    showToast(e.message||'Stock edit failed.','error');
+  } finally { isAppBusy=false; }
+}
 
 function populatePoProfileDropdown() { const select = document.getElementById('poSelectProfile'); if(!select) return; select.innerHTML = '<option value="">-- Choose Profile --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }
 function onPoProfileSelect() { const profile = document.getElementById('poSelectProfile').value; const itemSelect = document.getElementById('poSelectItemCode'); itemSelect.innerHTML = '<option value="">-- Choose Item Code --</option>'; document.getElementById('poSelectLength').innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile) return; const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => itemSelect.appendChild(new Option(ic, ic))); }
@@ -3980,7 +4062,18 @@ async function processPlExcelUpload() {
   const defaultPlNum=file.name.replace(/\.[^/.]+$/,'').trim()||`PL-${uploadDate}`;
   const roman=['i','ii','iii','iv','v','vi','vii','viii','ix','x','xi','xii','xiii','xiv','xv','xvi','xvii','xviii','xix','xx'];
   const toRoman=n=>roman[n-1]||String(n);
-  const normalHeader=h=>String(h??'').replace(/\uFEFF/g,'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+  const normalHeader=h=>{
+    const raw=String(h??'').replace(/\uFEFF/g,'').trim().toLowerCase();
+    const compact=raw.replace(/[^a-z0-9]/g,'');
+    // Accept both the 7-column website template and the user's existing
+    // Packing List format: '#', 'PO #', 'Profile #', etc.
+    if(raw==='#') return 'crateno';
+    if(compact==='po') return 'ponumber';
+    if(compact==='profileno') return 'profile';
+    if(compact==='cratenumber') return 'crateno';
+    if(compact==='pcspercrateqty') return 'pcspercrate';
+    return compact;
+  };
   const requiredHeaders=['crateno','ponumber','profile','itemcode','numberofcrates','pcspercrate','totalqty'];
 
   try{
@@ -4024,6 +4117,8 @@ async function processPlExcelUpload() {
       const poNum=String(get('ponumber')??'').trim().replace(/\.0$/,'');
       let profile=String(get('profile')??'').trim();
       const itemCode=String(get('itemcode')??'').trim();
+      // Ignore Excel total/subtotal rows. They are not Packing List records.
+      if(!poNum && !profile && !itemCode) continue;
       const numberOfCrates=Number(get('numberofcrates'));
       const pcsPerCrate=Number(get('pcspercrate'));
       const totalQty=Number(get('totalqty'));
