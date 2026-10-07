@@ -1233,6 +1233,7 @@ let nextPlSelection = {};
 let nextPlExcluded = {};
 let nextPlManualOverride = {};
 let nextPlViewMode = 'suggested';
+let nextPlPoWeightChartInstance = null;
 
 function nextPlNum(v){
   const n=Number(String(v??0).replace(/,/g,'').trim());
@@ -1411,7 +1412,8 @@ function nextPlGetCurrentSummary(){
   const info=nextPlCurrentPackingInfo();
   const targetMin=Math.max(0,nextPlNum(document.getElementById('nextPlMinKg')?.value||15000));
   const targetMax=Math.max(targetMin,nextPlNum(document.getElementById('nextPlMaxKg')?.value||17000));
-  return {...info,targetMin,targetMax,remainingMin:Math.max(0,targetMin-info.weight),remainingMax:Math.max(0,targetMax-info.weight)};
+  const targetTotal=Math.max(0,nextPlNum(document.getElementById('nextPlTargetWeight')?.value||targetMin));
+  return {...info,targetMin,targetMax,targetTotal,remainingMin:Math.max(0,targetMin-info.weight),remainingMax:Math.max(0,targetMax-info.weight),remainingTarget:Math.max(0,targetTotal-info.weight)};
 }
 function nextPlRenderManualControls(rows){
   const poSel=document.getElementById('nextPlManualPo'), pfSel=document.getElementById('nextPlManualProfile'), icSel=document.getElementById('nextPlManualItem'), lSel=document.getElementById('nextPlManualLength');
@@ -1435,135 +1437,79 @@ function nextPlRenderManualControls(rows){
   };
   updateLengths();
 }
-function nextPlQuickCandidateGroups(rows, profile, length){
-  const selected=rows.filter(r=>profile && length && nextPlSameProfile(r.profile,profile) && cleanLen(r.length)===cleanLen(length));
-  const groups=new Map();
-  selected.forEach(r=>{
-    const balance=Math.max(0,nextPlNum(r.pendingQty));
-    if(balance<=0)return;
-    const key=String(r.poNumber);
-    const g=groups.get(key)||{po:r.poNumber,itemCodes:new Set(),balance:0,weight:0,ready:0,unitWeights:new Set(),rows:[]};
-    g.itemCodes.add(r.itemCode||'-');
-    g.balance+=balance;
-    g.weight+=balance*Math.max(0,nextPlNum(r.unitWeight));
-    g.ready+=Math.min(Math.max(0,nextPlNum(r.availableForPo)),balance);
-    if(nextPlNum(r.unitWeight)>0)g.unitWeights.add(Number(r.unitWeight));
-    g.rows.push(r);
-    groups.set(key,g);
-  });
-  return [...groups.values()].sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true,sensitivity:'base'}));
-}
-function nextPlQuickSelectedForGroup(g){
-  return g.rows.reduce((s,r)=>s+Math.max(0,nextPlNum(nextPlSelection[r.rowKey])),0);
-}
 function nextPlRenderQuickManual(rows){
-  const pf=document.getElementById('nextPlQuickProfile'), ls=document.getElementById('nextPlQuickLength'), poSel=document.getElementById('nextPlQuickPo');
-  const note=document.getElementById('nextPlQuickNote'), balanceInfo=document.getElementById('nextPlQuickBalanceInfo'), summaryBox=document.getElementById('nextPlQuickSelectedSummary');
-  if(!pf||!ls||!poSel)return;
-  const oldPf=pf.value, oldL=cleanLen(ls.value), oldPo=poSel.value;
+  const pf=document.getElementById('nextPlQuickProfile'), ls=document.getElementById('nextPlQuickLength'), body=document.getElementById('nextPlQuickPoBody');
+  const note=document.getElementById('nextPlQuickNote');
+  if(!pf||!ls||!body)return;
+  const oldPf=pf.value, oldL=ls.value;
   const profiles=[];
   rows.forEach(r=>{if(r.profile&&!profiles.some(x=>nextPlSameProfile(x,r.profile)))profiles.push(r.profile);});
   profiles.sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'}));
   pf.innerHTML='<option value="">Select Profile</option>'+profiles.map(v=>`<option value="${nextPlEsc(v)}">${nextPlEsc(v)}</option>`).join('');
   if(profiles.some(x=>nextPlSameProfile(x,oldPf)))pf.value=profiles.find(x=>nextPlSameProfile(x,oldPf))||'';
-
-  const profileRows=rows.filter(r=>pf.value&&nextPlSameProfile(r.profile,pf.value));
+  const profileRows=rows.filter(r=>!pf.value||nextPlSameProfile(r.profile,pf.value));
   const lengths=[...new Set(profileRows.map(r=>cleanLen(r.length)).filter(Boolean))].sort((a,b)=>Number(a)-Number(b));
   ls.innerHTML='<option value="">Select Length</option>'+lengths.map(v=>`<option value="${nextPlEsc(v)}">${nextPlEsc(v)} mm</option>`).join('');
-  if(lengths.includes(oldL))ls.value=oldL;
+  if(lengths.includes(cleanLen(oldL)))ls.value=cleanLen(oldL);
 
-  const groups=nextPlQuickCandidateGroups(rows,pf.value,ls.value);
-  const validPoValues=groups.map(g=>String(g.po));
-  poSel.innerHTML='<option value="">Select PO Number</option>'+groups.map(g=>`<option value="${nextPlEsc(g.po)}">${nextPlEsc(g.po)}</option>`).join('');
-  if(validPoValues.includes(oldPo))poSel.value=oldPo;
-
-  if(!pf.value||!ls.value){
-    if(note)note.innerHTML='<i class="fa-solid fa-circle-info"></i> Select <b>Profile + Length</b> first. Only POs with shipment balance &gt; 0 will appear.';
-    if(balanceInfo)balanceInfo.innerHTML='<div class="next-pl-quick-empty"><i class="fa-solid fa-hand-pointer"></i> Select Profile + Length, then select a PO.</div>';
-  }else if(!groups.length){
-    if(note)note.innerHTML='<i class="fa-solid fa-circle-check"></i> No PO has a shipment balance for <b>'+nextPlEsc(pf.value)+' / '+nextPlEsc(ls.value)+' mm</b>. Zero-balance POs are hidden.';
-    if(balanceInfo)balanceInfo.innerHTML='<div class="next-pl-quick-empty no-balance"><i class="fa-solid fa-circle-check"></i> No shipment balance &gt; 0 for this Profile + Length.</div>';
-  }else{
-    if(note)note.innerHTML='<i class="fa-solid fa-circle-check"></i> Showing <b>'+groups.length+'</b> PO(s) with shipment balance &gt; 0 for <b>'+nextPlEsc(pf.value)+' / '+nextPlEsc(ls.value)+' mm</b>.';
-    nextPlRenderQuickPoInfo(groups);
+  // Manual builder shows ONLY PO lines that still have a shipment balance > 0.
+  const selectedRows=rows.filter(r=>pf.value&&ls.value&&nextPlSameProfile(r.profile,pf.value)&&cleanLen(r.length)===cleanLen(ls.value)&&nextPlNum(r.pendingQty)>0);
+  if(!selectedRows.length){
+    body.innerHTML='<tr><td colspan="8" class="next-pl-summary-empty">Select a Profile + Length. Only PO lines with shipment balance &gt; 0 will appear here.</td></tr>';
+    if(note)note.innerHTML='<i class="fa-solid fa-circle-info"></i> Select Profile + Length first. Zero shipment-balance POs are hidden automatically.';
+    return;
   }
-  nextPlRenderQuickSelectedSummary(rows,pf.value,ls.value);
-}
-function nextPlRenderQuickPoInfo(groups){
-  const poSel=document.getElementById('nextPlQuickPo'), info=document.getElementById('nextPlQuickBalanceInfo');
-  if(!poSel||!info)return;
-  const g=groups.find(x=>String(x.po)===String(poSel.value));
-  if(!g){info.innerHTML='<div class="next-pl-quick-empty"><i class="fa-solid fa-arrow-pointer"></i> Select a PO Number to see its shipment balance, weight and available stock.</div>';return;}
-  const planned=nextPlQuickSelectedForGroup(g);
-  const remaining=Math.max(0,g.balance-planned);
-  const unit=[...g.unitWeights];
-  const unitText=unit.length===1?`${unit[0].toFixed(4)} kg/pc`:'Multiple unit weights';
-  info.innerHTML=`<div class="next-pl-quick-metrics">
-    <div class="metric-balance"><span>Shipment Balance</span><b>${g.balance.toLocaleString()} Pcs</b><small>${g.weight.toFixed(2)} kg</small></div>
-    <div><span>Already in Next PL</span><b>${planned.toLocaleString()} Pcs</b><small>${(g.rows.reduce((s,r)=>s+Math.max(0,nextPlNum(nextPlSelection[r.rowKey]))*Math.max(0,nextPlNum(r.unitWeight)),0)).toFixed(2)} kg</small></div>
-    <div class="metric-good"><span>Remaining to Add</span><b>${remaining.toLocaleString()} Pcs</b><small>${unit.length===1?(remaining*unit[0]).toFixed(2):'—'} kg</small></div>
-    <div><span>Item Code</span><b class="metric-small-text">${[...g.itemCodes].map(nextPlEsc).join(', ')}</b><small>${unitText} • Ready ${g.ready.toLocaleString()} Pcs</small></div>
-  </div>`;
-  const q=document.getElementById('nextPlQuickQty');
-  if(q){q.max=String(remaining); if(nextPlNum(q.value)>remaining)q.value=remaining;}
-  nextPlQuickPreview();
-}
-function nextPlQuickPoChanged(){
-  const rows=nextPlGetRows(), pf=document.getElementById('nextPlQuickProfile')?.value||'', ls=document.getElementById('nextPlQuickLength')?.value||'';
-  const groups=nextPlQuickCandidateGroups(rows,pf,ls); nextPlRenderQuickPoInfo(groups); nextPlRenderQuickSelectedSummary(rows,pf,ls);
-}
-function nextPlQuickPreview(){
-  const qtyEl=document.getElementById('nextPlQuickQty'), preview=document.getElementById('nextPlQuickPreviewWeight'), entryWeight=document.getElementById('nextPlQuickEntryWeight');
-  if(!qtyEl)return;
-  const qty=Math.max(0,Math.floor(nextPlNum(qtyEl.value)));
-  const pf=document.getElementById('nextPlQuickProfile')?.value||'', ls=document.getElementById('nextPlQuickLength')?.value||'', po=document.getElementById('nextPlQuickPo')?.value||'';
-  const g=nextPlQuickCandidateGroups(nextPlGetRows(),pf,ls).find(x=>String(x.po)===String(po));
-  if(!g){if(entryWeight)entryWeight.textContent='0.00 kg';return;}
-  const planned=nextPlQuickSelectedForGroup(g), max=Math.max(0,g.balance-planned), send=Math.min(qty,max);
-  const wt=g.rows.reduce((s,r)=>{
-    const cap=Math.max(0,nextPlNum(r.pendingQty)-nextPlNum(nextPlSelection[r.rowKey]));
-    const add=Math.min(Math.max(0,send-(s.pcs||0)),cap);
-    return {weight:(s.weight||0)+add*Math.max(0,nextPlNum(r.unitWeight)),pcs:(s.pcs||0)+add};
-  },{weight:0,pcs:0});
-  if(preview)preview.textContent=`${wt.weight.toFixed(2)} kg`; if(entryWeight)entryWeight.textContent=`${wt.weight.toFixed(2)} kg`;
-  const box=document.getElementById('nextPlQuickBalanceInfo');
-  const inputHint=document.getElementById('nextPlQuickQtyHint');
-  if(inputHint)inputHint.textContent=`Auto weight: ${wt.weight.toFixed(2)} kg`;
-}
-function nextPlQuickAdd(){
-  const rows=nextPlGetRows(), pf=document.getElementById('nextPlQuickProfile')?.value||'', ls=document.getElementById('nextPlQuickLength')?.value||'', po=document.getElementById('nextPlQuickPo')?.value||'';
-  const qtyEl=document.getElementById('nextPlQuickQty'); let qty=Math.floor(nextPlNum(qtyEl?.value));
-  if(!pf||!ls||!po)return showToast('Select Profile, Length and PO Number first.','warning');
-  const g=nextPlQuickCandidateGroups(rows,pf,ls).find(x=>String(x.po)===String(po));
-  if(!g)return showToast('Selected PO has no shipment balance for this Profile + Length.','warning');
-  const already=nextPlQuickSelectedForGroup(g), max=Math.max(0,g.balance-already);
-  if(qty<=0)return showToast('Enter a valid Pcs quantity.','warning');
-  if(qty>max){qty=max;showToast(`Only ${max.toLocaleString()} Pcs can be added for this PO after existing Next PL selection.`,'warning');}
-  if(qty<=0)return;
-  let remaining=qty, addedWeight=0;
-  [...g.rows].sort((a,b)=>String(a.rowKey).localeCompare(String(b.rowKey))).forEach(r=>{
-    if(remaining<=0)return;
-    const current=Math.max(0,nextPlNum(nextPlSelection[r.rowKey]));
-    const cap=Math.max(0,nextPlNum(r.pendingQty)-current);
-    const add=Math.min(remaining,cap);
-    if(add>0){nextPlExcluded[r.rowKey]=false;nextPlManualOverride[r.rowKey]=true;nextPlSelection[r.rowKey]=current+add;addedWeight+=add*Math.max(0,nextPlNum(r.unitWeight));remaining-=add;}
+  const groups=new Map();
+  selectedRows.forEach(r=>{
+    const key=String(r.poNumber);
+    const g=groups.get(key)||{po:r.poNumber,rows:[],balancePcs:0,balanceWeight:0,ready:0,itemCodes:new Set(),unitWeights:new Set()};
+    g.rows.push(r); g.balancePcs+=Math.max(0,r.pendingQty); g.balanceWeight+=Math.max(0,r.pendingQty)*Math.max(0,r.unitWeight);
+    g.ready+=Math.min(Math.max(0,r.availableForPo),Math.max(0,r.pendingQty));
+    if(r.itemCode)g.itemCodes.add(r.itemCode); if(r.unitWeight>0)g.unitWeights.add(Number(r.unitWeight)); groups.set(key,g);
   });
-  if(qtyEl)qtyEl.value='';
-  showToast(`${qty.toLocaleString()} Pcs added to Next PL (${addedWeight.toFixed(2)} kg).`,'success');
-  renderNextPlPlanning();
+  const gs=[...groups.values()].sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true,sensitivity:'base'}));
+  body.innerHTML=gs.map((g,i)=>{
+    const uid=nextPlEsc(g.po).replace(/[^a-zA-Z0-9_-]/g,'_');
+    const selectedExisting=g.rows.reduce((sum,r)=>sum+nextPlNum(nextPlSelection[r.rowKey]),0);
+    return `<tr>
+      <td><span class="next-pl-po-rank">${i+1}</span></td>
+      <td><b>${nextPlEsc(g.po)}</b></td>
+      <td>${[...g.itemCodes].map(nextPlEsc).join(', ')||'-'}</td>
+      <td><b class="next-pl-balance-pcs">${g.balancePcs.toLocaleString()}</b><small class="next-pl-subline">${selectedExisting.toLocaleString()} already selected</small></td>
+      <td><b class="next-pl-balance-weight">${g.balanceWeight.toFixed(2)} kg</b><small class="next-pl-subline">PO balance weight</small></td>
+      <td><b class="next-pl-ready">${g.ready.toLocaleString()}</b></td>
+      <td><input class="next-pl-quick-qty" id="nextPlQuickQty_${uid}" type="number" min="0" max="${g.balancePcs}" step="1" placeholder="Pcs" value="" oninput="nextPlQuickPreview(this, ${JSON.stringify(g.po)}, ${JSON.stringify(g.rows.map(r=>({rowKey:r.rowKey,pendingQty:r.pendingQty,unitWeight:r.unitWeight})))})"></td>
+      <td><span class="next-pl-quick-weight" data-po="${nextPlEsc(g.po)}">0.00 kg</span><button type="button" class="btn btn-accent next-pl-quick-add" onclick="nextPlQuickAdd(${JSON.stringify(g.po)}, ${JSON.stringify(g.rows.map(r=>({rowKey:r.rowKey,pendingQty:r.pendingQty,unitWeight:r.unitWeight})))}, this)"><i class="fa-solid fa-plus"></i> Add</button></td>
+    </tr>`;
+  }).join('');
+  if(note)note.innerHTML='<i class="fa-solid fa-circle-check"></i> <b>'+nextPlEsc(pf.value)+' / '+nextPlEsc(ls.value)+' mm</b> selected. Only POs with shipment balance &gt; 0 are shown. Enter Send Pcs; weight is calculated automatically.';
 }
-function nextPlRenderQuickSelectedSummary(rows,profile,length){
-  const box=document.getElementById('nextPlQuickSelectedSummary'); if(!box)return;
-  if(!profile||!length){box.innerHTML='<div class="next-pl-quick-selected-empty"><i class="fa-solid fa-list"></i> Select Profile + Length to see selected items.</div>';return;}
-  const selected=rows.filter(r=>nextPlSameProfile(r.profile,profile)&&cleanLen(r.length)===cleanLen(length)&&nextPlNum(nextPlSelection[r.rowKey])>0);
-  if(!selected.length){box.innerHTML='<div class="next-pl-quick-selected-empty"><i class="fa-solid fa-cart-shopping"></i> No items added yet.</div>';return;}
-  const selectedWeight=selected.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*Math.max(0,nextPlNum(r.unitWeight)),0);
-  const currentWeight=nextPlGetCurrentSummary().weight;
-  const totalWeight=currentWeight+selectedWeight;
-  const targetMessage=totalWeight>17000
-    ? `<div class="next-pl-quick-warning"><i class="fa-solid fa-triangle-exclamation"></i><div><b>WARNING — Next PL exceeds 17 tons.</b><br>Total after Add: <strong>${totalWeight.toFixed(2)} kg</strong>. Reduce the selected Pcs before finalizing.</div></div>`
-    : `<div class="next-pl-quick-ok"><i class="fa-solid fa-circle-check"></i> Selected: <b>${selectedWeight.toFixed(2)} kg</b> • Total with current PL: <b>${totalWeight.toFixed(2)} kg</b></div>`;
-  box.innerHTML=`<div class="next-pl-quick-selected-table-wrap"><table class="next-pl-quick-selected-table"><thead><tr><th>PO</th><th>Item Code</th><th>Profile</th><th>Length</th><th>Pcs</th><th>Weight</th></tr></thead><tbody>${selected.map(r=>{const q=nextPlNum(nextPlSelection[r.rowKey]);return `<tr><td><b>${nextPlEsc(r.poNumber)}</b></td><td>${nextPlEsc(r.itemCode||'-')}</td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.length)} mm</td><td><b>${q.toLocaleString()}</b></td><td class="next-pl-weight"><b>${(q*r.unitWeight).toFixed(2)} kg</b></td></tr>`}).join('')}</tbody></table></div>${targetMessage}`;
+function nextPlQuickPreview(input,po,parts){
+  let qty=Math.max(0,Math.floor(nextPlNum(input.value))), remaining=qty, weight=0;
+  [...parts].sort((a,b)=>String(a.rowKey).localeCompare(String(b.rowKey))).forEach(p=>{
+    if(remaining<=0)return;
+    const add=Math.min(remaining,Math.max(0,nextPlNum(p.pendingQty)));
+    if(add>0){weight+=add*Math.max(0,nextPlNum(p.unitWeight));remaining-=add;}
+  });
+  const cell=input.closest('tr')?.querySelector('.next-pl-quick-weight'); if(cell)cell.textContent=`${weight.toFixed(2)} kg`;
+}
+function nextPlQuickAdd(po,parts,button){
+  const input=button?.closest('tr')?.querySelector('.next-pl-quick-qty');
+  if(!input)return;
+  let qty=Math.floor(nextPlNum(input.value));
+  if(qty<=0)return showToast('Enter a valid Send Pcs quantity.','warning');
+  const maxTotal=parts.reduce((s,p)=>s+Math.max(0,nextPlNum(p.pendingQty)),0);
+  if(qty>maxTotal){qty=maxTotal;input.value=qty;showToast(`Only ${maxTotal.toLocaleString()} Pcs remain on this PO for the selected Profile + Length.`,'warning');}
+  let remaining=qty,addedWeight=0;
+  const ordered=[...parts].sort((a,b)=>String(a.rowKey).localeCompare(String(b.rowKey)));
+  ordered.forEach(p=>{
+    if(remaining<=0)return;
+    const rowCap=Math.max(0,nextPlNum(p.pendingQty));
+    const add=Math.min(remaining,rowCap);
+    if(add>0){nextPlExcluded[p.rowKey]=false;nextPlManualOverride[p.rowKey]=true;nextPlSelection[p.rowKey]=Math.max(0,nextPlNum(nextPlSelection[p.rowKey]))+add;addedWeight+=add*Math.max(0,nextPlNum(p.unitWeight));remaining-=add;}
+  });
+  renderNextPlPlanning();
+  showToast(`${addedWeight.toFixed(2)} kg added to Next PL plan from PO ${po}.`,'success');
 }
 function nextPlManualProfileChanged(){
   const rows=nextPlGetRows(); nextPlRenderManualControls(rows);
@@ -1587,7 +1533,7 @@ function nextPlShipmentBalanceFor(poNumber,profile){
   const currentPL=rows.reduce((s,r)=>s+r.currentPlQty,0);
   const remaining=Math.max(0,order-shipped);
   const afterPL=Math.max(0,remaining-currentPL);
-  const wtAfterPL=rows.reduce((s,r)=>s+Math.max(0,afterPL)*r.unitWeight,0);
+  const wtAfterPL=rows.reduce((s,r)=>s+Math.max(0,r.pendingQty)*Math.max(0,r.unitWeight),0);
   const lengths=[...new Set(rows.map(r=>String(r.length)).filter(Boolean))];
   return {order,shipped,remaining,currentPL,afterPL,wtAfterPL,lengths};
 }
@@ -1622,11 +1568,41 @@ function nextPlRenderProfileSummary(rows){
     const q=nextPlNum(nextPlSelection[r.rowKey]), wt=q*r.unitWeight;
     const pk=nextPlProfileKey(r.profile), p=pg.get(pk)||{profile:r.profile,pcs:0,weight:0,po:new Set(),stock:0,cut:0,pending:0};
     p.pcs+=q;p.weight+=wt;p.po.add(r.poNumber);p.stock+=Math.min(r.availableForPo,q);p.cut+=Math.max(0,q-Math.min(r.availableForPo,q));p.pending+=r.pendingQty;pg.set(pk,p);
-    const ok=r.poNumber+'|'+pk, g=pog.get(ok)||{po:r.poNumber,profile:r.profile,pcs:0,weight:0,pending:0}; g.pcs+=q;g.weight+=wt;g.pending+=r.pendingQty;pog.set(ok,g);
+    const ok=r.poNumber+'|'+pk, g=pog.get(ok)||{po:r.poNumber,profile:r.profile,pcs:0,weight:0,pending:0,pendingWeight:0}; g.pcs+=q;g.weight+=wt;g.pending+=Math.max(0,r.pendingQty-q);g.pendingWeight+=Math.max(0,r.pendingQty-q)*Math.max(0,r.unitWeight);pog.set(ok,g);
   });
   const ps=[...pg.values()].sort((a,b)=>b.weight-a.weight); const pos=[...pog.values()].sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true})||String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true}));
   box.innerHTML=ps.length?ps.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.profile)}</b></td><td>${[...g.po].map(nextPlEsc).join(', ')}</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight">${g.weight.toFixed(2)} kg</td><td>${g.stock.toLocaleString()}</td><td>${g.cut.toLocaleString()}</td></tr>`).join(''):`<tr><td colspan="7" class="next-pl-summary-empty">Auto Build or manually select Pcs to see the expected Next PL profile totals.</td></tr>`;
   poBox.innerHTML=pos.length?pos.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.po)}</b></td><td>${nextPlEsc(g.profile)}</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight">${g.weight.toFixed(2)} kg</td><td>${g.pending.toLocaleString()}</td></tr>`).join(''):`<tr><td colspan="6" class="next-pl-summary-empty">No PO-wise Next PL selections yet.</td></tr>`;
+}
+function nextPlRenderPoWeightChart(rows){
+  const canvas=document.getElementById('nextPlPoWeightChart');
+  if(!canvas || typeof Chart==='undefined')return;
+  const wrap=canvas.parentElement;
+  if(wrap){const empty=wrap.querySelector('.next-pl-chart-empty');if(empty)empty.remove();canvas.style.display='block';}
+  try{if(nextPlPoWeightChartInstance)nextPlPoWeightChartInstance.destroy();}catch(e){}
+  const groups=new Map();
+  (rows||[]).forEach(r=>{
+    const pending=Math.max(0,nextPlNum(r.pendingQty))*Math.max(0,nextPlNum(r.unitWeight));
+    const selected=Math.min(Math.max(0,nextPlNum(nextPlSelection[r.rowKey])),Math.max(0,nextPlNum(r.pendingQty)))*Math.max(0,nextPlNum(r.unitWeight));
+    const key=String(r.poNumber);
+    const g=groups.get(key)||{po:r.poNumber,next:0,pending:0};
+    g.next+=selected; g.pending+=Math.max(0,pending-selected); groups.set(key,g);
+  });
+  const data=[...groups.values()].filter(g=>g.next>0||g.pending>0).sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true,sensitivity:'base'}));
+  if(!data.length){
+    canvas.style.display='none';
+    const parent=canvas.parentElement;
+    if(parent)parent.insertAdjacentHTML('beforeend','<div class="next-pl-chart-empty"><i class="fa-solid fa-chart-column"></i><b>No PO planning data yet</b><span>Use Auto Build or manually Add Pcs from the Profile + Length section.</span></div>');
+    return;
+  }
+  nextPlPoWeightChartInstance=new Chart(canvas.getContext('2d'),{
+    type:'bar',
+    data:{labels:data.map(g=>String(g.po)),datasets:[
+      {label:'Next PL Weight',data:data.map(g=>Number(g.next.toFixed(2))),backgroundColor:'#0f766e',borderRadius:6},
+      {label:'Pending After Next PL',data:data.map(g=>Number(g.pending.toFixed(2))),backgroundColor:'#e11d48',borderRadius:6}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'top',labels:{font:{weight:'700'}}},tooltip:{callbacks:{label:(ctx)=>`${ctx.dataset.label}: ${Number(ctx.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`}}},scales:{x:{stacked:false,ticks:{autoSkip:false,maxRotation:45,minRotation:0}},y:{beginAtZero:true,title:{display:true,text:'Weight (kg)'}}}}
+  });
 }
 function renderNextPlPlanning(){
   const body=document.getElementById('nextPlPlanningBody'); if(!body)return;
@@ -1644,43 +1620,61 @@ function renderNextPlPlanning(){
     if(!uniqueStockKeys.has(r.key)){availableWeight+=r.stockTotal*r.unitWeight;uniqueStockKeys.add(r.key);}
   });
   const remainingMin=Math.max(0,summary.targetMin-currentPlWeight), remainingMax=Math.max(0,summary.targetMax-currentPlWeight);
-  if(!rows.length)body.innerHTML='<tr><td colspan="14" style="padding:28px;text-align:center;color:#64748b;font-weight:800;">No pending PO lines with matching Master Catalog data.</td></tr>';
+  if(!rows.length)body.innerHTML='<tr><td colspan="18" style="padding:28px;text-align:center;color:#64748b;font-weight:800;">No pending PO lines with matching Master Catalog data.</td></tr>';
   else body.innerHTML=rows.map((r,i)=>`<tr class="${r.excluded?'next-pl-excluded':''}">
-    <td><span class="next-pl-priority-badge ${i<3?'top':''}">${i+1}</span></td>
-    <td class="next-pl-ident"><b>${nextPlEsc(r.poNumber)}</b><small>${nextPlEsc(r.date||'-')}</small></td>
-    <td class="next-pl-ident"><b>${nextPlEsc(r.profile)}</b><small>${nextPlEsc(r.itemCode||'-')}</small></td>
-    <td><b>${nextPlEsc(r.length)}</b> mm</td>
-    <td><b>${r.unitWeight.toFixed(4)}</b><small>kg/pc</small></td>
-    <td class="next-pl-cell-pending"><b>${r.pendingQty.toLocaleString()}</b><small>${r.remainingPoWeight.toFixed(2)} kg</small></td>
-    <td class="next-pl-cell-current"><b>${r.currentPlQty.toLocaleString()}</b><small>${r.currentPlWeight.toFixed(2)} kg</small></td>
-    <td class="next-pl-cell-stock"><b>${r.stockTotal.toLocaleString()}</b><small>pcs total</small></td>
-    <td class="next-pl-cell-ready"><b>${r.stockReady.toLocaleString()}</b><small>Ready / ${r.stockWip.toLocaleString()} WIP</small></td>
-    <td class="next-pl-cell-available"><b>${r.availableForPo.toLocaleString()}</b><small>pcs available</small></td>
-    <td class="next-pl-cell-cut"><b>${r.needCutQty.toLocaleString()}</b><small>${r.needCutWeight.toFixed(2)} kg</small></td>
-    <td><input class="next-pl-select-input ${nextPlManualOverride[r.rowKey]?'manual':''}" type="number" min="0" max="${Math.floor(nextPlManualOverride[r.rowKey]?r.pendingQty:r.availableForPo)}" step="1" value="${Math.floor(r.selectedQty)}" ${r.excluded?'disabled':''} onchange="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)" oninput="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)"></td>
-    <td class="next-pl-cell-weight"><b>${(r.selectedQty*r.unitWeight).toFixed(2)} kg</b></td>
-    <td><label class="next-pl-skip"><input type="checkbox" ${r.excluded?'checked':''} onchange="nextPlToggleExclude('${nextPlEsc(r.rowKey)}',this.checked)"> Skip</label>${nextPlManualOverride[r.rowKey]?'<div class="next-pl-manual-badge">Manual</div>':''}</td>
+    <td><span style="display:inline-block;min-width:25px;padding:3px 6px;border-radius:999px;background:${i<3?'#dcfce7':'#f1f5f9'};color:${i<3?'#047857':'#475569'};font-weight:900;">${i+1}</span></td>
+    <td>${nextPlEsc(r.date||'-')}</td><td><b>${nextPlEsc(r.poNumber)}</b></td><td><b>${nextPlEsc(r.profile)}</b></td><td>${nextPlEsc(r.itemCode||'-')}</td><td>${nextPlEsc(r.length)} mm</td>
+    <td>${r.unitWeight.toFixed(4)} kg</td><td class="next-pl-pending">${r.pendingQty.toLocaleString()} <small style="display:block;color:#be123c;font-weight:800;">${r.remainingPoWeight.toFixed(2)} kg</small></td><td>${r.currentPlQty.toLocaleString()} <small style="display:block;color:#047857;font-weight:800;">${r.currentPlWeight.toFixed(2)} kg</small></td><td>${r.stockTotal.toLocaleString()}</td><td>${r.stockReady.toLocaleString()}</td><td>${r.stockWip.toLocaleString()}</td><td class="next-pl-available">${r.availableForPo.toLocaleString()}</td><td>${r.needCutQty.toLocaleString()}</td><td>${r.needCutWeight.toFixed(2)} kg</td><td><input class="next-pl-select-input ${nextPlManualOverride[r.rowKey]?'manual':''}" type="number" min="0" max="${Math.floor(nextPlManualOverride[r.rowKey]?r.pendingQty:r.availableForPo)}" step="1" value="${Math.floor(r.selectedQty)}" ${r.excluded?'disabled':''} onchange="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)" oninput="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)"></td><td class="next-pl-weight">${(r.selectedQty*r.unitWeight).toFixed(2)} kg</td><td><label class="next-pl-skip"><input type="checkbox" ${r.excluded?'checked':''} onchange="nextPlToggleExclude('${nextPlEsc(r.rowKey)}',this.checked)"> Skip</label>${nextPlManualOverride[r.rowKey]?'<div class="next-pl-manual-badge">Manual</div>':''}</td>
   </tr>`).join('');
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
   set('nextPlCurrentPLWeight',`${currentPlWeight.toFixed(2)} kg`); set('nextPlCurrentPLPcs',`${summary.pcs.toLocaleString()} Pcs`); set('nextPlRemainingMin',`${remainingMin.toFixed(2)} kg`); set('nextPlRemainingMax',`${remainingMax.toFixed(2)} kg`);
   set('nextPlSelectedWeight',`${selectedWeight.toFixed(2)} kg`); set('nextPlSelectedPcs',selectedPcs.toLocaleString()); set('nextPlSelectedLines',`${selectedLines} selected lines`); set('nextPlAvailableWeight',`${availableWeight.toFixed(2)} kg`); set('nextPlToMin',`${Math.max(0,remainingMin-selectedWeight).toFixed(2)} kg`); set('nextPlToMax',`${Math.max(0,remainingMax-selectedWeight).toFixed(2)} kg`); set('nextPlNeedCutWeight',`${cutWeight.toFixed(2)} kg`);
   nextPlRenderProfileSummary(all);
+  nextPlRenderPoWeightChart(all);
   const totalPlPlusSelection=currentPlWeight+selectedWeight;
+  const targetTotal=summary.targetTotal;
   const status=document.getElementById('nextPlTargetStatus'), alert=document.getElementById('nextPlAlert');
-  if(status){status.textContent=totalPlPlusSelection>=summary.targetMin&&totalPlPlusSelection<=summary.targetMax?'TARGET READY':totalPlPlusSelection>summary.targetMax?'OVER MAXIMUM':`Need ${(summary.targetMin-totalPlPlusSelection).toFixed(2)} kg more`;status.style.color=totalPlPlusSelection>=summary.targetMin&&totalPlPlusSelection<=summary.targetMax?'#047857':totalPlPlusSelection>summary.targetMax?'#be123c':'#b45309';}
+  if(status){
+    const delta=targetTotal-totalPlPlusSelection;
+    status.textContent=Math.abs(delta)<0.01?'TARGET READY':delta<0?'OVER TARGET':`Need ${delta.toFixed(2)} kg more`;
+    status.style.color=Math.abs(delta)<0.01?'#047857':delta<0?'#be123c':'#b45309';
+  }
   if(alert){
     const active=`${summary.container||'Current PL'} • ${currentPlWeight.toFixed(2)} kg already planned`;
-    if(totalPlPlusSelection>17000)alert.innerHTML=`<div style="background:#fff1f2;border:1px solid #fda4af;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> <b>WARNING — Next PL is over 17 tons:</b> ${selectedWeight.toFixed(2)} kg (${(selectedWeight/1000).toFixed(2)} T). Please reduce the planned Pcs before finalizing the Packing List.</div>`; else if(totalPlPlusSelection>=summary.targetMin&&totalPlPlusSelection<=summary.targetMax)alert.innerHTML=`<div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;"><i class="fa-solid fa-circle-check"></i> <b>Next PL target ready:</b> ${totalPlPlusSelection.toFixed(2)} kg total (${currentPlWeight.toFixed(2)} kg existing + ${selectedWeight.toFixed(2)} kg new).</div>`;
+    if(totalPlPlusSelection>17000 || targetTotal>17000)alert.innerHTML=`<div style="background:#fff1f2;border:1px solid #fda4af;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> <b>WARNING — Next PL is over 17 tons:</b> ${totalPlPlusSelection.toFixed(2)} kg total (${(totalPlPlusSelection/1000).toFixed(2)} T). Please reduce the planned Pcs or target weight before finalizing the Packing List.</div>`;
+    else if(Math.abs(totalPlPlusSelection-targetTotal)<0.01)alert.innerHTML=`<div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;"><i class="fa-solid fa-circle-check"></i> <b>Next PL target ready:</b> ${totalPlPlusSelection.toFixed(2)} kg total (${currentPlWeight.toFixed(2)} kg existing + ${selectedWeight.toFixed(2)} kg new).</div>`;
     else if(totalPlPlusSelection>summary.targetMax)alert.innerHTML=`<div style="background:#fff1f2;border:1px solid #fecdd3;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> <b>Over maximum:</b> reduce ${(totalPlPlusSelection-summary.targetMax).toFixed(2)} kg. ${active}.</div>`;
-    else alert.innerHTML=`<div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;"><i class="fa-solid fa-circle-info"></i> <b>${active}.</b> Select another ${Math.max(0,summary.targetMin-totalPlPlusSelection).toFixed(2)} kg to reach ${summary.targetMin.toLocaleString()} kg.</div>`;
+    else alert.innerHTML=`<div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;"><i class="fa-solid fa-circle-info"></i> <b>${active}.</b> Select another ${Math.max(0,targetTotal-totalPlPlusSelection).toFixed(2)} kg to reach the manual target of ${targetTotal.toLocaleString()} kg.</div>`;
   }
 }
 function nextPlAutoBuild(){
-  const summary=nextPlGetCurrentSummary(); const rows=nextPlFilteredRows().filter(r=>!r.excluded);
-  nextPlSelection={}; nextPlManualOverride={}; let total=0; const minNew=summary.remainingMin, maxNew=summary.remainingMax;
-  for(const r of rows){if(total>=minNew)break;if(r.availableForPo<=0||r.unitWeight<=0)continue;const room=maxNew-total;let qty=Math.min(r.availableForPo,Math.floor(room/r.unitWeight));if(qty<=0)continue;nextPlSelection[r.rowKey]=qty;total+=qty*r.unitWeight;}
-  if(total<minNew){for(const r of rows){if(total>=minNew)break;const used=nextPlNum(nextPlSelection[r.rowKey]);const extra=Math.min(Math.max(0,r.availableForPo-used),Math.floor((maxNew-total)/Math.max(r.unitWeight,0.000001)));if(extra>0){nextPlSelection[r.rowKey]=used+extra;total+=extra*r.unitWeight;}}}
-  renderNextPlPlanning(); const grand=summary.weight+total; showToast(grand>=summary.targetMin&&grand<=summary.targetMax?`Auto plan ready: ${grand.toFixed(2)} kg total.`:`Auto plan reached ${grand.toFixed(2)} kg total; manually adjust to target.`,grand>=summary.targetMin&&grand<=summary.targetMax?'success':'warning');
+  const summary=nextPlGetCurrentSummary();
+  // Auto Build always uses the current PO/Profile filters and the suggested stock-backed
+  // candidates, regardless of which table View mode is currently selected.
+  let rows=nextPlGetRows().filter(r=>!r.excluded && r.pendingQty>0 && r.availableForPo>0);
+  const poFilter=document.getElementById('nextPlPoFilter')?.value||'';
+  const profileFilter=document.getElementById('nextPlProfileFilter')?.value||'';
+  rows=rows.filter(r=>(!poFilter||r.poNumber===poFilter)&&(!profileFilter||nextPlSameProfile(r.profile,profileFilter)));
+  const priority=document.getElementById('nextPlPriority')?.value||'oldest';
+  rows.sort((a,b)=>{const da=new Date(a.date||0).getTime(),db=new Date(b.date||0).getTime();const d=priority==='newest'?db-da:da-db;return d||(priority==='newest'?String(b.poNumber).localeCompare(String(a.poNumber),undefined,{numeric:true}):String(a.poNumber).localeCompare(String(b.poNumber),undefined,{numeric:true}));});
+  nextPlSelection={}; nextPlManualOverride={};
+  const targetTotal=Math.max(0,nextPlNum(summary.targetTotal));
+  const targetNew=Math.max(0,targetTotal-summary.weight);
+  let total=0;
+  if(targetTotal>17000)showToast(`Target is ${(targetTotal/1000).toFixed(2)}T, which is above the 17T limit. Warning will remain visible.`,'warning');
+  for(const r of rows){
+    if(total>=targetNew)break;
+    if(r.availableForPo<=0||r.unitWeight<=0)continue;
+    const room=targetNew-total;
+    const qty=Math.min(r.availableForPo,Math.floor(room/r.unitWeight));
+    if(qty<=0)continue;
+    nextPlSelection[r.rowKey]=qty;
+    total+=qty*r.unitWeight;
+  }
+  renderNextPlPlanning();
+  const grand=summary.weight+total;
+  const diff=targetTotal-grand;
+  showToast(Math.abs(diff)<0.01?`Auto plan matched ${grand.toFixed(2)} kg target.`:`Auto plan built ${grand.toFixed(2)} kg; ${Math.abs(diff).toFixed(2)} kg ${diff>0?'still needed':'over target'}.`,Math.abs(diff)<0.01?'success':'warning');
 }
 function nextPlClearSelection(){nextPlSelection={};nextPlExcluded={};renderNextPlPlanning();showToast('Temporary planning selection cleared.','success');}
 function nextPlExportExcel(){
