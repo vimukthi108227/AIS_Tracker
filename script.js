@@ -3234,6 +3234,16 @@ window.downloadProductionOrderTemplate = function () {
   XLSX.writeFile(wb, 'AIS_Production_Order_Upload_Template.xlsx');
 };
 
+window.downloadProductionOrderSample = function () {
+  const file = 'AIS_Production_Order_Exact_Sample_364523.xlsx';
+  const a = document.createElement('a');
+  a.href = file;
+  a.download = file;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+};
+
 window.processExcelUpload = async function () {
   if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') {
     return showToast('Only Admin / Planner can upload Production Orders.', 'warning');
@@ -3255,10 +3265,10 @@ window.processExcelUpload = async function () {
     if (!workbook.SheetNames?.length) throw new Error('No worksheet found in the selected file.');
 
     const aliases = {
-      po: ['PO Number', 'PO #', 'PO No', 'PO', 'Purchase Order', 'Order No', 'Order Number'],
+      po: ['PO Number', 'PO number', 'PO #', 'PO No', 'PO', 'Purchase Order', 'Order No', 'Order Number'],
       profile: ['Profile', 'Profile #', 'Profile No', 'Profile Number', 'Profile Code'],
       item: ['Item Code', 'Item code', 'Item', 'Code', 'Part No', 'Part Number'],
-      qty: ['Quantity (Pcs.)', 'Quantity Pcs', 'Quantity', 'Qty', 'Order Qty', 'Required Qty', 'Pcs', 'Pcs Qty', 'Total Qty']
+      qty: ['Quantity (Pcs.)', 'Quantity Pcs', 'Quantity', 'Qty', 'qty', 'Order Qty', 'Required Qty', 'Pcs', 'Pcs Qty', 'Total Qty']
     };
 
     let parsedRows = null;
