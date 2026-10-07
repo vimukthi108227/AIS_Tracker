@@ -1452,43 +1452,51 @@ function nextPlRenderQuickManual(rows){
   ls.innerHTML='<option value="">Select Length</option>'+lengths.map(v=>`<option value="${nextPlEsc(v)}">${nextPlEsc(v)} mm</option>`).join('');
   if(lengths.includes(cleanLen(oldL)))ls.value=cleanLen(oldL);
 
-  // Manual builder shows ONLY PO lines that still have a shipment balance > 0.
+  // Show only PO/profile/length lines with a real shipment balance remaining.
   const selectedRows=rows.filter(r=>pf.value&&ls.value&&nextPlSameProfile(r.profile,pf.value)&&cleanLen(r.length)===cleanLen(ls.value)&&nextPlNum(r.pendingQty)>0);
   if(!selectedRows.length){
-    body.innerHTML='<tr><td colspan="8" class="next-pl-summary-empty">Select a Profile + Length. Only PO lines with shipment balance &gt; 0 will appear here.</td></tr>';
-    const emptyFoot=document.getElementById('nextPlQuickPoFoot'); if(emptyFoot) emptyFoot.innerHTML='<tr class="next-pl-total-row"><td colspan="3">TOTAL</td><td>0 Pcs</td><td>0.00 kg</td><td>0 Pcs</td><td>0 Pcs</td><td>0.00 kg</td></tr>';
+    body.innerHTML='<tr><td colspan="10" class="next-pl-summary-empty">Select a Profile + Length. Only PO lines with shipment balance &gt; 0 will appear here.</td></tr>';
+    const emptyFoot=document.getElementById('nextPlQuickPoFoot'); if(emptyFoot) emptyFoot.innerHTML='<tr class="next-pl-total-row"><td colspan="3">TOTAL — SELECTED PROFILE / LENGTH</td><td>0 Pcs</td><td>0.00 kg</td><td>0 Pcs</td><td>0 Pcs</td><td>0.00 kg</td><td>0 Pcs</td><td>0.00 kg</td></tr>';
     if(note)note.innerHTML='<i class="fa-solid fa-circle-info"></i> Select Profile + Length first. Zero shipment-balance POs are hidden automatically.';
     return;
   }
   const groups=new Map();
   selectedRows.forEach(r=>{
     const key=String(r.poNumber);
-    const g=groups.get(key)||{po:r.poNumber,rows:[],balancePcs:0,balanceWeight:0,ready:0,itemCodes:new Set(),unitWeights:new Set()};
-    g.rows.push(r); g.balancePcs+=Math.max(0,r.pendingQty); g.balanceWeight+=Math.max(0,r.pendingQty)*Math.max(0,r.unitWeight);
+    const g=groups.get(key)||{po:r.poNumber,rows:[],balancePcs:0,balanceWeight:0,ready:0,itemCodes:new Set(),selectedPcs:0,selectedWeight:0};
+    g.rows.push(r);
+    g.balancePcs+=Math.max(0,r.pendingQty);
+    g.balanceWeight+=Math.max(0,r.pendingQty)*Math.max(0,r.unitWeight);
     g.ready+=Math.min(Math.max(0,r.availableForPo),Math.max(0,r.pendingQty));
-    if(r.itemCode)g.itemCodes.add(r.itemCode); if(r.unitWeight>0)g.unitWeights.add(Number(r.unitWeight)); groups.set(key,g);
+    const q=Math.max(0,nextPlNum(nextPlSelection[r.rowKey]));
+    g.selectedPcs+=q;
+    g.selectedWeight+=q*Math.max(0,r.unitWeight);
+    if(r.itemCode)g.itemCodes.add(r.itemCode);
+    groups.set(key,g);
   });
   const gs=[...groups.values()].sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true,sensitivity:'base'}));
   body.innerHTML=gs.map((g,i)=>{
     const uid=nextPlEsc(g.po).replace(/[^a-zA-Z0-9_-]/g,'_');
-    const selectedExisting=g.rows.reduce((sum,r)=>sum+nextPlNum(nextPlSelection[r.rowKey]),0);
-    return `<tr>
+    const remainingPcs=Math.max(0,g.balancePcs-g.selectedPcs);
+    const remainingWeight=Math.max(0,g.balanceWeight-g.selectedWeight);
+    const hasSelected=g.selectedPcs>0;
+    return `<tr class="${hasSelected?'next-pl-quick-selected-row':''}">
       <td><span class="next-pl-po-rank">${i+1}</span></td>
       <td><b>${nextPlEsc(g.po)}</b></td>
       <td>${[...g.itemCodes].map(nextPlEsc).join(', ')||'-'}</td>
-      <td><b class="next-pl-balance-pcs">${g.balancePcs.toLocaleString()}</b><small class="next-pl-subline">${selectedExisting.toLocaleString()} already selected</small></td>
+      <td><b class="next-pl-balance-pcs">${g.balancePcs.toLocaleString()}</b><small class="next-pl-subline">shipment balance</small></td>
       <td><b class="next-pl-balance-weight">${g.balanceWeight.toFixed(2)} kg</b><small class="next-pl-subline">PO balance weight</small></td>
-      <td><b class="next-pl-ready">${g.ready.toLocaleString()}</b></td>
-      <td><input class="next-pl-quick-qty" id="nextPlQuickQty_${uid}" type="number" min="0" max="${g.balancePcs}" step="1" placeholder="Pcs" value="" oninput="nextPlQuickPreview(this, ${JSON.stringify(g.po)}, ${JSON.stringify(g.rows.map(r=>({rowKey:r.rowKey,pendingQty:r.pendingQty,unitWeight:r.unitWeight})))})"></td>
-      <td><span class="next-pl-quick-weight" data-po="${nextPlEsc(g.po)}">0.00 kg</span><button type="button" class="btn btn-accent next-pl-quick-add" onclick="nextPlQuickAdd(${JSON.stringify(g.po)}, ${JSON.stringify(g.rows.map(r=>({rowKey:r.rowKey,pendingQty:r.pendingQty,unitWeight:r.unitWeight})))}, this)"><i class="fa-solid fa-plus"></i> Add</button></td>
+      <td><b class="next-pl-selected-pcs">${g.selectedPcs.toLocaleString()} Pcs</b><small class="next-pl-subline">already planned</small></td>
+      <td><b class="next-pl-remaining-pcs">${remainingPcs.toLocaleString()} Pcs</b><small class="next-pl-subline">after Next PL</small></td>
+      <td><b class="next-pl-remaining-weight">${remainingWeight.toFixed(2)} kg</b><small class="next-pl-subline">after Next PL</small></td>
+      <td><input class="next-pl-quick-qty" id="nextPlQuickQty_${uid}" type="number" min="0" max="${g.balancePcs}" step="1" placeholder="Pcs" value="${hasSelected?g.selectedPcs:''}" oninput="nextPlQuickPreview(this, ${JSON.stringify(g.po)}, ${JSON.stringify(g.rows.map(r=>({rowKey:r.rowKey,pendingQty:r.pendingQty,unitWeight:r.unitWeight})))})"></td>
+      <td><span class="next-pl-quick-weight" data-po="${nextPlEsc(g.po)}">${g.selectedWeight.toFixed(2)} kg</span><button type="button" class="btn btn-accent next-pl-quick-add" onclick="nextPlQuickAdd(${JSON.stringify(g.po)}, ${JSON.stringify(g.rows.map(r=>({rowKey:r.rowKey,pendingQty:r.pendingQty,unitWeight:r.unitWeight})))}, this)"><i class="fa-solid fa-${hasSelected?'rotate':'plus'}"></i> ${hasSelected?'Update':'Add'}</button></td>
     </tr>`;
   }).join('');
-  const quickBalancePcs=gs.reduce((sum,g)=>sum+g.balancePcs,0), quickBalanceWt=gs.reduce((sum,g)=>sum+g.balanceWeight,0), quickReady=gs.reduce((sum,g)=>sum+g.ready,0);
-  const quickPlannedPcs=selectedRows.reduce((sum,r)=>sum+nextPlNum(nextPlSelection[r.rowKey]),0);
-  const quickPlannedWt=selectedRows.reduce((sum,r)=>sum+nextPlNum(nextPlSelection[r.rowKey])*Math.max(0,nextPlNum(r.unitWeight)),0);
+  const quickBalancePcs=gs.reduce((sum,g)=>sum+g.balancePcs,0), quickBalanceWt=gs.reduce((sum,g)=>sum+g.balanceWeight,0), quickSelectedPcs=gs.reduce((sum,g)=>sum+g.selectedPcs,0), quickSelectedWt=gs.reduce((sum,g)=>sum+g.selectedWeight,0), quickRemainingPcs=Math.max(0,quickBalancePcs-quickSelectedPcs), quickRemainingWt=Math.max(0,quickBalanceWt-quickSelectedWt);
   const quickFoot=document.getElementById('nextPlQuickPoFoot');
-  if(quickFoot)quickFoot.innerHTML=`<tr class="next-pl-total-row"><td colspan="3">TOTAL — SELECTED PROFILE / LENGTH</td><td>${quickBalancePcs.toLocaleString()} Pcs</td><td>${quickBalanceWt.toFixed(2)} kg</td><td>${quickReady.toLocaleString()} Pcs</td><td>${quickPlannedPcs.toLocaleString()} Pcs</td><td>${quickPlannedWt.toFixed(2)} kg</td></tr>`;
-  if(note)note.innerHTML='<i class="fa-solid fa-circle-check"></i> <b>'+nextPlEsc(pf.value)+' / '+nextPlEsc(ls.value)+' mm</b> selected. Only POs with shipment balance &gt; 0 are shown. Enter Send Pcs; weight is calculated automatically.';
+  if(quickFoot)quickFoot.innerHTML=`<tr class="next-pl-total-row"><td colspan="3">TOTAL — SELECTED PROFILE / LENGTH</td><td>${quickBalancePcs.toLocaleString()} Pcs</td><td>${quickBalanceWt.toFixed(2)} kg</td><td>${quickSelectedPcs.toLocaleString()} Pcs</td><td>${quickRemainingPcs.toLocaleString()} Pcs</td><td>${quickRemainingWt.toFixed(2)} kg</td><td>${quickSelectedPcs.toLocaleString()} Pcs</td><td>${quickSelectedWt.toFixed(2)} kg</td></tr>`;
+  if(note)note.innerHTML='<i class="fa-solid fa-circle-check"></i> <b>'+nextPlEsc(pf.value)+' / '+nextPlEsc(ls.value)+' mm</b> selected. Only POs with shipment balance &gt; 0 are shown. <b>Already planned Pcs, remaining balance and weight update automatically.</b> Enter the final Send Pcs and click Add/Update — the same PO will never be added twice.';
 }
 function nextPlQuickPreview(input,po,parts){
   let qty=Math.max(0,Math.floor(nextPlNum(input.value))), remaining=qty, weight=0;
@@ -1503,19 +1511,22 @@ function nextPlQuickAdd(po,parts,button){
   const input=button?.closest('tr')?.querySelector('.next-pl-quick-qty');
   if(!input)return;
   let qty=Math.floor(nextPlNum(input.value));
-  if(qty<=0)return showToast('Enter a valid Send Pcs quantity.','warning');
+  if(qty<0)qty=0;
   const maxTotal=parts.reduce((s,p)=>s+Math.max(0,nextPlNum(p.pendingQty)),0);
   if(qty>maxTotal){qty=maxTotal;input.value=qty;showToast(`Only ${maxTotal.toLocaleString()} Pcs remain on this PO for the selected Profile + Length.`,'warning');}
+  // IMPORTANT: set the PO's final planned quantity instead of incrementing it.
+  // This prevents the same PO/Profile/Length quantity from being added twice.
   let remaining=qty,addedWeight=0;
   const ordered=[...parts].sort((a,b)=>String(a.rowKey).localeCompare(String(b.rowKey)));
   ordered.forEach(p=>{
-    if(remaining<=0)return;
     const rowCap=Math.max(0,nextPlNum(p.pendingQty));
     const add=Math.min(remaining,rowCap);
-    if(add>0){nextPlExcluded[p.rowKey]=false;nextPlManualOverride[p.rowKey]=true;nextPlSelection[p.rowKey]=Math.max(0,nextPlNum(nextPlSelection[p.rowKey]))+add;addedWeight+=add*Math.max(0,nextPlNum(p.unitWeight));remaining-=add;}
+    nextPlExcluded[p.rowKey]=false;
+    if(add>0){nextPlManualOverride[p.rowKey]=true;nextPlSelection[p.rowKey]=add;addedWeight+=add*Math.max(0,nextPlNum(p.unitWeight));remaining-=add;}
+    else {nextPlManualOverride[p.rowKey]=false;nextPlSelection[p.rowKey]=0;}
   });
   renderNextPlPlanning();
-  showToast(`${addedWeight.toFixed(2)} kg added to Next PL plan from PO ${po}.`,'success');
+  showToast(`${addedWeight.toFixed(2)} kg is now planned from PO ${po}. Existing selection was updated, not duplicated.`,'success');
 }
 function nextPlManualProfileChanged(){
   const rows=nextPlGetRows(); nextPlRenderManualControls(rows);
