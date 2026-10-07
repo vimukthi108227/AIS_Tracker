@@ -2496,3 +2496,17 @@ body.dark-mode #dashboardTab .pending-po-metric.still{background:#2a1c26;border-
 .next-pl-po-chart-card{box-shadow:0 8px 26px rgba(15,118,110,.07)!important;}
 .next-pl-po-chart-wrap{background:linear-gradient(180deg,#f8fbff 0%,#ffffff 72%,#f0fdf4 100%)!important;}
 @media(max-width:900px){.next-pl-kpis{grid-template-columns:repeat(2,minmax(145px,1fr))!important;}}
+
+/* Next PL manual PO balance clarity */
+.next-pl-quick-selected-row{background:linear-gradient(90deg,#ecfdf5,#f8fafc)!important;box-shadow:inset 4px 0 0 #10b981;}
+.next-pl-selected-pcs{color:#075985!important;font-size:12px;}
+.next-pl-remaining-pcs{color:#b45309!important;font-size:12px;}
+.next-pl-remaining-weight{color:#be123c!important;font-size:12px;}
+.next-pl-balance-pcs{color:#075985!important;font-size:12px;}
+.next-pl-balance-weight{color:#be123c!important;font-size:12px;}
+.next-pl-subline{display:block;color:#64748b;font-size:9px;font-weight:700;margin-top:2px;}
+.next-pl-quick-table th:nth-child(6),.next-pl-quick-table th:nth-child(7),.next-pl-quick-table th:nth-child(8){background:#0f766e;}
+.next-pl-quick-table td:nth-child(6),.next-pl-quick-table td:nth-child(7),.next-pl-quick-table td:nth-child(8){background:#f8fffb;}
+.next-pl-quick-table{min-width:1350px!important;}
+.next-pl-quick-qty:focus{outline:3px solid rgba(37,99,235,.16);border-color:#2563eb!important;}
+.next-pl-quick-add{min-width:72px;}
