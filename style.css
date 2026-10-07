@@ -2510,3 +2510,14 @@ body.dark-mode #dashboardTab .pending-po-metric.still{background:#2a1c26;border-
 .next-pl-quick-table{min-width:1350px!important;}
 .next-pl-quick-qty:focus{outline:3px solid rgba(37,99,235,.16);border-color:#2563eb!important;}
 .next-pl-quick-add{min-width:72px;}
+
+
+/* Next PL manual-add confirmation */
+.next-pl-manual-notice{display:none;align-items:center;gap:12px;margin:12px 0 0;padding:12px 15px;border-radius:12px;border:1px solid transparent;font-weight:700;animation:nextPlNoticeIn .35s ease-out both}
+.next-pl-manual-notice.show{display:flex}
+.next-pl-manual-notice.success{background:linear-gradient(90deg,#ecfdf5,#f0fdf4);border-color:#86efac;color:#047857;box-shadow:0 5px 18px rgba(16,185,129,.10)}
+.next-pl-manual-notice i{font-size:20px}
+.next-pl-manual-notice div{display:flex;flex-direction:column;gap:2px}
+.next-pl-manual-notice span{font-size:12px;font-weight:700;color:#166534}
+@keyframes nextPlNoticeIn{from{opacity:0;transform:translateY(-6px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+.next-pl-po-chart-card .next-pl-po-chart-wrap{min-height:390px}
