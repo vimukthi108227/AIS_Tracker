@@ -1230,6 +1230,9 @@ window.exportSmartDailyAll = function(type) {
  * This module never writes to Supabase and never mutates production/stock data.
  * ------------------------------------------------------------------------- */
 let nextPlSelection = {};
+let nextPlExcluded = {};
+let nextPlManualOverride = {};
+let nextPlViewMode = 'suggested';
 
 function nextPlNum(v){
   const n=Number(String(v??0).replace(/,/g,'').trim());
@@ -1243,24 +1246,49 @@ function nextPlSameProfile(a,b){ return nextPlProfileKey(a)===nextPlProfileKey(b
 function nextPlEsc(v){
   return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 }
+function nextPlKey(poNumber,profile,itemCode,length){
+  return `${String(poNumber??'').trim()}|${nextPlProfileKey(profile)}|${String(itemCode??'').trim().toLowerCase()}|${cleanLen(length)}`;
+}
 function nextPlCatalogForPo(po){
   const p=String(po?.profile??'').trim();
   const ic=String(po?.itemCode??'').trim();
   const l=cleanLen(po?.length);
   if(!p || !l) return null;
-  let m=masterData.find(x=>nextPlSameProfile(x.profile,p) && String(x.itemCode??'').trim()===ic && cleanLen(x.length)===l);
+  let m=masterData.find(x=>nextPlSameProfile(x.profile,p) && String(x.itemCode??'').trim().toLowerCase()===ic.toLowerCase() && cleanLen(x.length)===l);
   if(m) return m;
-  m=masterData.find(x=>nextPlSameProfile(x.profile,p) && cleanLen(x.length)===l);
-  return m||null;
+  return masterData.find(x=>nextPlSameProfile(x.profile,p) && cleanLen(x.length)===l) || null;
+}
+function nextPlCurrentPackingInfo(){
+  try{ ensurePackingSelection(); }catch(e){}
+  const month=activePackingMonth||'';
+  const container=activePackingContainer||'';
+  const records=(typeof getPackingContainerRecords==='function') ? getPackingContainerRecords(month,container) : [];
+  const byLine=new Map();
+  const byLineWeight=new Map();
+  const byStock=new Map();
+  let weight=0,pcs=0;
+  records.forEach(r=>{
+    const p=String(r?.profile??'').trim(), ic=String(r?.itemCode??'').trim(), l=cleanLen(r?.length), po=String(r?.poNumber??'').trim();
+    const q=nextPlNum(r?.pcsQty);
+    let uw=0;
+    const m=masterData.find(x=>nextPlSameProfile(x.profile,p) && String(x.itemCode??'').trim().toLowerCase()===ic.toLowerCase() && cleanLen(x.length)===l)
+      || masterData.find(x=>nextPlSameProfile(x.profile,p) && cleanLen(x.length)===l);
+    uw=nextPlNum(m?.unitWeight);
+    const wt=nextPlNum(r?.netWeight)>0 ? nextPlNum(r.netWeight) : q*uw;
+    weight+=wt; pcs+=q;
+    const lk=nextPlKey(po,p,ic,l); byLine.set(lk,(byLine.get(lk)||0)+q); byLineWeight.set(lk,(byLineWeight.get(lk)||0)+wt);
+    const sk=`${nextPlProfileKey(p)}|${ic.toLowerCase()}|${l}`; byStock.set(sk,(byStock.get(sk)||0)+q);
+  });
+  return {month,container,records,weight,pcs,byLine,byLineWeight,byStock};
 }
 function nextPlGetRows(){
   if(!Array.isArray(poList)||!Array.isArray(masterData)) return [];
+  const currentPL=nextPlCurrentPackingInfo();
   const shipmentPool=new Map();
   (shipmentList||[]).forEach(sh=>{
-    const key=`${String(sh?.poNumber??'').trim()}|${nextPlProfileKey(sh?.profile)}|${cleanLen(sh?.length)}`;
+    const key=nextPlKey(sh?.poNumber,sh?.profile,'',sh?.length);
     shipmentPool.set(key,(shipmentPool.get(key)||0)+nextPlNum(sh?.shippedQty));
   });
-
   const raw=(poList||[]).map((po,i)=>({po,i})).filter(x=>nextPlNum(x.po?.orderQty)>0 && String(x.po?.poNumber??'').trim() && String(x.po?.profile??'').trim() && cleanLen(x.po?.length));
   raw.sort((a,b)=>{
     const da=new Date(a.po?.date||0).getTime(), db=new Date(b.po?.date||0).getTime();
@@ -1269,29 +1297,36 @@ function nextPlGetRows(){
 
   const lines=[];
   raw.forEach(({po,i})=>{
-    const shipKey=`${String(po?.poNumber??'').trim()}|${nextPlProfileKey(po?.profile)}|${cleanLen(po?.length)}`;
-    const pool=shipmentPool.get(shipKey)||0;
-    const order=nextPlNum(po?.orderQty);
-    const shipped=Math.min(order,pool);
-    shipmentPool.set(shipKey,Math.max(0,pool-shipped));
-    const pending=Math.max(0,order-shipped);
-    if(!pending) return;
-    const m=nextPlCatalogForPo(po);
-    if(!m) return;
-    const unitWeight=nextPlNum(m.unitWeight);
+    const m=nextPlCatalogForPo(po); if(!m) return;
     const profile=String(m.profile??po.profile??'').trim();
     const itemCode=String(m.itemCode??po.itemCode??'').trim();
     const length=cleanLen(m.length??po.length);
-    const key=`${nextPlProfileKey(profile)}|${itemCode.toLowerCase()}|${length}`;
+    const unitWeight=nextPlNum(m.unitWeight);
+    const lineKey=nextPlKey(po?.poNumber,profile,itemCode,length);
+    const shipKey=nextPlKey(po?.poNumber,profile,'',length);
+    const shipPool=shipmentPool.get(shipKey)||0;
+    const order=nextPlNum(po?.orderQty);
+    const shipped=Math.min(order,shipPool);
+    shipmentPool.set(shipKey,Math.max(0,shipPool-shipped));
+    const currentPlQty=nextPlNum(currentPL.byLine.get(lineKey));
+    const pendingAfterPl=Math.max(0,order-shipped-currentPlQty);
+    // A PO line can already be represented in the active PL. Show it even when
+    // its remaining PO balance is zero so the planner can see the completed part.
+    const stockKey=`${nextPlProfileKey(profile)}|${itemCode.toLowerCase()}|${length}`;
     lines.push({
-      key,rowKey:String(po?.id??`local-${i}`),poIndex:i,date:po?.date||'',poNumber:String(po?.poNumber??'').trim(),
-      profile,itemCode,length,unitWeight,pendingQty:pending,orderQty:order,shippedQty:shipped,
-      stockCut:0,stockPunch:0,stockWrap:0,stockBox:0,stockCrate:0,stockTotal:0,stockReady:0,stockWip:0,availableForPo:0,
-      selectedQty:nextPlNum(nextPlSelection[String(po?.id??`local-${i}`)]),master:m
+      key:stockKey,rowKey:String(po?.id??`local-${i}`),poIndex:i,date:po?.date||'',poNumber:String(po?.poNumber??'').trim(),
+      profile,itemCode,length,unitWeight,pendingQty:pendingAfterPl,originalPendingQty:Math.max(0,order-shipped),
+      orderQty:order,shippedQty:shipped,currentPlQty,currentPlWeight:nextPlNum(currentPL.byLineWeight.get(lineKey)),
+      remainingPoWeight:pendingAfterPl*unitWeight,
+      stockCut:0,stockPunch:0,stockWrap:0,stockBox:0,stockCrate:0,stockTotal:0,stockReady:0,stockWip:0,stockAvailableAfterPl:0,
+      availableForPo:0,needCutQty:0,needCutWeight:0,
+      selectedQty:nextPlNum(nextPlSelection[String(po?.id??`local-${i}`)]),master:m,
+      excluded:!!nextPlExcluded[String(po?.id??`local-${i}`)]
     });
   });
 
-  // Snapshot the current Master Catalog stock by canonical Profile + Item Code + Length.
+  // Snapshot current Master Catalog stock and reserve quantities already placed
+  // in the active/current Packing List, because that material is already planned.
   const stockMap=new Map();
   (masterData||[]).forEach(m=>{
     const p=String(m?.profile??'').trim(), ic=String(m?.itemCode??'').trim(), l=cleanLen(m?.length);
@@ -1302,139 +1337,365 @@ function nextPlGetRows(){
     if(!g.unitWeight)g.unitWeight=nextPlNum(m.unitWeight);
     stockMap.set(key,g);
   });
+  currentPL.byStock.forEach((qty,key)=>{
+    const g=stockMap.get(key); if(!g)return;
+    let left=qty;
+    // Reserve from higher stages first because those pieces are the ones most
+    // likely represented in the active PL.
+    ['crate','box','wrap','punch','cut'].forEach(st=>{const take=Math.min(g[st],left);g[st]-=take;left-=take;});
+    g.reservedByPL=qty;
+  });
 
-  // Allocate the same physical stock only once across PO lines, respecting priority.
   const priority=document.getElementById('nextPlPriority')?.value||'oldest';
   const allocationOrder=[...lines].sort((a,b)=>{
     const da=new Date(a.date||0).getTime(), db=new Date(b.date||0).getTime();
     const d=priority==='newest'?db-da:da-db;
-    return d || (priority==='newest'
-      ? String(b.poNumber).localeCompare(String(a.poNumber),undefined,{numeric:true,sensitivity:'base'})
-      : String(a.poNumber).localeCompare(String(b.poNumber),undefined,{numeric:true,sensitivity:'base'}));
+    return d || (priority==='newest' ? String(b.poNumber).localeCompare(String(a.poNumber),undefined,{numeric:true,sensitivity:'base'}) : String(a.poNumber).localeCompare(String(b.poNumber),undefined,{numeric:true,sensitivity:'base'}));
   });
-  const remainingStock=new Map();
-  stockMap.forEach((g,key)=>remainingStock.set(key,{...g}));
+  const remainingStock=new Map(); stockMap.forEach((g,key)=>remainingStock.set(key,{...g}));
   allocationOrder.forEach(line=>{
-    const g=remainingStock.get(line.key);
-    if(!g)return;
+    const g=remainingStock.get(line.key); if(!g)return;
     line.stockCut=g.cut; line.stockPunch=g.punch; line.stockWrap=g.wrap; line.stockBox=g.box; line.stockCrate=g.crate;
     line.stockTotal=g.cut+g.punch+g.wrap+g.box+g.crate;
-    line.stockReady=g.crate+g.box+g.wrap;
-    line.stockWip=g.cut+g.punch;
-    line.availableForPo=Math.min(line.pendingQty,Math.max(0,g.cut+g.punch+g.wrap+g.box+g.crate));
-    const take=line.availableForPo;
-    let left=take;
-    // Reduce the same stock snapshot so a later PO cannot count it again.
-    const stages=['crate','box','wrap','punch','cut'];
-    stages.forEach(st=>{const x=Math.min(g[st],left);g[st]-=x;left-=x;});
+    line.stockReady=g.crate+g.box+g.wrap; line.stockWip=g.cut+g.punch;
+    line.stockAvailableAfterPl=line.stockTotal;
+    line.availableForPo=Math.min(line.pendingQty,Math.max(0,line.stockTotal));
+    line.needCutQty=Math.max(0,line.pendingQty-line.availableForPo);
+    line.needCutWeight=line.needCutQty*line.unitWeight;
+    // Allocate stock once so an older PO gets first claim on shared stock.
+    let left=line.availableForPo;
+    ['crate','box','wrap','punch','cut'].forEach(st=>{const take=Math.min(g[st],left);g[st]-=take;left-=take;});
   });
   return lines;
 }
 function nextPlRefreshFilters(rows){
-  const poSel=document.getElementById('nextPlPoFilter'), pfSel=document.getElementById('nextPlProfileFilter');
-  if(!poSel||!pfSel)return;
+  const poSel=document.getElementById('nextPlPoFilter'), pfSel=document.getElementById('nextPlProfileFilter'); if(!poSel||!pfSel)return;
   const poCur=poSel.value, pfCur=pfSel.value;
   const pos=[...new Set(rows.map(r=>r.poNumber).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'}));
   const pfs=[]; rows.forEach(r=>{if(r.profile&&!pfs.some(x=>nextPlSameProfile(x,r.profile)))pfs.push(r.profile);});
   pfs.sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'}));
   poSel.innerHTML='<option value="">All POs</option>'+pos.map(x=>`<option value="${nextPlEsc(x)}">${nextPlEsc(x)}</option>`).join('');
   pfSel.innerHTML='<option value="">All Profiles</option>'+pfs.map(x=>`<option value="${nextPlEsc(x)}">${nextPlEsc(x)}</option>`).join('');
-  if(pos.includes(poCur))poSel.value=poCur;
-  if(pfs.some(x=>nextPlSameProfile(x,pfCur)))pfSel.value=pfs.find(x=>nextPlSameProfile(x,pfCur))||'';
+  if(pos.includes(poCur))poSel.value=poCur; if(pfs.some(x=>nextPlSameProfile(x,pfCur)))pfSel.value=pfs.find(x=>nextPlSameProfile(x,pfCur))||'';
 }
 function nextPlSetQty(rowKey,value){
-  const row=nextPlGetRows().find(r=>r.rowKey===String(rowKey));
-  const max=row?row.availableForPo:0;
+  const row=nextPlGetRows().find(r=>r.rowKey===String(rowKey)); if(!row)return;
   let qty=Math.max(0,Math.floor(nextPlNum(value)));
-  if(qty>max){qty=max;showToast(`Selected Qty cannot exceed available ${max.toLocaleString()} Pcs.`,'warning');}
-  nextPlSelection[String(rowKey)]=qty;
-  renderNextPlPlanning();
+  const cap=nextPlManualOverride[String(rowKey)] ? row.pendingQty : row.availableForPo;
+  if(qty>cap){qty=cap;showToast(`Selected Qty cannot exceed ${cap.toLocaleString()} Pcs for this PO line.`,'warning');}
+  nextPlSelection[String(rowKey)]=qty; nextPlExcluded[String(rowKey)]=false; renderNextPlPlanning();
+}
+function nextPlToggleExclude(rowKey,checked){
+  const k=String(rowKey); nextPlExcluded[k]=!!checked; if(checked){nextPlSelection[k]=0;nextPlManualOverride[k]=false;} renderNextPlPlanning();
 }
 function nextPlFilteredRows(){
   const rows=nextPlGetRows();
   const po=document.getElementById('nextPlPoFilter')?.value||'', pf=document.getElementById('nextPlProfileFilter')?.value||'';
-  return rows.filter(r=>(!po||r.poNumber===po)&&(!pf||nextPlSameProfile(r.profile,pf)));
+  const mode=document.getElementById('nextPlViewMode')?.value||nextPlViewMode||'suggested';
+  let filtered=rows.filter(r=>(!po||r.poNumber===po)&&(!pf||nextPlSameProfile(r.profile,pf)));
+  if(mode==='selected') filtered=filtered.filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
+  else if(mode==='stock') filtered=filtered.filter(r=>r.availableForPo>0 && r.pendingQty>0);
+  else if(mode==='cut') filtered=filtered.filter(r=>r.needCutQty>0 && r.pendingQty>0);
+  else if(mode==='pending') filtered=filtered.filter(r=>r.pendingQty>0);
+  else {
+    // Suggested: show lines that can actually contribute to the next PL. If an
+    // auto/manual selection exists, keep those lines visible even if their
+    // stock is now fully allocated. Otherwise show stock-backed candidates.
+    const hasSelection=Object.values(nextPlSelection||{}).some(v=>nextPlNum(v)>0);
+    filtered=filtered.filter(r=>hasSelection ? (nextPlNum(nextPlSelection[r.rowKey])>0 || (!r.excluded && r.availableForPo>0 && r.pendingQty>0)) : (r.pendingQty>0 && (r.availableForPo>0 || r.needCutQty>0)));
+  }
+  return filtered;
+}
+function nextPlSetViewMode(v){ nextPlViewMode=String(v||'suggested'); renderNextPlPlanning(); }
+function nextPlGetCurrentSummary(){
+  const info=nextPlCurrentPackingInfo();
+  const targetMin=Math.max(0,nextPlNum(document.getElementById('nextPlMinKg')?.value||15000));
+  const targetMax=Math.max(targetMin,nextPlNum(document.getElementById('nextPlMaxKg')?.value||17000));
+  return {...info,targetMin,targetMax,remainingMin:Math.max(0,targetMin-info.weight),remainingMax:Math.max(0,targetMax-info.weight)};
+}
+function nextPlRenderManualControls(rows){
+  const poSel=document.getElementById('nextPlManualPo'), pfSel=document.getElementById('nextPlManualProfile'), icSel=document.getElementById('nextPlManualItem'), lSel=document.getElementById('nextPlManualLength');
+  if(!poSel||!pfSel||!icSel||!lSel)return;
+  const oldPo=poSel.value, oldPf=pfSel.value, oldIc=icSel.value, oldL=lSel.value;
+  const pos=[...new Set(rows.map(r=>r.poNumber))].sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));
+  poSel.innerHTML='<option value="">Select PO</option>'+pos.map(v=>`<option value="${nextPlEsc(v)}">${nextPlEsc(v)}</option>`).join(''); if(pos.includes(oldPo))poSel.value=oldPo;
+  const updateProfiles=()=>{
+    const pRows=rows.filter(r=>!poSel.value||r.poNumber===poSel.value); const ps=[];pRows.forEach(r=>{if(!ps.some(x=>nextPlSameProfile(x,r.profile)))ps.push(r.profile);});
+    pfSel.innerHTML='<option value="">Select Profile</option>'+ps.map(v=>`<option value="${nextPlEsc(v)}">${nextPlEsc(v)}</option>`).join(''); if(ps.some(x=>nextPlSameProfile(x,oldPf)))pfSel.value=ps.find(x=>nextPlSameProfile(x,oldPf))||'';
+  };
+  updateProfiles();
+  const updateItems=()=>{
+    const rs=rows.filter(r=>(!poSel.value||r.poNumber===poSel.value)&&(!pfSel.value||nextPlSameProfile(r.profile,pfSel.value)));
+    const vals=[...new Set(rs.map(r=>r.itemCode).filter(Boolean))]; icSel.innerHTML='<option value="">Select Item Code</option>'+vals.map(v=>`<option value="${nextPlEsc(v)}">${nextPlEsc(v)}</option>`).join(''); if(vals.includes(oldIc))icSel.value=oldIc;
+  };
+  updateItems();
+  const updateLengths=()=>{
+    const rs=rows.filter(r=>(!poSel.value||r.poNumber===poSel.value)&&(!pfSel.value||nextPlSameProfile(r.profile,pfSel.value))&&(!icSel.value||r.itemCode===icSel.value));
+    const vals=[...new Set(rs.map(r=>r.length).filter(Boolean))]; lSel.innerHTML='<option value="">Select Length</option>'+vals.map(v=>`<option value="${nextPlEsc(v)}">${nextPlEsc(v)} mm</option>`).join(''); if(vals.includes(oldL))lSel.value=oldL;
+  };
+  updateLengths();
+}
+function nextPlQuickCandidateGroups(rows, profile, length){
+  const selected=rows.filter(r=>profile && length && nextPlSameProfile(r.profile,profile) && cleanLen(r.length)===cleanLen(length));
+  const groups=new Map();
+  selected.forEach(r=>{
+    const balance=Math.max(0,nextPlNum(r.pendingQty));
+    if(balance<=0)return;
+    const key=String(r.poNumber);
+    const g=groups.get(key)||{po:r.poNumber,itemCodes:new Set(),balance:0,weight:0,ready:0,unitWeights:new Set(),rows:[]};
+    g.itemCodes.add(r.itemCode||'-');
+    g.balance+=balance;
+    g.weight+=balance*Math.max(0,nextPlNum(r.unitWeight));
+    g.ready+=Math.min(Math.max(0,nextPlNum(r.availableForPo)),balance);
+    if(nextPlNum(r.unitWeight)>0)g.unitWeights.add(Number(r.unitWeight));
+    g.rows.push(r);
+    groups.set(key,g);
+  });
+  return [...groups.values()].sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true,sensitivity:'base'}));
+}
+function nextPlQuickSelectedForGroup(g){
+  return g.rows.reduce((s,r)=>s+Math.max(0,nextPlNum(nextPlSelection[r.rowKey])),0);
+}
+function nextPlRenderQuickManual(rows){
+  const pf=document.getElementById('nextPlQuickProfile'), ls=document.getElementById('nextPlQuickLength'), poSel=document.getElementById('nextPlQuickPo');
+  const note=document.getElementById('nextPlQuickNote'), balanceInfo=document.getElementById('nextPlQuickBalanceInfo'), summaryBox=document.getElementById('nextPlQuickSelectedSummary');
+  if(!pf||!ls||!poSel)return;
+  const oldPf=pf.value, oldL=cleanLen(ls.value), oldPo=poSel.value;
+  const profiles=[];
+  rows.forEach(r=>{if(r.profile&&!profiles.some(x=>nextPlSameProfile(x,r.profile)))profiles.push(r.profile);});
+  profiles.sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'}));
+  pf.innerHTML='<option value="">Select Profile</option>'+profiles.map(v=>`<option value="${nextPlEsc(v)}">${nextPlEsc(v)}</option>`).join('');
+  if(profiles.some(x=>nextPlSameProfile(x,oldPf)))pf.value=profiles.find(x=>nextPlSameProfile(x,oldPf))||'';
+
+  const profileRows=rows.filter(r=>pf.value&&nextPlSameProfile(r.profile,pf.value));
+  const lengths=[...new Set(profileRows.map(r=>cleanLen(r.length)).filter(Boolean))].sort((a,b)=>Number(a)-Number(b));
+  ls.innerHTML='<option value="">Select Length</option>'+lengths.map(v=>`<option value="${nextPlEsc(v)}">${nextPlEsc(v)} mm</option>`).join('');
+  if(lengths.includes(oldL))ls.value=oldL;
+
+  const groups=nextPlQuickCandidateGroups(rows,pf.value,ls.value);
+  const validPoValues=groups.map(g=>String(g.po));
+  poSel.innerHTML='<option value="">Select PO Number</option>'+groups.map(g=>`<option value="${nextPlEsc(g.po)}">${nextPlEsc(g.po)}</option>`).join('');
+  if(validPoValues.includes(oldPo))poSel.value=oldPo;
+
+  if(!pf.value||!ls.value){
+    if(note)note.innerHTML='<i class="fa-solid fa-circle-info"></i> Select <b>Profile + Length</b> first. Only POs with shipment balance &gt; 0 will appear.';
+    if(balanceInfo)balanceInfo.innerHTML='<div class="next-pl-quick-empty"><i class="fa-solid fa-hand-pointer"></i> Select Profile + Length, then select a PO.</div>';
+  }else if(!groups.length){
+    if(note)note.innerHTML='<i class="fa-solid fa-circle-check"></i> No PO has a shipment balance for <b>'+nextPlEsc(pf.value)+' / '+nextPlEsc(ls.value)+' mm</b>. Zero-balance POs are hidden.';
+    if(balanceInfo)balanceInfo.innerHTML='<div class="next-pl-quick-empty no-balance"><i class="fa-solid fa-circle-check"></i> No shipment balance &gt; 0 for this Profile + Length.</div>';
+  }else{
+    if(note)note.innerHTML='<i class="fa-solid fa-circle-check"></i> Showing <b>'+groups.length+'</b> PO(s) with shipment balance &gt; 0 for <b>'+nextPlEsc(pf.value)+' / '+nextPlEsc(ls.value)+' mm</b>.';
+    nextPlRenderQuickPoInfo(groups);
+  }
+  nextPlRenderQuickSelectedSummary(rows,pf.value,ls.value);
+}
+function nextPlRenderQuickPoInfo(groups){
+  const poSel=document.getElementById('nextPlQuickPo'), info=document.getElementById('nextPlQuickBalanceInfo');
+  if(!poSel||!info)return;
+  const g=groups.find(x=>String(x.po)===String(poSel.value));
+  if(!g){info.innerHTML='<div class="next-pl-quick-empty"><i class="fa-solid fa-arrow-pointer"></i> Select a PO Number to see its shipment balance, weight and available stock.</div>';return;}
+  const planned=nextPlQuickSelectedForGroup(g);
+  const remaining=Math.max(0,g.balance-planned);
+  const unit=[...g.unitWeights];
+  const unitText=unit.length===1?`${unit[0].toFixed(4)} kg/pc`:'Multiple unit weights';
+  info.innerHTML=`<div class="next-pl-quick-metrics">
+    <div class="metric-balance"><span>Shipment Balance</span><b>${g.balance.toLocaleString()} Pcs</b><small>${g.weight.toFixed(2)} kg</small></div>
+    <div><span>Already in Next PL</span><b>${planned.toLocaleString()} Pcs</b><small>${(g.rows.reduce((s,r)=>s+Math.max(0,nextPlNum(nextPlSelection[r.rowKey]))*Math.max(0,nextPlNum(r.unitWeight)),0)).toFixed(2)} kg</small></div>
+    <div class="metric-good"><span>Remaining to Add</span><b>${remaining.toLocaleString()} Pcs</b><small>${unit.length===1?(remaining*unit[0]).toFixed(2):'—'} kg</small></div>
+    <div><span>Item Code</span><b class="metric-small-text">${[...g.itemCodes].map(nextPlEsc).join(', ')}</b><small>${unitText} • Ready ${g.ready.toLocaleString()} Pcs</small></div>
+  </div>`;
+  const q=document.getElementById('nextPlQuickQty');
+  if(q){q.max=String(remaining); if(nextPlNum(q.value)>remaining)q.value=remaining;}
+  nextPlQuickPreview();
+}
+function nextPlQuickPoChanged(){
+  const rows=nextPlGetRows(), pf=document.getElementById('nextPlQuickProfile')?.value||'', ls=document.getElementById('nextPlQuickLength')?.value||'';
+  const groups=nextPlQuickCandidateGroups(rows,pf,ls); nextPlRenderQuickPoInfo(groups); nextPlRenderQuickSelectedSummary(rows,pf,ls);
+}
+function nextPlQuickPreview(){
+  const qtyEl=document.getElementById('nextPlQuickQty'), preview=document.getElementById('nextPlQuickPreviewWeight'), entryWeight=document.getElementById('nextPlQuickEntryWeight');
+  if(!qtyEl)return;
+  const qty=Math.max(0,Math.floor(nextPlNum(qtyEl.value)));
+  const pf=document.getElementById('nextPlQuickProfile')?.value||'', ls=document.getElementById('nextPlQuickLength')?.value||'', po=document.getElementById('nextPlQuickPo')?.value||'';
+  const g=nextPlQuickCandidateGroups(nextPlGetRows(),pf,ls).find(x=>String(x.po)===String(po));
+  if(!g){if(entryWeight)entryWeight.textContent='0.00 kg';return;}
+  const planned=nextPlQuickSelectedForGroup(g), max=Math.max(0,g.balance-planned), send=Math.min(qty,max);
+  const wt=g.rows.reduce((s,r)=>{
+    const cap=Math.max(0,nextPlNum(r.pendingQty)-nextPlNum(nextPlSelection[r.rowKey]));
+    const add=Math.min(Math.max(0,send-(s.pcs||0)),cap);
+    return {weight:(s.weight||0)+add*Math.max(0,nextPlNum(r.unitWeight)),pcs:(s.pcs||0)+add};
+  },{weight:0,pcs:0});
+  if(preview)preview.textContent=`${wt.weight.toFixed(2)} kg`; if(entryWeight)entryWeight.textContent=`${wt.weight.toFixed(2)} kg`;
+  const box=document.getElementById('nextPlQuickBalanceInfo');
+  const inputHint=document.getElementById('nextPlQuickQtyHint');
+  if(inputHint)inputHint.textContent=`Auto weight: ${wt.weight.toFixed(2)} kg`;
+}
+function nextPlQuickAdd(){
+  const rows=nextPlGetRows(), pf=document.getElementById('nextPlQuickProfile')?.value||'', ls=document.getElementById('nextPlQuickLength')?.value||'', po=document.getElementById('nextPlQuickPo')?.value||'';
+  const qtyEl=document.getElementById('nextPlQuickQty'); let qty=Math.floor(nextPlNum(qtyEl?.value));
+  if(!pf||!ls||!po)return showToast('Select Profile, Length and PO Number first.','warning');
+  const g=nextPlQuickCandidateGroups(rows,pf,ls).find(x=>String(x.po)===String(po));
+  if(!g)return showToast('Selected PO has no shipment balance for this Profile + Length.','warning');
+  const already=nextPlQuickSelectedForGroup(g), max=Math.max(0,g.balance-already);
+  if(qty<=0)return showToast('Enter a valid Pcs quantity.','warning');
+  if(qty>max){qty=max;showToast(`Only ${max.toLocaleString()} Pcs can be added for this PO after existing Next PL selection.`,'warning');}
+  if(qty<=0)return;
+  let remaining=qty, addedWeight=0;
+  [...g.rows].sort((a,b)=>String(a.rowKey).localeCompare(String(b.rowKey))).forEach(r=>{
+    if(remaining<=0)return;
+    const current=Math.max(0,nextPlNum(nextPlSelection[r.rowKey]));
+    const cap=Math.max(0,nextPlNum(r.pendingQty)-current);
+    const add=Math.min(remaining,cap);
+    if(add>0){nextPlExcluded[r.rowKey]=false;nextPlManualOverride[r.rowKey]=true;nextPlSelection[r.rowKey]=current+add;addedWeight+=add*Math.max(0,nextPlNum(r.unitWeight));remaining-=add;}
+  });
+  if(qtyEl)qtyEl.value='';
+  showToast(`${qty.toLocaleString()} Pcs added to Next PL (${addedWeight.toFixed(2)} kg).`,'success');
+  renderNextPlPlanning();
+}
+function nextPlRenderQuickSelectedSummary(rows,profile,length){
+  const box=document.getElementById('nextPlQuickSelectedSummary'); if(!box)return;
+  if(!profile||!length){box.innerHTML='<div class="next-pl-quick-selected-empty"><i class="fa-solid fa-list"></i> Select Profile + Length to see selected items.</div>';return;}
+  const selected=rows.filter(r=>nextPlSameProfile(r.profile,profile)&&cleanLen(r.length)===cleanLen(length)&&nextPlNum(nextPlSelection[r.rowKey])>0);
+  if(!selected.length){box.innerHTML='<div class="next-pl-quick-selected-empty"><i class="fa-solid fa-cart-shopping"></i> No items added yet.</div>';return;}
+  const selectedWeight=selected.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*Math.max(0,nextPlNum(r.unitWeight)),0);
+  const currentWeight=nextPlGetCurrentSummary().weight;
+  const totalWeight=currentWeight+selectedWeight;
+  const targetMessage=totalWeight>17000
+    ? `<div class="next-pl-quick-warning"><i class="fa-solid fa-triangle-exclamation"></i><div><b>WARNING — Next PL exceeds 17 tons.</b><br>Total after Add: <strong>${totalWeight.toFixed(2)} kg</strong>. Reduce the selected Pcs before finalizing.</div></div>`
+    : `<div class="next-pl-quick-ok"><i class="fa-solid fa-circle-check"></i> Selected: <b>${selectedWeight.toFixed(2)} kg</b> • Total with current PL: <b>${totalWeight.toFixed(2)} kg</b></div>`;
+  box.innerHTML=`<div class="next-pl-quick-selected-table-wrap"><table class="next-pl-quick-selected-table"><thead><tr><th>PO</th><th>Item Code</th><th>Profile</th><th>Length</th><th>Pcs</th><th>Weight</th></tr></thead><tbody>${selected.map(r=>{const q=nextPlNum(nextPlSelection[r.rowKey]);return `<tr><td><b>${nextPlEsc(r.poNumber)}</b></td><td>${nextPlEsc(r.itemCode||'-')}</td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.length)} mm</td><td><b>${q.toLocaleString()}</b></td><td class="next-pl-weight"><b>${(q*r.unitWeight).toFixed(2)} kg</b></td></tr>`}).join('')}</tbody></table></div>${targetMessage}`;
+}
+function nextPlManualProfileChanged(){
+  const rows=nextPlGetRows(); nextPlRenderManualControls(rows);
+}
+function nextPlAddManual(){
+  const po=document.getElementById('nextPlManualPo')?.value||'', pf=document.getElementById('nextPlManualProfile')?.value||'', ic=document.getElementById('nextPlManualItem')?.value||'', l=cleanLen(document.getElementById('nextPlManualLength')?.value), qty=Math.floor(nextPlNum(document.getElementById('nextPlManualQty')?.value));
+  if(!po||!pf||!ic||!l||qty<=0)return showToast('Select PO, Profile, Item Code, Length and a valid Pcs Qty.','warning');
+  const row=nextPlGetRows().find(r=>r.poNumber===po&&nextPlSameProfile(r.profile,pf)&&r.itemCode.toLowerCase()===ic.toLowerCase()&&cleanLen(r.length)===l);
+  if(!row)return showToast('Selected PO/Profile/Item/Length line is not available in the pending PO list.','error');
+  nextPlExcluded[row.rowKey]=false;
+  nextPlManualOverride[row.rowKey]=true;
+  const cap=Math.max(0,row.pendingQty);
+  nextPlSelection[row.rowKey]=Math.min(qty,cap);
+  if(qty>cap)showToast(`Only ${cap.toLocaleString()} Pcs remain on this PO after the current PL.`,'warning');
+  renderNextPlPlanning();
+}
+function nextPlShipmentBalanceFor(poNumber,profile){
+  const rows=nextPlGetRows().filter(r=>r.poNumber===String(poNumber||'') && nextPlSameProfile(r.profile,profile));
+  const order=rows.reduce((s,r)=>s+r.orderQty,0);
+  const shipped=rows.reduce((s,r)=>s+r.shippedQty,0);
+  const currentPL=rows.reduce((s,r)=>s+r.currentPlQty,0);
+  const remaining=Math.max(0,order-shipped);
+  const afterPL=Math.max(0,remaining-currentPL);
+  const wtAfterPL=rows.reduce((s,r)=>s+Math.max(0,afterPL)*r.unitWeight,0);
+  const lengths=[...new Set(rows.map(r=>String(r.length)).filter(Boolean))];
+  return {order,shipped,remaining,currentPL,afterPL,wtAfterPL,lengths};
+}
+function nextPlRenderShipmentBalance(rows){
+  const poSel=document.getElementById('nextPlShipmentPo'), pfSel=document.getElementById('nextPlShipmentProfile');
+  const info=document.getElementById('nextPlShipmentBalanceInfo'); if(!poSel||!pfSel||!info)return;
+  const oldPo=poSel.value, oldPf=pfSel.value;
+  const pos=[...new Set(rows.map(r=>r.poNumber).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'}));
+  poSel.innerHTML='<option value="">Select PO</option>'+pos.map(x=>`<option value="${nextPlEsc(x)}">${nextPlEsc(x)}</option>`).join('');
+  if(pos.includes(oldPo))poSel.value=oldPo;
+  const pRows=rows.filter(r=>!poSel.value||r.poNumber===poSel.value);
+  const profiles=[]; pRows.forEach(r=>{if(!profiles.some(x=>nextPlSameProfile(x,r.profile)))profiles.push(r.profile);});
+  profiles.sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'}));
+  pfSel.innerHTML='<option value="">Select Profile</option>'+profiles.map(x=>`<option value="${nextPlEsc(x)}">${nextPlEsc(x)}</option>`).join('');
+  if(profiles.some(x=>nextPlSameProfile(x,oldPf)))pfSel.value=profiles.find(x=>nextPlSameProfile(x,oldPf))||'';
+  if(!poSel.value||!pfSel.value){info.innerHTML='<div class="next-pl-shipment-empty"><i class="fa-solid fa-hand-pointer"></i> Select a <b>PO Number + Profile</b> to see shipment balance.</div>';return;}
+  const b=nextPlShipmentBalanceFor(poSel.value,pfSel.value);
+  info.innerHTML=`<div class="next-pl-shipment-grid">
+    <div><span>PO Qty</span><b>${b.order.toLocaleString()} Pcs</b></div>
+    <div><span>Already Shipped</span><b>${b.shipped.toLocaleString()} Pcs</b></div>
+    <div class="warn"><span>Shipment Balance</span><b>${b.remaining.toLocaleString()} Pcs</b></div>
+    <div><span>Already in Current PL</span><b>${b.currentPL.toLocaleString()} Pcs</b></div>
+    <div class="good"><span>Balance After Current PL</span><b>${b.afterPL.toLocaleString()} Pcs</b></div>
+    <div class="good"><span>Balance Weight</span><b>${b.wtAfterPL.toFixed(2)} kg</b></div>
+  </div><div class="next-pl-shipment-note">Lengths in this PO/Profile: <b>${b.lengths.map(x=>nextPlEsc(x)+' mm').join(', ')||'-'}</b></div>`;
+}
+function nextPlRenderProfileSummary(rows){
+  const box=document.getElementById('nextPlProfileSummaryBody'), poBox=document.getElementById('nextPlPoSummaryBody'); if(!box||!poBox)return;
+  const selectedRows=rows.filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
+  const pg=new Map(); const pog=new Map();
+  selectedRows.forEach(r=>{
+    const q=nextPlNum(nextPlSelection[r.rowKey]), wt=q*r.unitWeight;
+    const pk=nextPlProfileKey(r.profile), p=pg.get(pk)||{profile:r.profile,pcs:0,weight:0,po:new Set(),stock:0,cut:0,pending:0};
+    p.pcs+=q;p.weight+=wt;p.po.add(r.poNumber);p.stock+=Math.min(r.availableForPo,q);p.cut+=Math.max(0,q-Math.min(r.availableForPo,q));p.pending+=r.pendingQty;pg.set(pk,p);
+    const ok=r.poNumber+'|'+pk, g=pog.get(ok)||{po:r.poNumber,profile:r.profile,pcs:0,weight:0,pending:0}; g.pcs+=q;g.weight+=wt;g.pending+=r.pendingQty;pog.set(ok,g);
+  });
+  const ps=[...pg.values()].sort((a,b)=>b.weight-a.weight); const pos=[...pog.values()].sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true})||String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true}));
+  box.innerHTML=ps.length?ps.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.profile)}</b></td><td>${[...g.po].map(nextPlEsc).join(', ')}</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight">${g.weight.toFixed(2)} kg</td><td>${g.stock.toLocaleString()}</td><td>${g.cut.toLocaleString()}</td></tr>`).join(''):`<tr><td colspan="7" class="next-pl-summary-empty">Auto Build or manually select Pcs to see the expected Next PL profile totals.</td></tr>`;
+  poBox.innerHTML=pos.length?pos.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.po)}</b></td><td>${nextPlEsc(g.profile)}</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight">${g.weight.toFixed(2)} kg</td><td>${g.pending.toLocaleString()}</td></tr>`).join(''):`<tr><td colspan="6" class="next-pl-summary-empty">No PO-wise Next PL selections yet.</td></tr>`;
 }
 function renderNextPlPlanning(){
   const body=document.getElementById('nextPlPlanningBody'); if(!body)return;
-  const all=nextPlGetRows();
-  nextPlRefreshFilters(all);
+  const all=nextPlGetRows(); nextPlRefreshFilters(all); nextPlRenderManualControls(all); nextPlRenderQuickManual(all); nextPlRenderShipmentBalance(all);
   const rows=nextPlFilteredRows();
-  const min=Math.max(0,nextPlNum(document.getElementById('nextPlMinKg')?.value||15000));
-  const max=Math.max(min,nextPlNum(document.getElementById('nextPlMaxKg')?.value||17000));
+  const summary=nextPlGetCurrentSummary();
   const priority=document.getElementById('nextPlPriority')?.value||'oldest';
-  rows.sort((a,b)=>{
-    const da=new Date(a.date||0).getTime(),db=new Date(b.date||0).getTime();
-    const d=priority==='newest'?db-da:da-db;
-    return d||(priority==='newest'?String(b.poNumber).localeCompare(String(a.poNumber),undefined,{numeric:true}):String(a.poNumber).localeCompare(String(b.poNumber),undefined,{numeric:true}));
-  });
-  let selectedWeight=0,selectedPcs=0,availableWeight=0,selectedLines=0;
+  rows.sort((a,b)=>{const da=new Date(a.date||0).getTime(),db=new Date(b.date||0).getTime();const d=priority==='newest'?db-da:da-db;return d||(priority==='newest'?String(b.poNumber).localeCompare(String(a.poNumber),undefined,{numeric:true}):String(a.poNumber).localeCompare(String(b.poNumber),undefined,{numeric:true}));});
+  let selectedWeight=0,selectedPcs=0,selectedLines=0,availableWeight=0,cutWeight=0,currentPlWeight=summary.weight;
   const uniqueStockKeys=new Set();
-  rows.forEach(r=>{r.selectedQty=Math.min(nextPlNum(nextPlSelection[r.rowKey]),r.availableForPo);nextPlSelection[r.rowKey]=r.selectedQty;selectedPcs+=r.selectedQty;selectedWeight+=r.selectedQty*r.unitWeight;if(!uniqueStockKeys.has(r.key)){availableWeight+=r.stockTotal*r.unitWeight;uniqueStockKeys.add(r.key);}if(r.selectedQty>0)selectedLines++;});
-  if(!rows.length){body.innerHTML='<tr><td colspan="14" style="padding:28px;text-align:center;color:#64748b;font-weight:800;">No pending PO lines with matching Master Catalog data.</td></tr>';}else{
-    body.innerHTML=rows.map((r,i)=>`<tr>
-      <td><span style="display:inline-block;min-width:25px;padding:3px 6px;border-radius:999px;background:${i<3?'#dcfce7':'#f1f5f9'};color:${i<3?'#047857':'#475569'};font-weight:900;">${i+1}</span></td>
-      <td>${nextPlEsc(r.date||'-')}</td><td><b>${nextPlEsc(r.poNumber)}</b></td><td><b>${nextPlEsc(r.profile)}</b></td><td>${nextPlEsc(r.itemCode||'-')}</td><td>${nextPlEsc(r.length)} mm</td>
-      <td>${r.unitWeight.toFixed(4)} kg</td><td class="next-pl-pending">${r.pendingQty.toLocaleString()}</td><td>${r.stockTotal.toLocaleString()}</td><td class="next-pl-stock-ready">${r.stockReady.toLocaleString()}</td><td class="next-pl-stock-wip">${r.stockWip.toLocaleString()}</td><td class="next-pl-available">${r.availableForPo.toLocaleString()}</td><td>${r.pendingQty>0?Math.min(100,(r.availableForPo/r.pendingQty)*100).toFixed(0):0}%</td><td>${Math.max(0,r.pendingQty-r.availableForPo).toLocaleString()}</td>
-      <td><input class="next-pl-select-input" type="number" min="0" max="${Math.floor(r.availableForPo)}" step="1" value="${Math.floor(r.selectedQty)}" onchange="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)" oninput="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)"></td>
-      <td class="next-pl-weight">${(r.selectedQty*r.unitWeight).toFixed(2)} kg</td>
-    </tr>`).join('');
-  }
+  rows.forEach(r=>{
+    const rowCap=nextPlManualOverride[r.rowKey]?r.pendingQty:r.availableForPo;
+    r.selectedQty=r.excluded?0:Math.min(nextPlNum(nextPlSelection[r.rowKey]),rowCap); nextPlSelection[r.rowKey]=r.selectedQty;
+    selectedPcs+=r.selectedQty; selectedWeight+=r.selectedQty*r.unitWeight; cutWeight+=r.needCutWeight; if(r.selectedQty>0)selectedLines++;
+    if(!uniqueStockKeys.has(r.key)){availableWeight+=r.stockTotal*r.unitWeight;uniqueStockKeys.add(r.key);}
+  });
+  const remainingMin=Math.max(0,summary.targetMin-currentPlWeight), remainingMax=Math.max(0,summary.targetMax-currentPlWeight);
+  if(!rows.length)body.innerHTML='<tr><td colspan="14" style="padding:28px;text-align:center;color:#64748b;font-weight:800;">No pending PO lines with matching Master Catalog data.</td></tr>';
+  else body.innerHTML=rows.map((r,i)=>`<tr class="${r.excluded?'next-pl-excluded':''}">
+    <td><span class="next-pl-priority-badge ${i<3?'top':''}">${i+1}</span></td>
+    <td class="next-pl-ident"><b>${nextPlEsc(r.poNumber)}</b><small>${nextPlEsc(r.date||'-')}</small></td>
+    <td class="next-pl-ident"><b>${nextPlEsc(r.profile)}</b><small>${nextPlEsc(r.itemCode||'-')}</small></td>
+    <td><b>${nextPlEsc(r.length)}</b> mm</td>
+    <td><b>${r.unitWeight.toFixed(4)}</b><small>kg/pc</small></td>
+    <td class="next-pl-cell-pending"><b>${r.pendingQty.toLocaleString()}</b><small>${r.remainingPoWeight.toFixed(2)} kg</small></td>
+    <td class="next-pl-cell-current"><b>${r.currentPlQty.toLocaleString()}</b><small>${r.currentPlWeight.toFixed(2)} kg</small></td>
+    <td class="next-pl-cell-stock"><b>${r.stockTotal.toLocaleString()}</b><small>pcs total</small></td>
+    <td class="next-pl-cell-ready"><b>${r.stockReady.toLocaleString()}</b><small>Ready / ${r.stockWip.toLocaleString()} WIP</small></td>
+    <td class="next-pl-cell-available"><b>${r.availableForPo.toLocaleString()}</b><small>pcs available</small></td>
+    <td class="next-pl-cell-cut"><b>${r.needCutQty.toLocaleString()}</b><small>${r.needCutWeight.toFixed(2)} kg</small></td>
+    <td><input class="next-pl-select-input ${nextPlManualOverride[r.rowKey]?'manual':''}" type="number" min="0" max="${Math.floor(nextPlManualOverride[r.rowKey]?r.pendingQty:r.availableForPo)}" step="1" value="${Math.floor(r.selectedQty)}" ${r.excluded?'disabled':''} onchange="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)" oninput="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)"></td>
+    <td class="next-pl-cell-weight"><b>${(r.selectedQty*r.unitWeight).toFixed(2)} kg</b></td>
+    <td><label class="next-pl-skip"><input type="checkbox" ${r.excluded?'checked':''} onchange="nextPlToggleExclude('${nextPlEsc(r.rowKey)}',this.checked)"> Skip</label>${nextPlManualOverride[r.rowKey]?'<div class="next-pl-manual-badge">Manual</div>':''}</td>
+  </tr>`).join('');
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
-  set('nextPlSelectedWeight',`${selectedWeight.toFixed(2)} kg`); set('nextPlSelectedPcs',selectedPcs.toLocaleString()); set('nextPlSelectedLines',`${selectedLines} selected lines`); set('nextPlAvailableWeight',`${availableWeight.toFixed(2)} kg`);
-  set('nextPlToMin',`${Math.max(0,min-selectedWeight).toFixed(2)} kg`); set('nextPlToMax',`${Math.max(0,max-selectedWeight).toFixed(2)} kg`);
-  const status=document.getElementById('nextPlTargetStatus'); const alert=document.getElementById('nextPlAlert');
-  if(status){status.textContent=selectedWeight>=min&&selectedWeight<=max?'TARGET READY':selectedWeight>max?'OVER MAXIMUM':`Need ${(min-selectedWeight).toFixed(2)} kg more to minimum`;status.style.color=selectedWeight>=min&&selectedWeight<=max?'#047857':selectedWeight>max?'#be123c':'#b45309';}
+  set('nextPlCurrentPLWeight',`${currentPlWeight.toFixed(2)} kg`); set('nextPlCurrentPLPcs',`${summary.pcs.toLocaleString()} Pcs`); set('nextPlRemainingMin',`${remainingMin.toFixed(2)} kg`); set('nextPlRemainingMax',`${remainingMax.toFixed(2)} kg`);
+  set('nextPlSelectedWeight',`${selectedWeight.toFixed(2)} kg`); set('nextPlSelectedPcs',selectedPcs.toLocaleString()); set('nextPlSelectedLines',`${selectedLines} selected lines`); set('nextPlAvailableWeight',`${availableWeight.toFixed(2)} kg`); set('nextPlToMin',`${Math.max(0,remainingMin-selectedWeight).toFixed(2)} kg`); set('nextPlToMax',`${Math.max(0,remainingMax-selectedWeight).toFixed(2)} kg`); set('nextPlNeedCutWeight',`${cutWeight.toFixed(2)} kg`);
+  nextPlRenderProfileSummary(all);
+  const totalPlPlusSelection=currentPlWeight+selectedWeight;
+  const status=document.getElementById('nextPlTargetStatus'), alert=document.getElementById('nextPlAlert');
+  if(status){status.textContent=totalPlPlusSelection>=summary.targetMin&&totalPlPlusSelection<=summary.targetMax?'TARGET READY':totalPlPlusSelection>summary.targetMax?'OVER MAXIMUM':`Need ${(summary.targetMin-totalPlPlusSelection).toFixed(2)} kg more`;status.style.color=totalPlPlusSelection>=summary.targetMin&&totalPlPlusSelection<=summary.targetMax?'#047857':totalPlPlusSelection>summary.targetMax?'#be123c':'#b45309';}
   if(alert){
-    if(selectedWeight>=min&&selectedWeight<=max)alert.innerHTML=`<div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;"><i class="fa-solid fa-circle-check"></i> <b>Next PL target ready:</b> ${selectedWeight.toFixed(2)} kg selected within ${min.toLocaleString()}–${max.toLocaleString()} kg.</div>`;
-    else if(selectedWeight>max)alert.innerHTML=`<div style="background:#fff1f2;border:1px solid #fecdd3;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> <b>Over maximum:</b> reduce ${(selectedWeight-max).toFixed(2)} kg.</div>`;
-    else alert.innerHTML=`<div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;"><i class="fa-solid fa-circle-info"></i> Select another ${Math.max(0,min-selectedWeight).toFixed(2)} kg to reach the minimum target.</div>`;
+    const active=`${summary.container||'Current PL'} • ${currentPlWeight.toFixed(2)} kg already planned`;
+    if(totalPlPlusSelection>17000)alert.innerHTML=`<div style="background:#fff1f2;border:1px solid #fda4af;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> <b>WARNING — Next PL is over 17 tons:</b> ${selectedWeight.toFixed(2)} kg (${(selectedWeight/1000).toFixed(2)} T). Please reduce the planned Pcs before finalizing the Packing List.</div>`; else if(totalPlPlusSelection>=summary.targetMin&&totalPlPlusSelection<=summary.targetMax)alert.innerHTML=`<div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;"><i class="fa-solid fa-circle-check"></i> <b>Next PL target ready:</b> ${totalPlPlusSelection.toFixed(2)} kg total (${currentPlWeight.toFixed(2)} kg existing + ${selectedWeight.toFixed(2)} kg new).</div>`;
+    else if(totalPlPlusSelection>summary.targetMax)alert.innerHTML=`<div style="background:#fff1f2;border:1px solid #fecdd3;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> <b>Over maximum:</b> reduce ${(totalPlPlusSelection-summary.targetMax).toFixed(2)} kg. ${active}.</div>`;
+    else alert.innerHTML=`<div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;"><i class="fa-solid fa-circle-info"></i> <b>${active}.</b> Select another ${Math.max(0,summary.targetMin-totalPlPlusSelection).toFixed(2)} kg to reach ${summary.targetMin.toLocaleString()} kg.</div>`;
   }
 }
 function nextPlAutoBuild(){
-  const min=Math.max(0,nextPlNum(document.getElementById('nextPlMinKg')?.value||15000));
-  const max=Math.max(min,nextPlNum(document.getElementById('nextPlMaxKg')?.value||17000));
-  const rows=nextPlFilteredRows();
-  // Clear current temporary selection first; then build from priority order.
-  nextPlSelection={};
-  let total=0;
-  for(const r of rows){
-    if(total>=min)break;
-    if(r.availableForPo<=0||r.unitWeight<=0)continue;
-    const room=max-total;
-    let qty=Math.min(r.availableForPo,Math.floor(room/r.unitWeight));
-    if(qty<=0)continue;
-    // If this whole line can fit under the max, take it. Otherwise take only the quantity that fits.
-    nextPlSelection[r.rowKey]=qty;
-    total+=qty*r.unitWeight;
-  }
-  // If rounding/weight constraints left us below minimum, fill the remaining gap from any unselected line without exceeding max.
-  if(total<min){
-    for(const r of rows){
-      if(total>=min)break;
-      const used=nextPlNum(nextPlSelection[r.rowKey]);
-      const extra=Math.min(Math.max(0,r.availableForPo-used),Math.floor((max-total)/Math.max(r.unitWeight,0.000001)));
-      if(extra>0){nextPlSelection[r.rowKey]=used+extra;total+=extra*r.unitWeight;}
-    }
-  }
-  renderNextPlPlanning();
-  showToast(total>=min&&total<=max?`Auto plan ready: ${total.toFixed(2)} kg selected.`:`Auto plan reached ${total.toFixed(2)} kg; manually adjust to target.` ,total>=min&&total<=max?'success':'warning');
+  const summary=nextPlGetCurrentSummary(); const rows=nextPlFilteredRows().filter(r=>!r.excluded);
+  nextPlSelection={}; nextPlManualOverride={}; let total=0; const minNew=summary.remainingMin, maxNew=summary.remainingMax;
+  for(const r of rows){if(total>=minNew)break;if(r.availableForPo<=0||r.unitWeight<=0)continue;const room=maxNew-total;let qty=Math.min(r.availableForPo,Math.floor(room/r.unitWeight));if(qty<=0)continue;nextPlSelection[r.rowKey]=qty;total+=qty*r.unitWeight;}
+  if(total<minNew){for(const r of rows){if(total>=minNew)break;const used=nextPlNum(nextPlSelection[r.rowKey]);const extra=Math.min(Math.max(0,r.availableForPo-used),Math.floor((maxNew-total)/Math.max(r.unitWeight,0.000001)));if(extra>0){nextPlSelection[r.rowKey]=used+extra;total+=extra*r.unitWeight;}}}
+  renderNextPlPlanning(); const grand=summary.weight+total; showToast(grand>=summary.targetMin&&grand<=summary.targetMax?`Auto plan ready: ${grand.toFixed(2)} kg total.`:`Auto plan reached ${grand.toFixed(2)} kg total; manually adjust to target.`,grand>=summary.targetMin&&grand<=summary.targetMax?'success':'warning');
 }
-function nextPlClearSelection(){nextPlSelection={};renderNextPlPlanning();showToast('Temporary planning selection cleared.','success');}
+function nextPlClearSelection(){nextPlSelection={};nextPlExcluded={};renderNextPlPlanning();showToast('Temporary planning selection cleared.','success');}
 function nextPlExportExcel(){
-  const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
+  const summary=nextPlGetCurrentSummary(); const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
   if(!rows.length)return showToast('No selected planning lines to export.','warning');
   if(typeof XLSX==='undefined'||!XLSX.utils||!XLSX.writeFile)return showToast('Excel export library is not loaded.','error');
-  const out=rows.map((r,i)=>({Priority:i+1,'PO Date':r.date,'PO Number':r.poNumber,Profile:r.profile,'Item Code':r.itemCode,Length:r.length,'Unit Weight (kg)':r.unitWeight,'PO Pending (Pcs)':r.pendingQty,'Current Stock (Pcs)':r.stockTotal,'Available for PO (Pcs)':r.availableForPo,'Selected Pcs':nextPlNum(nextPlSelection[r.rowKey]),'Selected Weight (kg)':nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight}));
+  const out=rows.map((r,i)=>({Priority:i+1,'PO Date':r.date,'PO Number':r.poNumber,Profile:r.profile,'Item Code':r.itemCode,Length:r.length,'Unit Weight (kg)':r.unitWeight,'Original PO Pending (Pcs)':r.originalPendingQty,'Already in Current PL (Pcs)':r.currentPlQty,'Remaining PO Qty (Pcs)':r.pendingQty,'Current Stock (Pcs)':r.stockTotal,'Need Cut (Pcs)':r.needCutQty,'Need Cut Weight (kg)':r.needCutWeight,'Selected Pcs':nextPlNum(nextPlSelection[r.rowKey]),'Selected Weight (kg)':nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight}));
+  out.push({'PO Date':'','PO Number':'TOTAL CURRENT PL','Profile':'','Item Code':'','Length':'','Unit Weight (kg)':'','Original PO Pending (Pcs)':'','Already in Current PL (Pcs)':summary.pcs,'Remaining PO Qty (Pcs)':'','Current Stock (Pcs)':'','Need Cut (Pcs)':'','Need Cut Weight (kg)':'','Selected Pcs':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey]),0),'Selected Weight (kg)':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0)+summary.weight});
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(out),'Next PL Plan');XLSX.writeFile(wb,`AIS_Next_PL_15-17T_Plan_${new Date().toISOString().slice(0,10)}.xlsx`);showToast('Next PL planning Excel downloaded.','success');
 }
 function nextPlPrint(){
-  const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
-  if(!rows.length)return showToast('No selected planning lines to print.','warning');
-  const min=Math.max(0,nextPlNum(document.getElementById('nextPlMinKg')?.value||15000)),max=Math.max(min,nextPlNum(document.getElementById('nextPlMaxKg')?.value||17000));
-  const total=rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0);
-  const w=window.open('','_blank','width=1200,height=800');if(!w)return;
-  w.document.write(`<html><head><title>AIS Next PL Plan</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#0f172a}h2{margin:0 0 4px;color:#075985}p{color:#475569;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:15px;font-size:11px}th,td{border:1px solid #cbd5e1;padding:6px;text-align:center}th{background:#075985;color:#fff}tfoot td{font-weight:900;background:#f1f5f9}</style></head><body><h2>AIS Tracker • Next PL 15–17T Planning</h2><p>Target: ${min.toLocaleString()}–${max.toLocaleString()} kg • Selected: <b>${total.toFixed(2)} kg</b> • Generated: ${new Date().toLocaleString('en-GB')}</p><table><thead><tr><th>Priority</th><th>PO</th><th>Profile</th><th>Item Code</th><th>Length</th><th>PO Pending</th><th>Select Pcs</th><th>Unit Wt</th><th>Weight</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${nextPlEsc(r.poNumber)}</td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.itemCode)}</td><td>${nextPlEsc(r.length)} mm</td><td>${r.pendingQty.toLocaleString()}</td><td>${nextPlNum(nextPlSelection[r.rowKey]).toLocaleString()}</td><td>${r.unitWeight.toFixed(4)}</td><td>${(nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight).toFixed(2)}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="8">TOTAL SELECTED WEIGHT</td><td>${total.toFixed(2)} kg</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`);w.document.close();
+  const summary=nextPlGetCurrentSummary(); const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0); if(!rows.length)return showToast('No selected planning lines to print.','warning');
+  const totalNew=rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0),grand=summary.weight+totalNew;
+  const w=window.open('','_blank','width=1300,height=850');if(!w)return;
+  w.document.write(`<html><head><title>AIS Next PL Plan</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#0f172a}h2{margin:0 0 4px;color:#075985}p{color:#475569;font-size:12px}.kpi{display:inline-block;margin:3px 12px 3px 0;padding:7px 10px;border:1px solid #cbd5e1;border-radius:6px}table{width:100%;border-collapse:collapse;margin-top:15px;font-size:10px}th,td{border:1px solid #cbd5e1;padding:5px;text-align:center}th{background:#075985;color:#fff}tfoot td{font-weight:900;background:#f1f5f9}</style></head><body><h2>AIS Tracker • Next PL 15–17T Planning</h2><p><span class="kpi">Current PL: <b>${summary.weight.toFixed(2)} kg</b></span><span class="kpi">New Selection: <b>${totalNew.toFixed(2)} kg</b></span><span class="kpi">Total Planned: <b>${grand.toFixed(2)} kg</b></span><span class="kpi">Target: <b>${summary.targetMin.toLocaleString()}–${summary.targetMax.toLocaleString()} kg</b></span></p><table><thead><tr><th>Priority</th><th>PO</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Remaining PO</th><th>Stock</th><th>Need Cut</th><th>Select Pcs</th><th>Unit Wt</th><th>Weight</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${nextPlEsc(r.poNumber)}</td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.itemCode)}</td><td>${nextPlEsc(r.length)} mm</td><td>${r.pendingQty.toLocaleString()}</td><td>${r.stockTotal.toLocaleString()}</td><td>${r.needCutQty.toLocaleString()}</td><td>${nextPlNum(nextPlSelection[r.rowKey]).toLocaleString()}</td><td>${r.unitWeight.toFixed(4)}</td><td>${(nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight).toFixed(2)}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="10">CURRENT + NEW TOTAL WEIGHT</td><td>${grand.toFixed(2)} kg</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`);w.document.close();
 }
 
 function switchTab(tabId, btn) {

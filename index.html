@@ -597,16 +597,75 @@
           <div class="next-pl-control"><label>Target Maximum (kg)</label><input id="nextPlMaxKg" type="number" min="0" step="100" value="17000" oninput="renderNextPlPlanning()"></div>
           <div class="next-pl-control"><label>PO Priority</label><select id="nextPlPriority" onchange="renderNextPlPlanning()"><option value="oldest">Old PO → New PO</option><option value="newest">New PO → Old PO</option></select></div>
           <div class="next-pl-control"><label>Filter PO</label><select id="nextPlPoFilter" onchange="renderNextPlPlanning()"><option value="">All POs</option></select></div>
-          <div class="next-pl-control"><label>Filter Profile</label><select id="nextPlProfileFilter" onchange="renderNextPlPlanning()"><option value="">All Profiles</option></select></div>
+          <div class="next-pl-control"><label>Filter Profile</label><select id="nextPlProfileFilter" onchange="renderNextPlPlanning()"><option value="">All Profiles</option></select></div><div class="next-pl-control"><label>View</label><select id="nextPlViewMode" onchange="nextPlSetViewMode(this.value)"><option value="suggested">Suggested for Next PL</option><option value="selected">Selected for Next PL</option><option value="stock">Current Stock Available</option><option value="cut">Need Production / Cut</option><option value="pending">All Pending PO Lines</option></select></div>
         </div>
       </div>
 
       <div class="next-pl-kpis" id="nextPlKpis">
-        <div class="next-pl-kpi"><span><i class="fa-solid fa-weight-hanging"></i> Selected Weight</span><b id="nextPlSelectedWeight">0.00 kg</b><small id="nextPlTargetStatus">Target: 15,000–17,000 kg</small></div>
-        <div class="next-pl-kpi"><span><i class="fa-solid fa-circle-down"></i> To Minimum</span><b id="nextPlToMin">15,000.00 kg</b><small>Remaining to reach minimum</small></div>
-        <div class="next-pl-kpi"><span><i class="fa-solid fa-circle-up"></i> Room to Maximum</span><b id="nextPlToMax">17,000.00 kg</b><small>Available within target maximum</small></div>
+        <div class="next-pl-kpi next-pl-current-kpi"><span><i class="fa-solid fa-boxes-packing"></i> Current PL Already Added</span><b id="nextPlCurrentPLWeight">0.00 kg</b><small id="nextPlCurrentPLPcs">0 Pcs</small></div>
+        <div class="next-pl-kpi"><span><i class="fa-solid fa-weight-hanging"></i> New Selection</span><b id="nextPlSelectedWeight">0.00 kg</b><small id="nextPlTargetStatus">Target: 15,000–17,000 kg</small></div>
+        <div class="next-pl-kpi"><span><i class="fa-solid fa-circle-down"></i> Remaining to Minimum</span><b id="nextPlRemainingMin">15,000.00 kg</b><small>After current PL weight</small></div>
+        <div class="next-pl-kpi"><span><i class="fa-solid fa-circle-up"></i> Remaining to Maximum</span><b id="nextPlRemainingMax">17,000.00 kg</b><small>Space left after current PL</small></div>
+        <div class="next-pl-kpi"><span><i class="fa-solid fa-scissors"></i> Need to Cut</span><b id="nextPlNeedCutWeight">0.00 kg</b><small>PO demand not covered by current stock</small></div>
         <div class="next-pl-kpi"><span><i class="fa-solid fa-cubes"></i> Selected Pcs</span><b id="nextPlSelectedPcs">0</b><small id="nextPlSelectedLines">0 selected lines</small></div>
-        <div class="next-pl-kpi"><span><i class="fa-solid fa-boxes-stacked"></i> Available Stock Weight</span><b id="nextPlAvailableWeight">0.00 kg</b><small>Current stock across displayed lines</small></div>
+        <div class="next-pl-kpi"><span><i class="fa-solid fa-boxes-stacked"></i> Available Stock Weight</span><b id="nextPlAvailableWeight">0.00 kg</b><small>Current stock after current PL reservation</small></div>
+      </div>
+
+      <div class="card next-pl-quick-card" style="margin-top:12px;">
+        <div class="next-pl-quick-head">
+          <div>
+            <h4><i class="fa-solid fa-hand-pointer"></i> Manual Next PL Builder — Profile + Length</h4>
+            <p>Select <b>Profile + Length</b>. Only POs with a <b>shipment balance &gt; 0</b> will be shown. Then select the PO, enter the Pcs to send, and the weight will calculate automatically.</p>
+          </div>
+          <span class="next-pl-quick-mode"><i class="fa-solid fa-shield-halved"></i> Planning Only</span>
+        </div>
+        <div class="next-pl-quick-builder">
+          <div class="next-pl-quick-step quick-step-profile">
+            <div class="quick-step-title"><span>1</span> Select Profile &amp; Length</div>
+            <div class="next-pl-quick-controls">
+              <div class="next-pl-control"><label>Profile</label><select id="nextPlQuickProfile" onchange="renderNextPlPlanning()"><option value="">Select Profile</option></select></div>
+              <div class="next-pl-control"><label>Length</label><select id="nextPlQuickLength" onchange="renderNextPlPlanning()"><option value="">Select Length</option></select></div>
+            </div>
+            <div id="nextPlQuickNote" class="next-pl-quick-note"><i class="fa-solid fa-circle-info"></i> Select Profile + Length first.</div>
+          </div>
+          <div class="next-pl-quick-step quick-step-po">
+            <div class="quick-step-title"><span>2</span> Select PO &amp; Enter Quantity</div>
+            <div class="next-pl-quick-po-grid">
+              <div class="next-pl-control"><label>PO Number</label><select id="nextPlQuickPo" onchange="nextPlQuickPoChanged()"><option value="">Select PO</option></select></div>
+              <div class="next-pl-control"><label>Send Pcs</label><input id="nextPlQuickQty" type="number" min="0" step="1" placeholder="Enter Pcs" oninput="nextPlQuickPreview()"></div>
+            </div>
+            <div class="next-pl-quick-entry-weight"><span><i class="fa-solid fa-scale-balanced"></i> Auto Weight for Entered Pcs</span><b id="nextPlQuickEntryWeight">0.00 kg</b></div>
+            <div id="nextPlQuickBalanceInfo" class="next-pl-quick-balance"></div>
+            <button type="button" class="btn btn-accent next-pl-quick-add-main" onclick="nextPlQuickAdd()"><i class="fa-solid fa-plus"></i> Add to Next PL</button>
+          </div>
+          <div class="next-pl-quick-step quick-step-summary">
+            <div class="quick-step-title"><span>3</span> Selected Items Summary</div>
+            <div id="nextPlQuickSelectedSummary" class="next-pl-quick-selected"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="next-pl-manual card" style="margin-top:12px;">
+        <div class="next-pl-manual-head"><div><h4><i class="fa-solid fa-hand-pointer"></i> Manual Planning / Override</h4><p>Auto suggestion එකක් යන්න බැහැ කියලා Admin තීරණය කළොත් <b>Skip</b> කරන්න. ඒ වෙනුවට PO + Profile + Length තෝරලා Pcs manually add කරන්න.</p></div></div>
+        <div class="next-pl-manual-grid">
+          <div class="next-pl-control"><label>PO Number</label><select id="nextPlManualPo" onchange="nextPlManualProfileChanged()"><option value="">Select PO</option></select></div>
+          <div class="next-pl-control"><label>Profile</label><select id="nextPlManualProfile" onchange="nextPlManualProfileChanged()"><option value="">Select Profile</option></select></div>
+          <div class="next-pl-control"><label>Item Code</label><select id="nextPlManualItem" onchange="nextPlManualProfileChanged()"><option value="">Select Item Code</option></select></div>
+          <div class="next-pl-control"><label>Length</label><select id="nextPlManualLength"><option value="">Select Length</option></select></div>
+          <div class="next-pl-control"><label>Manual Pcs</label><input id="nextPlManualQty" type="number" min="0" step="1" placeholder="Enter Pcs"></div>
+          <div class="next-pl-manual-action"><button class="btn btn-accent" type="button" onclick="nextPlAddManual()"><i class="fa-solid fa-plus"></i> Add to Plan</button></div>
+        </div>
+      </div>
+
+      <div class="card next-pl-shipment-card" style="margin-top:12px;">
+        <div class="next-pl-table-head" style="padding:11px 14px;">
+          <div><h4><i class="fa-solid fa-truck-ramp-box"></i> PO / Profile Shipment Balance</h4><p>Select a PO + Profile to see total order, shipped quantity, current PL quantity and the remaining shipment balance.</p></div>
+        </div>
+        <div class="next-pl-shipment-controls">
+          <div class="next-pl-control"><label>PO Number</label><select id="nextPlShipmentPo" onchange="renderNextPlPlanning()"><option value="">Select PO</option></select></div>
+          <div class="next-pl-control"><label>Profile</label><select id="nextPlShipmentProfile" onchange="renderNextPlPlanning()"><option value="">Select Profile</option></select></div>
+        </div>
+        <div id="nextPlShipmentBalanceInfo" style="margin-top:10px;"></div>
       </div>
 
       <div id="nextPlAlert" class="next-pl-alert"></div>
@@ -616,10 +675,23 @@
         <div class="table-container next-pl-table-wrap">
           <table class="next-pl-table" id="nextPlPlanningTable">
             <thead><tr>
-              <th>Priority</th><th>PO Date</th><th>PO Number</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Unit Wt</th><th>PO Pending</th><th>Current Stock</th><th>Ready Stock</th><th>WIP Stock</th><th>Available for This PO</th><th>Coverage</th><th>Production Gap</th><th>Select Pcs</th><th>Selected Weight</th>
+              <th>#</th><th>PO Date / PO Number</th><th>Profile / Item Code</th><th>Length</th><th>Unit Wt</th><th>PO Balance</th><th>Current PL</th><th>Current Stock</th><th>Ready / WIP</th><th>Available for Next PL</th><th>Need Cut / Produce</th><th>Select Pcs</th><th>Next PL Weight</th><th>Admin</th>
             </tr></thead>
             <tbody id="nextPlPlanningBody"></tbody>
           </table>
+        </div>
+      </div>
+
+      <div class="next-pl-summary-grid">
+        <div class="card next-pl-summary-card">
+          <div class="next-pl-summary-title"><i class="fa-solid fa-layer-group"></i> Next PL Profile Summary</div>
+          <p class="next-pl-summary-sub">එකම Profile එක POs කිහිපයක තිබුණත් එකට එකතු කරලා, next PL එකට යවන්න බලාපොරොත්තු වන total Pcs + Weight.</p>
+          <div class="table-container"><table class="next-pl-summary-table"><thead><tr><th>#</th><th>Profile</th><th>PO Numbers</th><th>Next PL Pcs</th><th>Next PL Weight</th><th>From Current Stock</th><th>Need Cut</th></tr></thead><tbody id="nextPlProfileSummaryBody"></tbody></table></div>
+        </div>
+        <div class="card next-pl-summary-card">
+          <div class="next-pl-summary-title"><i class="fa-solid fa-file-invoice"></i> PO-wise Next PL Plan</div>
+          <p class="next-pl-summary-sub">පරණ PO → අලුත් PO priority එකට එක එක PO එකෙන් next PL එකට යවන expected quantity / weight.</p>
+          <div class="table-container"><table class="next-pl-summary-table"><thead><tr><th>#</th><th>PO Number</th><th>Profile</th><th>Next PL Pcs</th><th>Next PL Weight</th><th>PO Balance</th></tr></thead><tbody id="nextPlPoSummaryBody"></tbody></table></div>
         </div>
       </div>
 
@@ -743,7 +815,7 @@
 
   </div>
 
-  <script src="script.js?v=20261007-1625"></script>
+  <script src="script.js?v=20261007-1735"></script>
 
 <script>
 (function(){
