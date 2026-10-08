@@ -2511,77 +2511,10 @@ body.dark-mode #dashboardTab .pending-po-metric.still{background:#2a1c26;border-
 .next-pl-quick-qty:focus{outline:3px solid rgba(37,99,235,.16);border-color:#2563eb!important;}
 .next-pl-quick-add{min-width:72px;}
 
-
-/* Next PL manual-add confirmation */
-.next-pl-manual-notice{display:none;align-items:center;gap:12px;margin:12px 0 0;padding:12px 15px;border-radius:12px;border:1px solid transparent;font-weight:700;animation:nextPlNoticeIn .35s ease-out both}
-.next-pl-manual-notice.show{display:flex}
-.next-pl-manual-notice.success{background:linear-gradient(90deg,#ecfdf5,#f0fdf4);border-color:#86efac;color:#047857;box-shadow:0 5px 18px rgba(16,185,129,.10)}
-.next-pl-manual-notice i{font-size:20px}
-.next-pl-manual-notice div{display:flex;flex-direction:column;gap:2px}
-.next-pl-manual-notice span{font-size:12px;font-weight:700;color:#166534}
-@keyframes nextPlNoticeIn{from{opacity:0;transform:translateY(-6px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
-.next-pl-po-chart-card .next-pl-po-chart-wrap{min-height:390px}
-
-/* ===== NEXT PL PLANNING V5 — clarity, edit visibility, reset state ===== */
-.next-pl-edit-role-badge{background:#ecfeff!important;color:#075985!important;border-color:#67e8f9!important}
-.next-pl-quick-qty{color:#0f172a!important;background:#ffffff!important;caret-color:#0f766e!important;font-weight:950!important;text-shadow:none!important;opacity:1!important;}
-.next-pl-quick-qty::placeholder{color:#64748b!important;opacity:1!important;font-weight:800!important}
-.next-pl-quick-qty:disabled{color:#64748b!important;background:#f1f5f9!important}
-.next-pl-quick-selected-row .next-pl-quick-qty{border-color:#10b981!important;background:#f0fdf4!important;color:#065f46!important;box-shadow:0 0 0 2px rgba(16,185,129,.08)}
-.next-pl-quick-table td:nth-child(9){background:#f8fbff!important}
-.next-pl-quick-table td:nth-child(10){background:#f0fdf4!important}
-.next-pl-quick-weight{font-size:12px!important;color:#047857!important;min-width:90px!important}
-.next-pl-quick-add{font-weight:900!important}
-.next-pl-total-row{font-variant-numeric:tabular-nums}
-.next-pl-summary-card{box-shadow:0 8px 24px rgba(15,23,42,.05)!important}
-.next-pl-summary-table .next-pl-plan-weight{font-size:12px!important}
-.next-pl-summary-table .next-pl-pending-weight{font-size:12px!important}
-
-/* ===== NEXT PL V6 — clean English UI, stacked summaries, separate weight charts ===== */
-.next-pl-chart-stack{display:flex;flex-direction:column;gap:14px}
-.next-pl-chart-stack .next-pl-po-chart-card{margin-top:0!important}
-.next-pl-chart-total-strip{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 18px;padding:10px 14px;border:1px solid #99f6e4;border-radius:10px;background:linear-gradient(90deg,#ecfdf5,#f0fdfa);color:#0f766e;font-size:12px;font-weight:800}
-.next-pl-chart-total-strip b{font-size:17px;color:#047857;font-variant-numeric:tabular-nums}
-.next-pl-chart-total-strip.pending{border-color:#fde68a;background:linear-gradient(90deg,#fffbeb,#fff7ed);color:#92400e}
-.next-pl-chart-total-strip.pending b{color:#b45309}
-.next-pl-chart-stack .next-pl-po-chart-wrap{height:330px;min-height:330px!important}
-.next-pl-summary-stack{display:flex;flex-direction:column;gap:14px;margin-top:14px}
-.next-pl-summary-stack .next-pl-summary-card{margin:0!important}
-.next-pl-summary-title-row{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:8px}
-.next-pl-export-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.next-pl-export-actions .btn{border:0!important;border-radius:9px!important;padding:7px 11px!important;font-size:11px!important;font-weight:900!important;box-shadow:none!important}
-.next-pl-export-excel{background:#15803d!important;color:#fff!important}
-.next-pl-export-pdf{background:#dc2626!important;color:#fff!important}
-.next-pl-export-print{background:#475569!important;color:#fff!important}
-.next-pl-summary-stack .table-container{max-height:none;overflow-x:auto}
-.next-pl-summary-stack .next-pl-summary-table{min-width:900px}
-.next-pl-summary-stack .next-pl-summary-table th,
-.next-pl-summary-stack .next-pl-summary-table td{white-space:nowrap}
-.next-pl-summary-stack .next-pl-summary-card{box-shadow:0 8px 26px rgba(15,23,42,.055)!important;border:1px solid #dbeafe!important}
-@media(max-width:800px){
-  .next-pl-chart-total-strip{margin:0 10px}
-  .next-pl-chart-stack .next-pl-po-chart-wrap{height:300px;min-height:300px!important}
-  .next-pl-summary-title-row{align-items:flex-start}
-}
-
-/* V7: clearer quick-table filtering, robust share controls and editable Send Pcs */
-.next-pl-quick-controls{display:grid!important;grid-template-columns:repeat(3,minmax(180px,1fr));gap:10px;align-items:end}
-.next-pl-quick-qty{background:#fff!important;color:#0f172a!important;border:2px solid #2563eb!important;border-radius:9px!important;font-size:15px!important;font-weight:900!important;text-align:center!important;box-shadow:0 0 0 2px rgba(37,99,235,.05)!important}
-.next-pl-quick-qty:focus{outline:none!important;border-color:#0f766e!important;box-shadow:0 0 0 4px rgba(15,118,110,.14)!important}
-.next-pl-quick-add{white-space:nowrap!important;min-width:76px!important}
-.next-pl-quick-selected-row{background:linear-gradient(90deg,#ecfdf5,#f0fdf4)!important;box-shadow:inset 4px 0 0 #10b981}
-.next-pl-manual-notice.success{animation:nextPlNoticeIn .28s ease-out}
-@keyframes nextPlNoticeIn{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
-.ais-global-share{position:fixed;right:18px;bottom:18px;z-index:9998;width:44px;height:44px;border:0;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#0f766e;color:#fff;box-shadow:0 8px 24px rgba(15,118,110,.28);cursor:pointer;font-size:17px;transition:transform .18s ease,box-shadow .18s ease,background .18s ease}
-.ais-global-share:hover{transform:translateY(-2px);background:#115e59;box-shadow:0 12px 28px rgba(15,118,110,.34)}
-.next-pl-share-icon i{margin:0!important}
-@media(max-width:900px){.next-pl-quick-controls{grid-template-columns:1fr}.ais-global-share{right:12px;bottom:12px}}
-
-/* V8 visual cleanup: compact Planning Next PL Weight controls */
-.next-pl-hero .next-pl-controls{align-items:end;box-shadow:0 6px 18px rgba(15,23,42,.035);}
-.next-pl-hero .next-pl-target-weight{border:1px solid #86efac;background:linear-gradient(180deg,#f0fdf4,#ffffff);border-radius:10px;padding:9px;box-sizing:border-box;}
-.next-pl-hero .next-pl-target-weight label{color:#047857;}
-.next-pl-hero .next-pl-target-weight small{display:block;margin-top:5px;color:#047857;font-size:9px;line-height:1.25;font-weight:750;}
-.next-pl-hero .next-pl-control{min-width:145px;}
-@media(max-width:900px){.next-pl-hero .next-pl-controls{grid-template-columns:repeat(2,minmax(0,1fr));}}
-@media(max-width:600px){.next-pl-hero .next-pl-controls{grid-template-columns:1fr;}}
+/* Next PL live-save and totals readability */
+.next-pl-summary-table tfoot td,
+.next-pl-table tfoot td,
+.next-pl-quick-table tfoot td { font-weight: 900; }
+.next-pl-table tfoot small { display:block; color:#0f766e; font-size:10px; margin-top:2px; }
+.next-pl-table tbody td small.next-pl-subline { display:block; font-size:10px; margin-top:2px; }
+.next-pl-readonly-badge { letter-spacing:.2px; }
