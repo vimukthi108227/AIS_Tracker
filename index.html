@@ -598,8 +598,7 @@
           <div class="next-pl-control"><label>Target Minimum (kg)</label><input id="nextPlMinKg" type="number" min="0" step="100" value="15000" oninput="renderNextPlPlanning()"></div>
           <div class="next-pl-control"><label>Target Maximum (kg)</label><input id="nextPlMaxKg" type="number" min="0" step="100" value="19000" oninput="renderNextPlPlanning()"></div>
           <div class="next-pl-control"><label>PO Priority</label><select id="nextPlPriority" onchange="renderNextPlPlanning()"><option value="oldest">Old PO → New PO</option><option value="newest">New PO → Old PO</option></select></div>
-          <div class="next-pl-control"><label>Filter PO</label><select id="nextPlPoFilter" onchange="renderNextPlPlanning()"><option value="">All POs</option></select></div>
-          <div class="next-pl-control"><label>Filter Profile</label><select id="nextPlProfileFilter" onchange="renderNextPlPlanning()"><option value="">All Profiles</option></select></div><div class="next-pl-control"><label>Filter Length</label><select id="nextPlLengthFilter" onchange="renderNextPlPlanning()"><option value="">All Lengths</option></select></div><div class="next-pl-control"><label>View</label><select id="nextPlViewMode" onchange="nextPlSetViewMode(this.value)"><option value="suggested">Suggested for Next PL</option><option value="selected">Selected for Next PL</option><option value="stock">Current Stock Available</option><option value="cut">Need Production / Cut</option><option value="pending">All Pending PO Lines</option></select></div>
+          <div class="next-pl-control"><label>View</label><select id="nextPlViewMode" onchange="nextPlSetViewMode(this.value)"><option value="suggested">Suggested for Next PL</option><option value="selected">Selected for Next PL</option><option value="stock">Current Stock Available</option><option value="cut">Need Production / Cut</option><option value="pending">All Pending PO Lines</option></select></div>
         </div>
       </div>
 
@@ -650,7 +649,7 @@
         <div class="next-pl-table-head" style="padding:11px 14px;">
           <div><h4><i class="fa-solid fa-truck-ramp-box"></i> PO / Profile Shipment Balance</h4><p>Select a PO + Profile to see total order, shipped quantity, current PL quantity and the remaining shipment balance.</p></div>
         </div>
-        <div class="next-pl-shipment-controls next-pl-shipment-controls-3">
+        <div class="next-pl-shipment-controls">
           <div class="next-pl-control"><label>PO Number</label><select id="nextPlShipmentPo" onchange="renderNextPlPlanning()"><option value="">Select PO</option></select></div>
           <div class="next-pl-control"><label>Profile</label><select id="nextPlShipmentProfile" onchange="renderNextPlPlanning()"><option value="">Select Profile</option></select></div>
           <div class="next-pl-control"><label>Length</label><select id="nextPlShipmentLength" onchange="renderNextPlPlanning()"><option value="">Select Length</option></select></div>
@@ -660,16 +659,13 @@
 
       <div id="nextPlAlert" class="next-pl-alert"></div>
 
-      <div class="card next-pl-main-table-card" style="margin-top:14px;padding:0;overflow:hidden;">
-        <div class="next-pl-table-head"><div><h4><i class="fa-solid fa-list-check"></i> PO-wise Profile / Length Availability</h4><p>Use the PO / Profile / Length filters above to focus the table. <b>Skip</b> can be restored with Undo; every selection is saved live.</p></div><div class="next-pl-readonly-badge"><i class="fa-solid fa-cloud-arrow-up"></i> LIVE SAVED • VIEW / PLAN ONLY</div></div>
-        <div class="next-pl-table-toolbar">
-          <div class="next-pl-active-filter" id="nextPlActiveFilterNote"><i class="fa-solid fa-filter"></i> All PO / Profile / Length lines</div>
-          <div class="next-pl-table-actions">
-            <button type="button" class="btn next-pl-action-btn next-pl-undo-btn" onclick="nextPlUndoLast()" title="Restore the previous Next PL planning change"><i class="fa-solid fa-rotate-left"></i> Undo Last Change</button>
-            <button type="button" class="btn next-pl-action-btn" onclick="nextPlExportMainExcel()"><i class="fa-solid fa-file-excel"></i> Excel</button>
-            <button type="button" class="btn next-pl-action-btn" onclick="nextPlExportMainPdf()"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-            <button type="button" class="btn next-pl-action-btn" onclick="nextPlPrintMain()"><i class="fa-solid fa-print"></i> Print</button>
-          </div>
+      <div class="card" style="margin-top:14px;padding:0;overflow:hidden;">
+        <div class="next-pl-table-head"><div><h4><i class="fa-solid fa-list-check"></i> PO-wise Profile / Length Availability</h4><p>Use the filters below to view only the required <b>PO + Profile + Length</b>. The table never changes the operational PO/Stock data.</p></div><div class="next-pl-readonly-badge"><i class="fa-solid fa-cloud-arrow-up"></i> LIVE SAVED • VIEW / PLAN ONLY</div></div>
+        <div style="padding:10px 14px;background:#f8fafc;border-top:1px solid #e2e8f0;border-bottom:1px solid #dbeafe;display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;align-items:end;">
+          <div class="next-pl-control"><label>Filter PO</label><select id="nextPlPoFilter" onchange="renderNextPlPlanning()"><option value="">All POs</option></select></div>
+          <div class="next-pl-control"><label>Filter Profile</label><select id="nextPlProfileFilter" onchange="renderNextPlPlanning()"><option value="">All Profiles</option></select></div>
+          <div class="next-pl-control"><label>Filter Length</label><select id="nextPlLengthFilter" onchange="renderNextPlPlanning()"><option value="">All Lengths</option></select></div>
+          <div class="next-pl-control"><label>View</label><select id="nextPlTableViewHint" onchange="nextPlSetViewMode(this.value)"><option value="suggested">Suggested for Next PL</option><option value="selected">Selected for Next PL</option><option value="stock">Current Stock Available</option><option value="cut">Need Production / Cut</option><option value="pending">All Pending PO Lines</option></select></div>
         </div>
         <div class="table-container next-pl-table-wrap">
           <table class="next-pl-table" id="nextPlPlanningTable">
@@ -687,25 +683,15 @@
         <div class="next-pl-po-chart-wrap"><canvas id="nextPlPoWeightChart"></canvas></div>
       </div>
 
-      <div class="next-pl-summary-grid next-pl-summary-stack">
+      <div class="next-pl-summary-grid">
         <div class="card next-pl-summary-card">
           <div class="next-pl-summary-title"><i class="fa-solid fa-layer-group"></i> Next PL Profile Summary</div>
           <p class="next-pl-summary-sub">එකම Profile එක POs කිහිපයක තිබුණත් එකට එකතු කරලා, next PL එකට යවන්න බලාපොරොත්තු වන total Pcs + Weight.</p>
-          <div class="next-pl-summary-toolbar">
-            <button type="button" class="btn next-pl-action-btn" onclick="nextPlExportSummaryExcel('profile')"><i class="fa-solid fa-file-excel"></i> Excel</button>
-            <button type="button" class="btn next-pl-action-btn" onclick="nextPlExportSummaryPdf('profile')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-            <button type="button" class="btn next-pl-action-btn" onclick="nextPlPrintSummary('profile')"><i class="fa-solid fa-print"></i> Print</button>
-          </div>
           <div class="table-container"><table class="next-pl-summary-table"><thead><tr><th>#</th><th>Profile</th><th>PO Numbers</th><th>Next PL Pcs</th><th>Next PL Weight</th><th>From Current Stock</th><th>Need Cut</th></tr></thead><tbody id="nextPlProfileSummaryBody"></tbody><tfoot id="nextPlProfileSummaryFoot"></tfoot></table></div>
         </div>
         <div class="card next-pl-summary-card">
           <div class="next-pl-summary-title"><i class="fa-solid fa-file-invoice"></i> PO-wise Next PL Plan</div>
           <p class="next-pl-summary-sub">පරණ PO → අලුත් PO priority එකට එක එක PO එකෙන් next PL එකට යවන expected quantity / weight.</p>
-          <div class="next-pl-summary-toolbar">
-            <button type="button" class="btn next-pl-action-btn" onclick="nextPlExportSummaryExcel('po')"><i class="fa-solid fa-file-excel"></i> Excel</button>
-            <button type="button" class="btn next-pl-action-btn" onclick="nextPlExportSummaryPdf('po')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-            <button type="button" class="btn next-pl-action-btn" onclick="nextPlPrintSummary('po')"><i class="fa-solid fa-print"></i> Print</button>
-          </div>
           <div class="table-container"><table class="next-pl-summary-table"><thead><tr><th>#</th><th>PO Number</th><th>Profile</th><th>PO Balance Weight</th><th>Next PL Pcs</th><th>Planning Weight</th><th>Pending After Next PL</th></tr></thead><tbody id="nextPlPoSummaryBody"></tbody><tfoot id="nextPlPoSummaryFoot"></tfoot></table></div>
         </div>
       </div>
