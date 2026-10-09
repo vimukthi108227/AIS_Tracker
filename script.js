@@ -1703,104 +1703,93 @@ function nextPlRenderShipmentBalance(rows){
 
 function nextPlRenderProfileSummary(rows){
   const box=document.getElementById('nextPlProfileSummaryBody'), poBox=document.getElementById('nextPlPoSummaryBody'); if(!box||!poBox)return;
-  const selectedRows=(rows||[]).filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
+  const currentInfo=nextPlCurrentPackingInfo();
   const pg=new Map(), pog=new Map();
+  const profileKey=(profile,length)=>nextPlProfileKey(profile)+'|'+cleanLen(length);
+  const getProfile=(profile,length)=>{
+    const key=profileKey(profile,length);
+    if(!pg.has(key))pg.set(key,{profile,length:cleanLen(length),pcs:0,weight:0,po:new Set(),stock:0,cut:0,punch:0,wrap:0,box:0,crate:0,pendingCutWeight:0,processingWeight:0,completeWeight:0,boxQty:0,totalBoxes:0,completedBoxes:0,nextWeight:0,currentWeight:0,currentPcs:0});
+    return pg.get(key);
+  };
+  // Current PL comes from the actual selected packing-list container, not from a stock-stage estimate.
+  (currentInfo.records||[]).forEach(rec=>{
+    const profile=String(rec.profile||'').trim(), length=cleanLen(rec.length), qty=Math.max(0,nextPlNum(rec.pcsQty));
+    if(!profile||!length||qty<=0)return;
+    const master=masterData.find(m=>nextPlSameProfile(m.profile,profile)&&String(m.itemCode||'').trim().toLowerCase()===String(rec.itemCode||'').trim().toLowerCase()&&cleanLen(m.length)===length)||masterData.find(m=>nextPlSameProfile(m.profile,profile)&&cleanLen(m.length)===length);
+    const unitWeight=Math.max(0,nextPlNum(master?.unitWeight));
+    const actualWeight=Math.max(0,nextPlNum(rec.netWeight)) || qty*unitWeight;
+    const g=getProfile(profile,length);
+    g.pcs+=qty; g.currentPcs+=qty; g.weight+=actualWeight; g.currentWeight+=actualWeight; g.completeWeight+=actualWeight;
+    g.boxQty+=Math.max(0,nextPlNum(rec.boxQty)); g.totalBoxes+=Math.max(0,nextPlNum(rec.boxQty)); g.completedBoxes+=Math.max(0,nextPlNum(rec.boxQty));
+    if(rec.poNumber)g.po.add(String(rec.poNumber));
+  });
+
+  const selectedRows=(rows||[]).filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
   selectedRows.forEach(r=>{
-    const q=Math.min(nextPlNum(nextPlSelection[r.rowKey]),Math.max(0,nextPlNum(r.pendingQty)));
-    if(!q)return;
-    const wt=Math.max(0,r.unitWeight), pk=nextPlProfileKey(r.profile)+'|'+cleanLen(r.length);
-    const p=pg.get(pk)||{profile:r.profile,length:r.length,pcs:0,weight:0,po:new Set(),stock:0,cut:0,punch:0,wrap:0,box:0,crate:0,pendingCutWeight:0,processingWeight:0,completeWeight:0,boxQty:0};
-    // Allocate the selected Next PL quantity against existing stage stock only for this summary.
-    // This is a read-only calculation; it does not modify masterData or stock records.
-    let left=Math.min(q,Math.max(0,nextPlNum(r.availableForPo)));
+    const nextQ=Math.min(Math.max(0,nextPlNum(nextPlSelection[r.rowKey])),Math.max(0,nextPlNum(r.pendingQty)));
+    if(!nextQ)return;
+    const wt=Math.max(0,nextPlNum(r.unitWeight)), p=getProfile(r.profile,r.length);
+    // Only the Next PL quantity is stage-estimated. Current PL was already counted from real packing-list rows above.
+    let left=nextQ;
     const stage={box:Math.max(0,nextPlNum(r.stockBox)),wrap:Math.max(0,nextPlNum(r.stockWrap)),punch:Math.max(0,nextPlNum(r.stockPunch)),cut:Math.max(0,nextPlNum(r.stockCut)),crate:Math.max(0,nextPlNum(r.stockCrate))};
     const taken={box:0,wrap:0,punch:0,cut:0,crate:0};
-    ['box','wrap','punch','cut','crate'].forEach(st=>{taken[st]=Math.min(stage[st],left);left-=taken[st];});
-    const fromStock=Math.min(q,Math.max(0,nextPlNum(r.availableForPo)));
-    const pendingCut=Math.max(0,q-fromStock);
-    p.pcs+=q; p.weight+=q*wt; p.po.add(r.poNumber); p.stock+=fromStock;
+    ['crate','box','wrap','punch','cut'].forEach(st=>{taken[st]=Math.min(stage[st],left);left-=taken[st];});
+    const fromStock=Math.min(nextQ,stage.cut+stage.punch+stage.wrap+stage.box+stage.crate);
+    const pendingCut=Math.max(0,nextQ-fromStock);
+    const boxCapacity=Math.max(1,nextPlNum(r.master?.boxCapacity)||100);
+    const nextTotalBoxes=Math.ceil(nextQ/boxCapacity);
+    const nextCompletedBoxes=Math.min(nextTotalBoxes,Math.floor((taken.box+taken.crate)/boxCapacity));
+    p.pcs+=nextQ; p.weight+=nextQ*wt; p.nextWeight+=nextQ*wt; p.po.add(String(r.poNumber||'')); p.stock+=fromStock;
     p.cut+=taken.cut; p.punch+=taken.punch; p.wrap+=taken.wrap; p.box+=taken.box; p.crate+=taken.crate;
     p.pendingCutWeight+=pendingCut*wt;
-    p.completeWeight+=(taken.wrap+taken.box)*wt;
-    p.boxQty+=taken.box;
+    p.completeWeight+=(taken.wrap+taken.box+taken.crate)*wt;
+    p.boxQty+=nextCompletedBoxes; p.totalBoxes+=nextTotalBoxes; p.completedBoxes+=nextCompletedBoxes;
     p.processingWeight+=(taken.cut+taken.punch)*wt;
-    pg.set(pk,p);
-    const ok=String(r.poNumber)+'|'+pk, g=pog.get(ok)||{po:r.poNumber,profile:r.profile,pcs:0,weight:0,poBalanceWeight:0,pending:0,pendingWeight:0};
-    const linePending=Math.max(0,nextPlNum(r.pendingQty)), linePendingAfter=Math.max(0,linePending-q);
-    g.pcs+=q; g.weight+=q*wt; g.poBalanceWeight+=linePending*wt; g.pending+=linePendingAfter; g.pendingWeight+=linePendingAfter*wt; pog.set(ok,g);
+
+    const pk=profileKey(r.profile,r.length), ok=String(r.poNumber)+'|'+pk;
+    const g=pog.get(ok)||{po:r.poNumber,profile:r.profile,pcs:0,weight:0,poBalanceWeight:0,pending:0,pendingWeight:0};
+    const linePending=Math.max(0,nextPlNum(r.pendingQty)), linePendingAfter=Math.max(0,linePending-nextQ);
+    g.pcs+=nextQ; g.weight+=nextQ*wt; g.poBalanceWeight+=linePending*wt; g.pending+=linePendingAfter; g.pendingWeight+=linePendingAfter*wt; pog.set(ok,g);
   });
-  const ps=[...pg.values()].sort((a,b)=>b.weight-a.weight);
+  const ps=[...pg.values()].filter(g=>g.pcs>0).sort((a,b)=>b.weight-a.weight);
   const pos=[...pog.values()].sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true})||String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true}));
-  box.innerHTML=ps.length?ps.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.profile)}</b><small class="next-pl-subline">POs: ${[...g.po].map(nextPlEsc).join(', ')}</small></td><td>${nextPlEsc(g.length)} mm</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight">${g.weight.toFixed(2)} kg</td><td>${g.stock.toLocaleString()} Pcs</td><td>${g.cut.toLocaleString()}</td><td>${g.punch.toLocaleString()}</td><td>${g.wrap.toLocaleString()}</td><td>${g.box.toLocaleString()}</td><td class="next-pl-weight">${g.completeWeight.toFixed(2)} kg</td><td>${g.boxQty.toLocaleString()} Pcs</td><td class="next-pl-pending-weight">${g.pendingCutWeight.toFixed(2)} kg</td><td>${g.processingWeight.toFixed(2)} kg</td></tr>`).join(''):`<tr><td colspan="14" class="next-pl-summary-empty">Auto Build or manually select Pcs to see the expected Next PL profile + length totals.</td></tr>`;
+  box.innerHTML=ps.length?ps.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.profile)}</b><small class="next-pl-subline">POs: ${[...g.po].filter(Boolean).map(nextPlEsc).join(', ')}</small></td><td>${nextPlEsc(g.length)} mm</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight">${g.weight.toFixed(2)} kg</td><td>${g.stock.toLocaleString()} Pcs</td><td>${g.cut.toLocaleString()}</td><td>${g.punch.toLocaleString()}</td><td>${g.wrap.toLocaleString()}</td><td>${g.box.toLocaleString()}</td><td class="next-pl-weight">${g.completeWeight.toFixed(2)} kg</td><td>${g.boxQty.toLocaleString()} Boxes</td><td class="next-pl-pending-weight">${g.pendingCutWeight.toFixed(2)} kg</td><td>${g.processingWeight.toFixed(2)} kg</td></tr>`).join(''):`<tr><td colspan="14" class="next-pl-summary-empty">Current PL packing-list data and selected Next PL quantities will appear here.</td></tr>`;
   const pfTable=box.closest('table');
-  if(pfTable){let tf=pfTable.querySelector('tfoot');if(!tf){tf=document.createElement('tfoot');pfTable.appendChild(tf);}const sum=k=>ps.reduce((s,g)=>s+g[k],0);tf.innerHTML=`<tr class="next-pl-total-row"><td colspan="3">TOTAL PROFILE PLAN</td><td>${sum('pcs').toLocaleString()} Pcs</td><td>${sum('weight').toFixed(2)} kg</td><td>${sum('stock').toLocaleString()} Pcs</td><td>${sum('cut').toLocaleString()}</td><td>${sum('punch').toLocaleString()}</td><td>${sum('wrap').toLocaleString()}</td><td>${sum('box').toLocaleString()}</td><td>${sum('completeWeight').toFixed(2)} kg</td><td>${sum('boxQty').toLocaleString()} Pcs</td><td>${sum('pendingCutWeight').toFixed(2)} kg</td><td>${sum('processingWeight').toFixed(2)} kg</td></tr>`;}
-  // Next PL-only visual summary: weight by profile/length plus estimated box completion KPIs.
+  if(pfTable){let tf=pfTable.querySelector('tfoot');if(!tf){tf=document.createElement('tfoot');pfTable.appendChild(tf);}const sum=k=>ps.reduce((s,g)=>s+g[k],0);tf.innerHTML=`<tr class="next-pl-total-row"><td colspan="3">TOTAL PL (CURRENT + NEXT)</td><td>${sum('pcs').toLocaleString()} Pcs</td><td>${sum('weight').toFixed(2)} kg</td><td>${sum('stock').toLocaleString()} Pcs</td><td>${sum('cut').toLocaleString()}</td><td>${sum('punch').toLocaleString()}</td><td>${sum('wrap').toLocaleString()}</td><td>${sum('box').toLocaleString()}</td><td>${sum('completeWeight').toFixed(2)} kg</td><td>${sum('boxQty').toLocaleString()} Boxes</td><td>${sum('pendingCutWeight').toFixed(2)} kg</td><td>${sum('processingWeight').toFixed(2)} kg</td></tr>`;}
+  // Both panels use exactly the same combined totals so Completed Boxes cannot disagree.
   try {
-    const canvas=document.getElementById('nextPlProfileMetricsChart');
-    const kpi=document.getElementById('nextPlSummaryBoxKpis');
-    if(kpi){
-      const totals=selectedRows.reduce((a,r)=>{
-        const q=Math.min(nextPlNum(nextPlSelection[r.rowKey]),Math.max(0,nextPlNum(r.pendingQty)));
-        const cap=Math.max(1,nextPlNum(r.master?.boxCapacity)||100);
-        const key=nextPlProfileKey(r.profile)+'|'+cleanLen(r.length);
-        const planned=ps.find(x=>nextPlProfileKey(x.profile)+'|'+cleanLen(x.length)===key);
-        const boxStage=planned?planned.box:0, crateStage=planned?planned.crate:0;
-        a.totalBoxes+=Math.ceil(q/cap); a.completedBoxes+=Math.floor((boxStage+crateStage)/cap);
-        return a;
-      },{totalBoxes:0,completedBoxes:0});
-      const totalComplete=ps.reduce((a,g)=>a+g.completeWeight,0);
-      const totalPending=ps.reduce((a,g)=>a+g.pendingCutWeight,0);
-      const totalProcessing=ps.reduce((a,g)=>a+g.processingWeight,0);
-      kpi.innerHTML=[
-        ['Complete Weight',totalComplete.toFixed(2)+' kg'],
-        ['Pending Cutting Weight',totalPending.toFixed(2)+' kg'],
-        ['Processing Weight (Cut + Punch)',totalProcessing.toFixed(2)+' kg'],
-        ['Total Boxes (estimated)',totals.totalBoxes.toLocaleString()],
-        ['Completed Boxes (Box + Crate stage)',totals.completedBoxes.toLocaleString()]
-      ].map(([label,value])=>`<div style="padding:12px;border:1px solid #dbeafe;border-radius:10px;background:#f8fafc;"><div style="font-size:11px;color:#64748b;font-weight:800;margin-bottom:5px;">${label}</div><div style="font-size:19px;font-weight:900;color:#0f3b52;">${value}</div></div>`).join('');
-    }
-    // Doughnut chart fills the open space under the PO-wise plan and summarizes Next PL weight mix.
-    const donutCanvas=document.getElementById('nextPlStageDonutChart');
-    const donutKpi=document.getElementById('nextPlDonutBoxKpis');
-    const totalComplete=ps.reduce((a,g)=>a+g.completeWeight,0);
-    const totalPending=ps.reduce((a,g)=>a+g.pendingCutWeight,0);
-    const totalProcessing=ps.reduce((a,g)=>a+g.processingWeight,0);
-    const boxTotals=selectedRows.reduce((a,r)=>{
-      const q=Math.min(nextPlNum(nextPlSelection[r.rowKey]),Math.max(0,nextPlNum(r.pendingQty)));
-      const cap=Math.max(1,nextPlNum(r.master?.boxCapacity)||100);
-      const key=nextPlProfileKey(r.profile)+'|'+cleanLen(r.length);
-      const planned=ps.find(x=>nextPlProfileKey(x.profile)+'|'+cleanLen(x.length)===key);
-      const boxStage=planned?planned.box:0, crateStage=planned?planned.crate:0;
-      a.total+=Math.ceil(q/cap); a.completed+=Math.min(Math.ceil(q/cap),Math.floor((boxStage+crateStage)/cap));
-      return a;
-    },{total:0,completed:0});
-    const boxPending=Math.max(0,boxTotals.total-boxTotals.completed);
-    if(donutKpi){donutKpi.innerHTML=[
-      ['Total Boxes',boxTotals.total.toLocaleString()],
-      ['Completed',boxTotals.completed.toLocaleString()],
-      ['Pending',boxPending.toLocaleString()]
-    ].map(([label,value])=>`<div style="padding:10px;border:1px solid #dbeafe;border-radius:10px;background:#f8fafc;text-align:center;"><div style="font-size:11px;color:#64748b;font-weight:800;margin-bottom:5px;">${label}</div><div style="font-size:19px;font-weight:900;color:#0f3b52;">${value}</div></div>`).join('');}
+    const canvas=document.getElementById('nextPlProfileMetricsChart'), kpi=document.getElementById('nextPlSummaryBoxKpis');
+    const donutCanvas=document.getElementById('nextPlStageDonutChart'), donutKpi=document.getElementById('nextPlDonutBoxKpis');
+    const totals=ps.reduce((a,g)=>{
+      a.totalWeight+=g.weight; a.completeWeight+=g.completeWeight; a.pendingWeight+=g.pendingCutWeight; a.processingWeight+=g.processingWeight;
+      a.totalBoxes+=g.totalBoxes; a.completedBoxes+=g.completedBoxes; return a;
+    },{totalWeight:0,completeWeight:0,pendingWeight:0,processingWeight:0,totalBoxes:0,completedBoxes:0});
+    totals.pendingBoxes=Math.max(0,totals.totalBoxes-totals.completedBoxes);
+    const kpiHtml=[
+      ['Total PL Weight (Current + Next)',totals.totalWeight.toFixed(2)+' kg'],
+      ['Complete Weight (Current PL actual + Next PL Wrapping/Box/Crate)',totals.completeWeight.toFixed(2)+' kg'],
+      ['Pending Cutting Weight',totals.pendingWeight.toFixed(2)+' kg'],
+      ['Processing Weight (Cut + Punch)',totals.processingWeight.toFixed(2)+' kg'],
+      ['Total Boxes (Current PL actual + Next PL estimated)',totals.totalBoxes.toLocaleString()],
+      ['Completed Boxes (same in both charts)',totals.completedBoxes.toLocaleString()]
+    ].map(([label,value])=>`<div style="padding:12px;border:1px solid #dbeafe;border-radius:10px;background:#f8fafc;"><div style="font-size:11px;color:#64748b;font-weight:800;margin-bottom:5px;">${label}</div><div style="font-size:19px;font-weight:900;color:#0f3b52;">${value}</div></div>`).join('');
+    if(kpi)kpi.innerHTML=kpiHtml;
+    if(donutKpi)donutKpi.innerHTML=[['Total PL Weight',totals.totalWeight.toFixed(2)+' kg'],['Total Boxes',totals.totalBoxes.toLocaleString()],['Completed',totals.completedBoxes.toLocaleString()],['Pending',totals.pendingBoxes.toLocaleString()]].map(([label,value])=>`<div style="padding:10px;border:1px solid #dbeafe;border-radius:10px;background:#f8fafc;text-align:center;"><div style="font-size:11px;color:#64748b;font-weight:800;margin-bottom:5px;">${label}</div><div style="font-size:19px;font-weight:900;color:#0f3b52;">${value}</div></div>`).join('');
     if(donutCanvas && typeof Chart!=='undefined'){
       if(window.nextPlStageDonutChartInstance)window.nextPlStageDonutChartInstance.destroy();
-      const hasWeight=totalComplete+totalPending+totalProcessing>0;
-      window.nextPlStageDonutChartInstance=new Chart(donutCanvas.getContext('2d'),{
-        type:'doughnut',
-        data:{labels:['Complete Weight (Wrapping + Box)','Pending Cutting Weight','Processing Weight (Cut + Punch)'],datasets:[{data:hasWeight?[Number(totalComplete.toFixed(2)),Number(totalPending.toFixed(2)),Number(totalProcessing.toFixed(2))]:[1,0,0],backgroundColor:['#059669','#e11d48','#2563eb'],borderColor:'#ffffff',borderWidth:3,hoverOffset:8}]},
-        options:{responsive:true,maintainAspectRatio:false,cutout:'62%',animation:{duration:800},plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:12,font:{size:11}}},tooltip:{callbacks:{label:c=>`${c.label}: ${Number(c.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`}}}}
-      });
+      const hasWeight=totals.completeWeight+totals.pendingWeight+totals.processingWeight>0;
+      window.nextPlStageDonutChartInstance=new Chart(donutCanvas.getContext('2d'),{type:'doughnut',data:{labels:['Complete Weight (Current PL + Wrapping + Box + Crate)','Pending Cutting Weight','Processing Weight (Cut + Punch)'],datasets:[{data:hasWeight?[Number(totals.completeWeight.toFixed(2)),Number(totals.pendingWeight.toFixed(2)),Number(totals.processingWeight.toFixed(2))]:[1,0,0],backgroundColor:['#059669','#e11d48','#2563eb'],borderColor:'#ffffff',borderWidth:3,hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',animation:{duration:800},plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:12,font:{size:11}}},tooltip:{callbacks:{label:c=>`${c.label}: ${Number(c.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`}}}}});
     }
     if(canvas && typeof Chart!=='undefined'){
       if(window.nextPlProfileMetricsChartInstance)window.nextPlProfileMetricsChartInstance.destroy();
       const labels=ps.map(g=>`${g.profile} • ${cleanLen(g.length)} mm`);
-      window.nextPlProfileMetricsChartInstance=new Chart(canvas.getContext('2d'),{
-        type:'bar',data:{labels,datasets:[
-          {label:'Complete Weight (Wrapping + Box)',data:ps.map(g=>Number(g.completeWeight.toFixed(2))),backgroundColor:'#059669',borderRadius:5},
-          {label:'Pending Cutting Weight',data:ps.map(g=>Number(g.pendingCutWeight.toFixed(2))),backgroundColor:'#e11d48',borderRadius:5},
-          {label:'Processing Weight (Cut + Punch)',data:ps.map(g=>Number(g.processingWeight.toFixed(2))),backgroundColor:'#2563eb',borderRadius:5}
-        ]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:800},interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:14}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${Number(c.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`}}},scales:{x:{ticks:{autoSkip:false,maxRotation:55,minRotation:0,font:{size:10,weight:'600'}}},y:{beginAtZero:true,title:{display:true,text:'Weight (kg)'},ticks:{callback:v=>Number(v).toLocaleString()}}}}
-      });
+      window.nextPlProfileMetricsChartInstance=new Chart(canvas.getContext('2d'),{type:'bar',data:{labels,datasets:[
+        {label:'Complete Weight (Current PL + Wrapping + Box + Crate)',data:ps.map(g=>Number(g.completeWeight.toFixed(2))),backgroundColor:'#059669',borderRadius:5},
+        {label:'Pending Cutting Weight',data:ps.map(g=>Number(g.pendingCutWeight.toFixed(2))),backgroundColor:'#e11d48',borderRadius:5},
+        {label:'Processing Weight (Cut + Punch)',data:ps.map(g=>Number(g.processingWeight.toFixed(2))),backgroundColor:'#2563eb',borderRadius:5}
+      ]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:800},interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:14}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${Number(c.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`}}},scales:{x:{ticks:{autoSkip:false,maxRotation:55,minRotation:0,font:{size:10,weight:'600'}}},y:{beginAtZero:true,title:{display:true,text:'Weight (kg)'},ticks:{callback:v=>Number(v).toLocaleString()}}}}});
     }
-  } catch(e){ console.warn('Next PL profile metrics chart could not render:',e); }
+  } catch(e){console.warn('Next PL combined summary chart could not render:',e);}
   poBox.innerHTML=pos.length?pos.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.po)}</b></td><td>${nextPlEsc(g.profile)}</td><td class="next-pl-po-balance-weight">${g.poBalanceWeight.toFixed(2)} kg</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight next-pl-plan-weight">${g.weight.toFixed(2)} kg</td><td class="next-pl-pending-weight">${g.pendingWeight.toFixed(2)} kg</td></tr>`).join(''):`<tr><td colspan="7" class="next-pl-summary-empty">No PO-wise Next PL selections yet.</td></tr>`;
   const poFoot=document.getElementById('nextPlPoSummaryFoot'); if(poFoot){const tB=pos.reduce((s,g)=>s+g.poBalanceWeight,0),tP=pos.reduce((s,g)=>s+g.pcs,0),tW=pos.reduce((s,g)=>s+g.weight,0),tPend=pos.reduce((s,g)=>s+g.pendingWeight,0);poFoot.innerHTML=`<tr class="next-pl-total-row"><td colspan="3">TOTAL PO PLAN</td><td>${tB.toFixed(2)} kg</td><td>${tP.toLocaleString()} Pcs</td><td>${tW.toFixed(2)} kg</td><td>${tPend.toFixed(2)} kg</td></tr>`;}
 }
