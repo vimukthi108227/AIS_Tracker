@@ -694,12 +694,24 @@
         <div class="card next-pl-summary-card">
           <div class="next-pl-summary-title"><i class="fa-solid fa-layer-group"></i> Next PL Profile Summary</div>
           <p class="next-pl-summary-sub">එකම Profile එක POs කිහිපයක තිබුණත් එකට එකතු කරලා, next PL එකට යවන්න බලාපොරොත්තු වන total Pcs + Weight.</p>
-          <div class="table-container"><table class="next-pl-summary-table"><thead><tr><th>#</th><th>Profile</th><th>PO Numbers</th><th>Next PL Pcs</th><th>Next PL Weight</th><th>From Current Stock</th><th>Need Cut</th></tr></thead><tbody id="nextPlProfileSummaryBody"></tbody><tfoot id="nextPlProfileSummaryFoot"></tfoot></table></div>
+          <div class="table-container"><table class="next-pl-summary-table"><thead><tr><th>#</th><th>Profile</th><th>Length</th><th>Next PL Pcs</th><th>Next PL Weight</th><th>From Current Stock</th><th>Cut Pcs</th><th>Punch Pcs</th><th>Wrapping Pcs</th><th>Box Stage Pcs</th><th>Complete Weight<br>(Wrapping + Box)</th><th>Box Qty</th><th>Pending Cutting Weight</th><th>Processing Weight<br>(Cut + Punch)</th></tr></thead><tbody id="nextPlProfileSummaryBody"></tbody><tfoot id="nextPlProfileSummaryFoot"></tfoot></table></div>
+          <div class="next-pl-summary-chart-panel" style="margin-top:16px;padding:14px;border:1px solid #dbeafe;border-radius:12px;background:var(--card-bg,#fff);">
+            <div class="next-pl-summary-title"><i class="fa-solid fa-chart-column"></i> Next PL Stage & Completion Summary</div>
+            <p class="next-pl-summary-sub">Current Next PL selections only. Weights are estimated from the selected Pcs and stage stock; this chart does not change stock or create packing records.</p>
+            <div id="nextPlSummaryBoxKpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0;"></div>
+            <div style="position:relative;height:320px;min-width:0;"><canvas id="nextPlProfileMetricsChart"></canvas></div>
+          </div>
         </div>
         <div class="card next-pl-summary-card">
           <div class="next-pl-summary-title"><i class="fa-solid fa-file-invoice"></i> PO-wise Next PL Plan</div>
           <p class="next-pl-summary-sub">පරණ PO → අලුත් PO priority එකට එක එක PO එකෙන් next PL එකට යවන expected quantity / weight.</p>
           <div class="table-container"><table class="next-pl-summary-table"><thead><tr><th>#</th><th>PO Number</th><th>Profile</th><th>PO Balance Weight</th><th>Next PL Pcs</th><th>Planning Weight</th><th>Pending After Next PL</th></tr></thead><tbody id="nextPlPoSummaryBody"></tbody><tfoot id="nextPlPoSummaryFoot"></tfoot></table></div>
+          <div class="next-pl-summary-chart-panel" style="margin-top:16px;padding:14px;border:1px solid #dbeafe;border-radius:12px;background:var(--card-bg,#fff);min-height:360px;">
+            <div class="next-pl-summary-title"><i class="fa-solid fa-chart-pie"></i> Next PL Weight & Box Completion</div>
+            <p class="next-pl-summary-sub">Live summary of selected Next PL quantities: complete, pending cutting and processing weights, plus estimated box completion.</p>
+            <div id="nextPlDonutBoxKpis" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0;"></div>
+            <div style="position:relative;height:245px;min-width:0;max-width:500px;margin:0 auto;"><canvas id="nextPlStageDonutChart"></canvas></div>
+          </div>
         </div>
       </div>
 
