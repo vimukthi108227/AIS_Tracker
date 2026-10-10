@@ -1703,93 +1703,74 @@ function nextPlRenderShipmentBalance(rows){
 
 function nextPlRenderProfileSummary(rows){
   const box=document.getElementById('nextPlProfileSummaryBody'), poBox=document.getElementById('nextPlPoSummaryBody'); if(!box||!poBox)return;
-  const currentInfo=nextPlCurrentPackingInfo();
-  const pg=new Map(), pog=new Map();
-  const profileKey=(profile,length)=>nextPlProfileKey(profile)+'|'+cleanLen(length);
-  const getProfile=(profile,length)=>{
-    const key=profileKey(profile,length);
-    if(!pg.has(key))pg.set(key,{profile,length:cleanLen(length),pcs:0,weight:0,po:new Set(),stock:0,cut:0,punch:0,wrap:0,box:0,crate:0,pendingCutWeight:0,processingWeight:0,completeWeight:0,boxQty:0,totalBoxes:0,completedBoxes:0,nextWeight:0,currentWeight:0,currentPcs:0});
-    return pg.get(key);
-  };
-  // Current PL comes from the actual selected packing-list container, not from a stock-stage estimate.
-  (currentInfo.records||[]).forEach(rec=>{
-    const profile=String(rec.profile||'').trim(), length=cleanLen(rec.length), qty=Math.max(0,nextPlNum(rec.pcsQty));
-    if(!profile||!length||qty<=0)return;
-    const master=masterData.find(m=>nextPlSameProfile(m.profile,profile)&&String(m.itemCode||'').trim().toLowerCase()===String(rec.itemCode||'').trim().toLowerCase()&&cleanLen(m.length)===length)||masterData.find(m=>nextPlSameProfile(m.profile,profile)&&cleanLen(m.length)===length);
-    const unitWeight=Math.max(0,nextPlNum(master?.unitWeight));
-    const actualWeight=Math.max(0,nextPlNum(rec.netWeight)) || qty*unitWeight;
-    const g=getProfile(profile,length);
-    g.pcs+=qty; g.currentPcs+=qty; g.weight+=actualWeight; g.currentWeight+=actualWeight; g.completeWeight+=actualWeight;
-    g.boxQty+=Math.max(0,nextPlNum(rec.boxQty)); g.totalBoxes+=Math.max(0,nextPlNum(rec.boxQty)); g.completedBoxes+=Math.max(0,nextPlNum(rec.boxQty));
-    if(rec.poNumber)g.po.add(String(rec.poNumber));
-  });
-
   const selectedRows=(rows||[]).filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
+  const pg=new Map(), pog=new Map();
   selectedRows.forEach(r=>{
-    const nextQ=Math.min(Math.max(0,nextPlNum(nextPlSelection[r.rowKey])),Math.max(0,nextPlNum(r.pendingQty)));
-    if(!nextQ)return;
-    const wt=Math.max(0,nextPlNum(r.unitWeight)), p=getProfile(r.profile,r.length);
-    // Only the Next PL quantity is stage-estimated. Current PL was already counted from real packing-list rows above.
-    let left=nextQ;
+    const q=Math.min(nextPlNum(nextPlSelection[r.rowKey]),Math.max(0,nextPlNum(r.pendingQty)));
+    if(!q)return;
+    const wt=Math.max(0,r.unitWeight), pk=nextPlProfileKey(r.profile)+'|'+cleanLen(r.length);
+    const p=pg.get(pk)||{profile:r.profile,length:r.length,pcs:0,weight:0,po:new Set(),stock:0,cut:0,punch:0,wrap:0,box:0,crate:0,pendingCutWeight:0,processingWeight:0,completeWeight:0,boxQty:0};
+    // Allocate the selected Next PL quantity against existing stage stock only for this summary.
+    // This is a read-only calculation; it does not modify masterData or stock records.
+    let left=Math.min(q,Math.max(0,nextPlNum(r.availableForPo)));
     const stage={box:Math.max(0,nextPlNum(r.stockBox)),wrap:Math.max(0,nextPlNum(r.stockWrap)),punch:Math.max(0,nextPlNum(r.stockPunch)),cut:Math.max(0,nextPlNum(r.stockCut)),crate:Math.max(0,nextPlNum(r.stockCrate))};
     const taken={box:0,wrap:0,punch:0,cut:0,crate:0};
-    ['crate','box','wrap','punch','cut'].forEach(st=>{taken[st]=Math.min(stage[st],left);left-=taken[st];});
-    const fromStock=Math.min(nextQ,stage.cut+stage.punch+stage.wrap+stage.box+stage.crate);
-    const pendingCut=Math.max(0,nextQ-fromStock);
-    const boxCapacity=Math.max(1,nextPlNum(r.master?.boxCapacity)||100);
-    const nextTotalBoxes=Math.ceil(nextQ/boxCapacity);
-    const nextCompletedBoxes=Math.min(nextTotalBoxes,Math.floor((taken.box+taken.crate)/boxCapacity));
-    p.pcs+=nextQ; p.weight+=nextQ*wt; p.nextWeight+=nextQ*wt; p.po.add(String(r.poNumber||'')); p.stock+=fromStock;
+    ['box','wrap','punch','cut','crate'].forEach(st=>{taken[st]=Math.min(stage[st],left);left-=taken[st];});
+    const fromStock=Math.min(q,Math.max(0,nextPlNum(r.availableForPo)));
+    const pendingCut=Math.max(0,q-fromStock);
+    p.pcs+=q; p.weight+=q*wt; p.po.add(r.poNumber); p.stock+=fromStock;
     p.cut+=taken.cut; p.punch+=taken.punch; p.wrap+=taken.wrap; p.box+=taken.box; p.crate+=taken.crate;
     p.pendingCutWeight+=pendingCut*wt;
-    p.completeWeight+=(taken.wrap+taken.box+taken.crate)*wt;
-    p.boxQty+=nextCompletedBoxes; p.totalBoxes+=nextTotalBoxes; p.completedBoxes+=nextCompletedBoxes;
+    p.completeWeight+=(taken.wrap+taken.box)*wt;
+    p.boxQty+=taken.box;
     p.processingWeight+=(taken.cut+taken.punch)*wt;
-
-    const pk=profileKey(r.profile,r.length), ok=String(r.poNumber)+'|'+pk;
-    const g=pog.get(ok)||{po:r.poNumber,profile:r.profile,pcs:0,weight:0,poBalanceWeight:0,pending:0,pendingWeight:0};
-    const linePending=Math.max(0,nextPlNum(r.pendingQty)), linePendingAfter=Math.max(0,linePending-nextQ);
-    g.pcs+=nextQ; g.weight+=nextQ*wt; g.poBalanceWeight+=linePending*wt; g.pending+=linePendingAfter; g.pendingWeight+=linePendingAfter*wt; pog.set(ok,g);
+    pg.set(pk,p);
+    const ok=String(r.poNumber)+'|'+pk, g=pog.get(ok)||{po:r.poNumber,profile:r.profile,pcs:0,weight:0,poBalanceWeight:0,pending:0,pendingWeight:0};
+    const linePending=Math.max(0,nextPlNum(r.pendingQty)), linePendingAfter=Math.max(0,linePending-q);
+    g.pcs+=q; g.weight+=q*wt; g.poBalanceWeight+=linePending*wt; g.pending+=linePendingAfter; g.pendingWeight+=linePendingAfter*wt; pog.set(ok,g);
   });
-  const ps=[...pg.values()].filter(g=>g.pcs>0).sort((a,b)=>b.weight-a.weight);
+  const ps=[...pg.values()].sort((a,b)=>b.weight-a.weight);
   const pos=[...pog.values()].sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true})||String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true}));
-  box.innerHTML=ps.length?ps.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.profile)}</b><small class="next-pl-subline">POs: ${[...g.po].filter(Boolean).map(nextPlEsc).join(', ')}</small></td><td>${nextPlEsc(g.length)} mm</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight">${g.weight.toFixed(2)} kg</td><td>${g.stock.toLocaleString()} Pcs</td><td>${g.cut.toLocaleString()}</td><td>${g.punch.toLocaleString()}</td><td>${g.wrap.toLocaleString()}</td><td>${g.box.toLocaleString()}</td><td class="next-pl-weight">${g.completeWeight.toFixed(2)} kg</td><td>${g.boxQty.toLocaleString()} Boxes</td><td class="next-pl-pending-weight">${g.pendingCutWeight.toFixed(2)} kg</td><td>${g.processingWeight.toFixed(2)} kg</td></tr>`).join(''):`<tr><td colspan="14" class="next-pl-summary-empty">Current PL packing-list data and selected Next PL quantities will appear here.</td></tr>`;
+  box.innerHTML=ps.length?ps.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.profile)}</b><small class="next-pl-subline">POs: ${[...g.po].map(nextPlEsc).join(', ')}</small></td><td>${nextPlEsc(g.length)} mm</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight">${g.weight.toFixed(2)} kg</td><td>${g.stock.toLocaleString()} Pcs</td><td>${g.cut.toLocaleString()}</td><td>${g.punch.toLocaleString()}</td><td>${g.wrap.toLocaleString()}</td><td>${g.box.toLocaleString()}</td><td class="next-pl-weight">${g.completeWeight.toFixed(2)} kg</td><td>${g.boxQty.toLocaleString()} Pcs</td><td class="next-pl-pending-weight">${g.pendingCutWeight.toFixed(2)} kg</td><td>${g.processingWeight.toFixed(2)} kg</td></tr>`).join(''):`<tr><td colspan="14" class="next-pl-summary-empty">Auto Build or manually select Pcs to see the expected Next PL profile + length totals.</td></tr>`;
   const pfTable=box.closest('table');
-  if(pfTable){let tf=pfTable.querySelector('tfoot');if(!tf){tf=document.createElement('tfoot');pfTable.appendChild(tf);}const sum=k=>ps.reduce((s,g)=>s+g[k],0);tf.innerHTML=`<tr class="next-pl-total-row"><td colspan="3">TOTAL PL (CURRENT + NEXT)</td><td>${sum('pcs').toLocaleString()} Pcs</td><td>${sum('weight').toFixed(2)} kg</td><td>${sum('stock').toLocaleString()} Pcs</td><td>${sum('cut').toLocaleString()}</td><td>${sum('punch').toLocaleString()}</td><td>${sum('wrap').toLocaleString()}</td><td>${sum('box').toLocaleString()}</td><td>${sum('completeWeight').toFixed(2)} kg</td><td>${sum('boxQty').toLocaleString()} Boxes</td><td>${sum('pendingCutWeight').toFixed(2)} kg</td><td>${sum('processingWeight').toFixed(2)} kg</td></tr>`;}
-  // Both panels use exactly the same combined totals so Completed Boxes cannot disagree.
+  if(pfTable){let tf=pfTable.querySelector('tfoot');if(!tf){tf=document.createElement('tfoot');pfTable.appendChild(tf);}const sum=k=>ps.reduce((s,g)=>s+g[k],0);tf.innerHTML=`<tr class="next-pl-total-row"><td colspan="3">TOTAL PROFILE PLAN</td><td>${sum('pcs').toLocaleString()} Pcs</td><td>${sum('weight').toFixed(2)} kg</td><td>${sum('stock').toLocaleString()} Pcs</td><td>${sum('cut').toLocaleString()}</td><td>${sum('punch').toLocaleString()}</td><td>${sum('wrap').toLocaleString()}</td><td>${sum('box').toLocaleString()}</td><td>${sum('completeWeight').toFixed(2)} kg</td><td>${sum('boxQty').toLocaleString()} Pcs</td><td>${sum('pendingCutWeight').toFixed(2)} kg</td><td>${sum('processingWeight').toFixed(2)} kg</td></tr>`;}
+  // Next PL-only visual summary: weight by profile/length plus estimated box completion KPIs.
   try {
-    const canvas=document.getElementById('nextPlProfileMetricsChart'), kpi=document.getElementById('nextPlSummaryBoxKpis');
-    const donutCanvas=document.getElementById('nextPlStageDonutChart'), donutKpi=document.getElementById('nextPlDonutBoxKpis');
-    const totals=ps.reduce((a,g)=>{
-      a.totalWeight+=g.weight; a.completeWeight+=g.completeWeight; a.pendingWeight+=g.pendingCutWeight; a.processingWeight+=g.processingWeight;
-      a.totalBoxes+=g.totalBoxes; a.completedBoxes+=g.completedBoxes; return a;
-    },{totalWeight:0,completeWeight:0,pendingWeight:0,processingWeight:0,totalBoxes:0,completedBoxes:0});
-    totals.pendingBoxes=Math.max(0,totals.totalBoxes-totals.completedBoxes);
-    const kpiHtml=[
-      ['Total PL Weight (Current + Next)',totals.totalWeight.toFixed(2)+' kg'],
-      ['Complete Weight (Current PL actual + Next PL Wrapping/Box/Crate)',totals.completeWeight.toFixed(2)+' kg'],
-      ['Pending Cutting Weight',totals.pendingWeight.toFixed(2)+' kg'],
-      ['Processing Weight (Cut + Punch)',totals.processingWeight.toFixed(2)+' kg'],
-      ['Total Boxes (Current PL actual + Next PL estimated)',totals.totalBoxes.toLocaleString()],
-      ['Completed Boxes (same in both charts)',totals.completedBoxes.toLocaleString()]
-    ].map(([label,value])=>`<div style="padding:12px;border:1px solid #dbeafe;border-radius:10px;background:#f8fafc;"><div style="font-size:11px;color:#64748b;font-weight:800;margin-bottom:5px;">${label}</div><div style="font-size:19px;font-weight:900;color:#0f3b52;">${value}</div></div>`).join('');
-    if(kpi)kpi.innerHTML=kpiHtml;
-    if(donutKpi)donutKpi.innerHTML=[['Total PL Weight',totals.totalWeight.toFixed(2)+' kg'],['Total Boxes',totals.totalBoxes.toLocaleString()],['Completed',totals.completedBoxes.toLocaleString()],['Pending',totals.pendingBoxes.toLocaleString()]].map(([label,value])=>`<div style="padding:10px;border:1px solid #dbeafe;border-radius:10px;background:#f8fafc;text-align:center;"><div style="font-size:11px;color:#64748b;font-weight:800;margin-bottom:5px;">${label}</div><div style="font-size:19px;font-weight:900;color:#0f3b52;">${value}</div></div>`).join('');
-    if(donutCanvas && typeof Chart!=='undefined'){
-      if(window.nextPlStageDonutChartInstance)window.nextPlStageDonutChartInstance.destroy();
-      const hasWeight=totals.completeWeight+totals.pendingWeight+totals.processingWeight>0;
-      window.nextPlStageDonutChartInstance=new Chart(donutCanvas.getContext('2d'),{type:'doughnut',data:{labels:['Complete Weight (Current PL + Wrapping + Box + Crate)','Pending Cutting Weight','Processing Weight (Cut + Punch)'],datasets:[{data:hasWeight?[Number(totals.completeWeight.toFixed(2)),Number(totals.pendingWeight.toFixed(2)),Number(totals.processingWeight.toFixed(2))]:[1,0,0],backgroundColor:['#059669','#e11d48','#2563eb'],borderColor:'#ffffff',borderWidth:3,hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',animation:{duration:800},plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:12,font:{size:11}}},tooltip:{callbacks:{label:c=>`${c.label}: ${Number(c.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`}}}}});
+    const canvas=document.getElementById('nextPlProfileMetricsChart');
+    const kpi=document.getElementById('nextPlSummaryBoxKpis');
+    if(kpi){
+      const totals=selectedRows.reduce((a,r)=>{
+        const q=Math.min(nextPlNum(nextPlSelection[r.rowKey]),Math.max(0,nextPlNum(r.pendingQty)));
+        const cap=Math.max(1,nextPlNum(r.master?.boxCapacity)||100);
+        const key=nextPlProfileKey(r.profile)+'|'+cleanLen(r.length);
+        const planned=ps.find(x=>nextPlProfileKey(x.profile)+'|'+cleanLen(x.length)===key);
+        const boxStage=planned?planned.box:0, crateStage=planned?planned.crate:0;
+        a.totalBoxes+=Math.ceil(q/cap); a.completedBoxes+=Math.floor((boxStage+crateStage)/cap);
+        return a;
+      },{totalBoxes:0,completedBoxes:0});
+      const totalComplete=ps.reduce((a,g)=>a+g.completeWeight,0);
+      const totalPending=ps.reduce((a,g)=>a+g.pendingCutWeight,0);
+      const totalProcessing=ps.reduce((a,g)=>a+g.processingWeight,0);
+      kpi.innerHTML=[
+        ['Complete Weight',totalComplete.toFixed(2)+' kg'],
+        ['Pending Cutting Weight',totalPending.toFixed(2)+' kg'],
+        ['Processing Weight (Cut + Punch)',totalProcessing.toFixed(2)+' kg'],
+        ['Total Boxes (estimated)',totals.totalBoxes.toLocaleString()],
+        ['Completed Boxes (Box + Crate stage)',totals.completedBoxes.toLocaleString()]
+      ].map(([label,value])=>`<div style="padding:12px;border:1px solid #dbeafe;border-radius:10px;background:#f8fafc;"><div style="font-size:11px;color:#64748b;font-weight:800;margin-bottom:5px;">${label}</div><div style="font-size:19px;font-weight:900;color:#0f3b52;">${value}</div></div>`).join('');
     }
     if(canvas && typeof Chart!=='undefined'){
       if(window.nextPlProfileMetricsChartInstance)window.nextPlProfileMetricsChartInstance.destroy();
       const labels=ps.map(g=>`${g.profile} • ${cleanLen(g.length)} mm`);
-      window.nextPlProfileMetricsChartInstance=new Chart(canvas.getContext('2d'),{type:'bar',data:{labels,datasets:[
-        {label:'Complete Weight (Current PL + Wrapping + Box + Crate)',data:ps.map(g=>Number(g.completeWeight.toFixed(2))),backgroundColor:'#059669',borderRadius:5},
-        {label:'Pending Cutting Weight',data:ps.map(g=>Number(g.pendingCutWeight.toFixed(2))),backgroundColor:'#e11d48',borderRadius:5},
-        {label:'Processing Weight (Cut + Punch)',data:ps.map(g=>Number(g.processingWeight.toFixed(2))),backgroundColor:'#2563eb',borderRadius:5}
-      ]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:800},interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:14}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${Number(c.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`}}},scales:{x:{ticks:{autoSkip:false,maxRotation:55,minRotation:0,font:{size:10,weight:'600'}}},y:{beginAtZero:true,title:{display:true,text:'Weight (kg)'},ticks:{callback:v=>Number(v).toLocaleString()}}}}});
+      window.nextPlProfileMetricsChartInstance=new Chart(canvas.getContext('2d'),{
+        type:'bar',data:{labels,datasets:[
+          {label:'Complete Weight (Wrapping + Box)',data:ps.map(g=>Number(g.completeWeight.toFixed(2))),backgroundColor:'#059669',borderRadius:5},
+          {label:'Pending Cutting Weight',data:ps.map(g=>Number(g.pendingCutWeight.toFixed(2))),backgroundColor:'#e11d48',borderRadius:5},
+          {label:'Processing Weight (Cut + Punch)',data:ps.map(g=>Number(g.processingWeight.toFixed(2))),backgroundColor:'#2563eb',borderRadius:5}
+        ]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:800},interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:14}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${Number(c.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`}}},scales:{x:{ticks:{autoSkip:false,maxRotation:55,minRotation:0,font:{size:10,weight:'600'}}},y:{beginAtZero:true,title:{display:true,text:'Weight (kg)'},ticks:{callback:v=>Number(v).toLocaleString()}}}}
+      });
     }
-  } catch(e){console.warn('Next PL combined summary chart could not render:',e);}
+  } catch(e){ console.warn('Next PL profile metrics chart could not render:',e); }
   poBox.innerHTML=pos.length?pos.map((g,i)=>`<tr><td>${i+1}</td><td><b>${nextPlEsc(g.po)}</b></td><td>${nextPlEsc(g.profile)}</td><td class="next-pl-po-balance-weight">${g.poBalanceWeight.toFixed(2)} kg</td><td>${g.pcs.toLocaleString()}</td><td class="next-pl-weight next-pl-plan-weight">${g.weight.toFixed(2)} kg</td><td class="next-pl-pending-weight">${g.pendingWeight.toFixed(2)} kg</td></tr>`).join(''):`<tr><td colspan="7" class="next-pl-summary-empty">No PO-wise Next PL selections yet.</td></tr>`;
   const poFoot=document.getElementById('nextPlPoSummaryFoot'); if(poFoot){const tB=pos.reduce((s,g)=>s+g.poBalanceWeight,0),tP=pos.reduce((s,g)=>s+g.pcs,0),tW=pos.reduce((s,g)=>s+g.weight,0),tPend=pos.reduce((s,g)=>s+g.pendingWeight,0);poFoot.innerHTML=`<tr class="next-pl-total-row"><td colspan="3">TOTAL PO PLAN</td><td>${tB.toFixed(2)} kg</td><td>${tP.toLocaleString()} Pcs</td><td>${tW.toFixed(2)} kg</td><td>${tPend.toFixed(2)} kg</td></tr>`;}
 }
@@ -5706,3 +5687,1297 @@ window.openPoEditModal=openPoEditModal; window.openShipmentEditModal=openShipmen
 window.updateProductionCardboardAvailability=updateProductionCardboardAvailability;
 
 window.resetCardboardStock=resetCardboardStock; window.saveCardboardManualData=saveCardboardManualData; window.editCardboardManualData=editCardboardManualData; window.deleteCardboardManualData=deleteCardboardManualData; window.cancelCardboardManualEdit=cancelCardboardManualEdit;
+
+
+/* AIS CRATE DESIGN V1 — additive module; does not modify stock/PO/shipment records */
+const AIS_CRATE_EXCEL_ROWS = [{"profile": "AL-1037", "itemCode": "RT-BT68", "length": 1727.2, "boxSize": "1739 x 265 x 125", "crateWidth": 658.0}, {"profile": "AL-1038", "itemCode": "OX-TFBE96", "length": 2438.4, "boxSize": "2450 x 132 x 80", "crateWidth": 698.0}, {"profile": "AL-1038", "itemCode": "VL-RGEF24", "length": 608.74, "boxSize": "615 x 132 x 130", "crateWidth": 698.0}, {"profile": "AL-1038", "itemCode": "VL-RGEF30", "length": 758.14, "boxSize": "765 x 132 x 130", "crateWidth": 698.0}, {"profile": "AL-1038", "itemCode": "VL-RGEF36", "length": 910.54, "boxSize": "920 x 132 x 130", "crateWidth": 698.0}, {"profile": "AL-1038", "itemCode": "VL-RGEF48", "length": 1215.34, "boxSize": "1225 x 132 x 130", "crateWidth": 698.0}, {"profile": "AL-1038", "itemCode": "VL-RGEF60", "length": 1520.14, "boxSize": "1530 x 132 x 80", "crateWidth": 698.0}, {"profile": "AL-1038", "itemCode": "VL-RGEF72", "length": 1824.94, "boxSize": "1835 x 132 x 80", "crateWidth": 698.0}, {"profile": "AL-1039", "itemCode": "RP-M3MTR24", "length": 595.3, "boxSize": "605 x 139 x 180", "crateWidth": 733.0}, {"profile": "AL-1039", "itemCode": "RP-M3MTR30", "length": 747.7, "boxSize": "760 x 139 x 180", "crateWidth": 733.0}, {"profile": "AL-1039", "itemCode": "RP-M3MTR36", "length": 900.1, "boxSize": "910 x 139 x 180", "crateWidth": 733.0}, {"profile": "AL-1039", "itemCode": "RP-M3MTR42", "length": 1052.5, "boxSize": "1065 x 139 x 180", "crateWidth": 733.0}, {"profile": "AL-1039", "itemCode": "RP-M3MTR48", "length": 1204.9, "boxSize": "1215 x 139 x 180", "crateWidth": 733.0}, {"profile": "AL-1040", "itemCode": "RP-M3BTR24", "length": 598.5, "boxSize": "605 x 134 x 101", "crateWidth": 708.0}, {"profile": "AL-1040", "itemCode": "RP-M3BTR30", "length": 750.9, "boxSize": "760 x 134 x 101", "crateWidth": 708.0}, {"profile": "AL-1040", "itemCode": "RP-M3BTR36", "length": 903.3, "boxSize": "910 x 134 x 101", "crateWidth": 708.0}, {"profile": "AL-1040", "itemCode": "RP-M3BTR42", "length": 1055.7, "boxSize": "1065 x 134 x 101", "crateWidth": 708.0}, {"profile": "AL-1040", "itemCode": "RP-M3BTR48", "length": 1208.1, "boxSize": "1215 x 134 x 101", "crateWidth": 708.0}, {"profile": "AL-1041", "itemCode": "RP-MLEC34", "length": 810.26, "boxSize": "820 x 164 x 174", "crateWidth": 688.0}, {"profile": "AL-1041", "itemCode": "RP-MLEC42", "length": 1013.46, "boxSize": "1020 x 164 x 174", "crateWidth": 688.0}, {"profile": "AL-1041", "itemCode": "RP-MLEC50", "length": 1216.66, "boxSize": "1225 x 164 x 174", "crateWidth": 688.0}, {"profile": "AL-1041", "itemCode": "RP-MLEC58", "length": 1419.86, "boxSize": "1430 x 164 x 174", "crateWidth": 688.0}, {"profile": "AL-1041", "itemCode": "RP-MLEC66", "length": 1623.06, "boxSize": "1630 x 164 x 174", "crateWidth": 688.0}, {"profile": "AL-1041", "itemCode": "RP-MLEC82", "length": 2029.46, "boxSize": "2040 x 164 x 174", "crateWidth": 688.0}, {"profile": "AL-1041", "itemCode": "RP-MLEC130", "length": 3245.0, "boxSize": "3255 x 164 x 89", "crateWidth": 688.0}, {"profile": "AL-1042", "itemCode": "RA-UNLF", "length": 2438.4, "boxSize": "2451 x 128 x 112", "crateWidth": 680.0}, {"profile": "AL-1043", "itemCode": "RP-VSPPIL58", "length": 1474.8, "boxSize": "1485 x 105 x 307", "crateWidth": 670.0}, {"profile": "AL-1043", "itemCode": "RP-VSPPIL74", "length": 1881.2, "boxSize": "1890 x 105 x 307", "crateWidth": 670.0}, {"profile": "AL-1043", "itemCode": "RP-VSPPIL95", "length": 2395.55, "boxSize": "2405 x 105 x 307", "crateWidth": 670.0}, {"profile": "AL-1044", "itemCode": "RP-VSGHTV16", "length": 368.3, "boxSize": "380 x 233 x 214", "crateWidth": 670.0}, {"profile": "AL-1045", "itemCode": "RP-VSHFCL16", "length": 406.4, "boxSize": "424 x 131 x 166", "crateWidth": 703.0}, {"profile": "AL-1045", "itemCode": "RP-VSHFCL42", "length": 863.6, "boxSize": "877 x 131 x 166", "crateWidth": 703.0}, {"profile": "AL-1045", "itemCode": "RP-VSHFCL50", "length": 1066.8, "boxSize": "1080 x 131 x 166", "crateWidth": 703.0}, {"profile": "AL-1045", "itemCode": "RP-VSHFCL58", "length": 1270.0, "boxSize": "1283 x 131 x 166", "crateWidth": 703.0}, {"profile": "AL-1045", "itemCode": "RP-VSHFCL66", "length": 1473.2, "boxSize": "1487 x 131 x 166", "crateWidth": 703.0}, {"profile": "AL-1045", "itemCode": "RP-VSHFCL82", "length": 1879.6, "boxSize": "1893 x 131 x 166", "crateWidth": 703.0}, {"profile": "AL-1046", "itemCode": "OX-SV12", "length": 233.12, "boxSize": "242 x 212 x 204", "crateWidth": 660.0}, {"profile": "AL-1046", "itemCode": "OX-SV16", "length": 334.7, "boxSize": "345 x 212 x 204", "crateWidth": 660.0}, {"profile": "AL-1046", "itemCode": "OX-SV20", "length": 436.32, "boxSize": "448 x 212 x 204", "crateWidth": 660.0}, {"profile": "AL-1046", "itemCode": "OX-SH30", "length": 647.7, "boxSize": "796 x 212 x 204", "crateWidth": 660.0}, {"profile": "AL-1046", "itemCode": "OX-SH54", "length": 1292.23, "boxSize": "1300 x 212 x 84", "crateWidth": 660.0}, {"profile": "AL-1046", "itemCode": "OX-SH60", "length": 1444.63, "boxSize": "1455 x 212 x 84", "crateWidth": 660.0}, {"profile": "AL-1046", "itemCode": "OX-SH72", "length": 1749.43, "boxSize": "1760 x 212 x 84", "crateWidth": 660.0}, {"profile": "AL-1046", "itemCode": "OX-SLSEXT", "length": 2438.4, "boxSize": "2450 x 212 x 84", "crateWidth": 660.0}, {"profile": "AL-1047", "itemCode": "RP-M4TC24", "length": 608.8, "boxSize": "620 x 307 x 178", "crateWidth": 680.0}, {"profile": "AL-1047", "itemCode": "RP-M4TC30", "length": 761.2, "boxSize": "772 x 234 x 178", "crateWidth": 680.0}, {"profile": "AL-1047", "itemCode": "RP-M4TC36", "length": 913.6, "boxSize": "924 x 161 x 178", "crateWidth": 680.0}, {"profile": "AL-1047", "itemCode": "RP-M4TC42", "length": 1066.0, "boxSize": "1077 x 161 x 178", "crateWidth": 680.0}, {"profile": "AL-1047", "itemCode": "RP-M4TC48", "length": 1218.4, "boxSize": "1229 x 161 x 178", "crateWidth": 680.0}, {"profile": "AL-1047", "itemCode": "RP-M4TEE130", "length": 3302.0, "boxSize": "3320 x  95 x 174", "crateWidth": 680.0}, {"profile": "AL-1048", "itemCode": "RP-M3CT130", "length": 3302.0, "boxSize": "3317 x 229 x 145", "crateWidth": null}, {"profile": "AL-1049", "itemCode": "RP-MRGAE24", "length": 608.8, "boxSize": "604 x 220 x195", "crateWidth": 720.0}, {"profile": "AL-1049", "itemCode": "RP-MRGAE36", "length": 913.6, "boxSize": "925 x 307 x 172", "crateWidth": 720.0}, {"profile": "AL-1049", "itemCode": "RP-MRGAE60", "length": 1523.2, "boxSize": "1535 x 307 x 172", "crateWidth": 720.0}, {"profile": "AL-1049", "itemCode": "RP-MRGAE66", "length": 1675.6, "boxSize": "1685 x 307 x 172", "crateWidth": 720.0}, {"profile": "AL-1049", "itemCode": "RP-MRGAE72", "length": 1828.0, "boxSize": "1839 x 307 x 172", "crateWidth": 720.0}, {"profile": "AL-1049", "itemCode": "RP-MRGAE96", "length": 2437.6, "boxSize": "2449 x 307 x 172", "crateWidth": 720.0}, {"profile": "AL-1090", "itemCode": "RP-VL3TC24", "length": 575.0, "boxSize": "586 x 225 x 129", "crateWidth": 680.0}, {"profile": "AL-1090", "itemCode": "RP-VL3TC30", "length": 727.4, "boxSize": "739 x 225 x 129", "crateWidth": 680.0}, {"profile": "AL-1090", "itemCode": "RP-VL3TC36", "length": 879.8, "boxSize": "891 x 225 x 129", "crateWidth": 680.0}, {"profile": "AL-1090", "itemCode": "RP-VL3TC42", "length": 1032.2, "boxSize": "1044 x 225 x 129", "crateWidth": 680.0}, {"profile": "AL-1090", "itemCode": "RP-VL3TC48", "length": 1184.6, "boxSize": "1196 x 225 x 129", "crateWidth": 680.0}, {"profile": "AL-1090", "itemCode": "RP-VL3TC60", "length": 1489.4, "boxSize": "1501 x 118 x 129", "crateWidth": 680.0}, {"profile": "AL-1090", "itemCode": "RP-VL3TC72", "length": 1794.2, "boxSize": "1806 x 118 x 129", "crateWidth": 680.0}, {"profile": "AL-1090", "itemCode": "RP-VL3TC72E", "length": 1799.0, "boxSize": "1810 x 118 x 129", "crateWidth": 680.0}, {"profile": "AL-1090", "itemCode": "RP-VL3TC96", "length": 2438.4, "boxSize": "2450  x 118 x 129", "crateWidth": 680.0}, {"profile": "AL-1207", "itemCode": "RT-DBPA29", "length": 681.7, "boxSize": "690 x  331 x 136", "crateWidth": 680.0}, {"profile": "AL-1207", "itemCode": "RT-DBPA42", "length": 1021.0, "boxSize": "1030 x  331 x 136", "crateWidth": 680.0}, {"profile": "AL-1223", "itemCode": "RP-PSE130", "length": 3302.0, "boxSize": "3310 x 163 x 234", "crateWidth": null}];
+const AIS_CRATE_STATE_KEY = 'AIS_CRATE_MASTER_V1';
+let ppCrateMasterRows = [];
+let ppUploadedExcelRows = [];
+let ppCratePlans = [];
+const PP_CRATE_PLAN_STATE_KEY = 'AIS_CRATE_PLAN_V1';
+let ppCrateCurrent = null;
+let ppCrateNextRows = [];
+const PP_WOOD_THICKNESS = 20, PP_WOOD_WIDTH = 96, PP_LEG_HEIGHT = 100, PP_MAX_OVERALL_HEIGHT = 1100, PP_MAX_PROFILE_WEIGHT_KG = 18000;
+function ppEsc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function ppNum(v){const n=Number(String(v??'').replace(/,/g,''));return Number.isFinite(n)?n:0;}
+function ppDims(s){const a=String(s||'').match(/\d+(?:\.\d+)?/g)||[];return a.length>=3?{l:+a[0],w:+a[1],h:+a[2]}:null;}
+function ppNormalizeProfile(p){
+ // Master Catalog may store 1037 while the AIS Excel sheet stores AL-1037.
+ return String(p??'').trim().toUpperCase().replace(/^AL\s*[- ]?\s*/,'').replace(/\s+/g,'');
+}
+function ppNormalizeLength(l){
+ const raw=String(cleanLen(l)||'').trim(),n=Number(raw);
+ return raw!==''&&Number.isFinite(n)?String(Number(n.toFixed(3))):raw;
+}
+function ppMasterKey(p,i,l){return [ppNormalizeProfile(p),String(i||'').trim().toUpperCase().replace(/\s+/g,''),ppNormalizeLength(l)].join('|');}
+function ppExcelLookup(){
+ const m=new Map();
+ [...(AIS_CRATE_EXCEL_ROWS||[]),...(ppUploadedExcelRows||[])].forEach(r=>{const k=ppMasterKey(r.profile,r.itemCode,r.length);const prev=m.get(k);if(!prev||(prev.crateWidth==null&&r.crateWidth!=null))m.set(k,{...r});});
+ return m;
+}
+function ppProfileWidthMap(){
+ // One standard crate width per profile: use the most frequent explicit Excel width.
+ // Normalize profile names so 1037 and AL-1037 resolve to the same profile.
+ const by={};[...(AIS_CRATE_EXCEL_ROWS||[]),...(ppUploadedExcelRows||[])].forEach(r=>{
+  const profileKey=ppNormalizeProfile(r.profile),w=ppNum(r.crateWidth);
+  if(profileKey&&w>0){(by[profileKey]??=[]).push(w);}
+ });
+ const out={};Object.keys(by).forEach(p=>{const counts={};by[p].forEach(v=>counts[v]=(counts[v]||0)+1);out[p]=+Object.entries(counts).sort((a,b)=>b[1]-a[1]||Number(a[0])-Number(b[0]))[0][0];});return out;
+}
+function ppCrateCalc(row){
+ const d=ppDims(row.boxSize); if(!d||!d.l||!d.w||!d.h)return {valid:false,reason:'Box size missing'};
+ const width=ppNum(row.crateWidth)||Math.ceil((d.w+2*PP_WOOD_THICKNESS)/10)*10;
+ const innerW=Math.max(0,width-2*PP_WOOD_THICKNESS);
+ const maxPackingH=PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH;
+ const orientation=row.orientation||'auto';
+ const candidates=[];
+ for(const key of ['height','width']){
+   if(orientation!=='auto'&&orientation!==key)continue;
+   const cross=key==='height'?d.w:d.h;
+   const vertical=key==='height'?d.h:d.w;
+   const per=Math.floor(innerW/cross);
+   if(per<1)continue;
+   const maxLayers=Math.floor(maxPackingH/vertical);
+   if(maxLayers<1)continue;
+   const defaultCapacity=per*maxLayers;
+   const boxes=ppNum(row.manualBoxesPerCrate)||defaultCapacity;
+   const layers=ppNum(row.manualLayers)||Math.ceil(boxes/per);
+   const packH=ppNum(row.manualPackingH)||layers*vertical;
+   const outerL=ppNum(row.manualOuterL)||Math.ceil((ppNum(row.length)||d.l)+32);
+   const overallH=packH+PP_LEG_HEIGHT+2*PP_WOOD_WIDTH;
+   candidates.push({valid:overallH<=PP_MAX_OVERALL_HEIGHT,box:d,orientation:key,outerL,outerW:width,packingH:packH,overallH,perLayer:per,layers,boxesPerCrate:boxes,maxCapacity:per*maxLayers,estimatedWidth:!row.crateWidth,manual:!!(row.manualOuterL||row.manualPackingH||row.manualPerLayer||row.manualLayers||row.manualBoxesPerCrate)});
+ }
+ if(!candidates.length)return {valid:false,reason:'Neither box orientation fits the crate width and height limit'};
+ candidates.sort((a,b)=>b.maxCapacity-a.maxCapacity||a.overallH-b.overallH);
+ const chosen=candidates[0];
+ if(ppNum(row.manualPerLayer)>0)chosen.perLayer=Math.max(1,Math.floor(ppNum(row.manualPerLayer)));
+ if(ppNum(row.manualBoxesPerCrate)>0&&!ppNum(row.manualPackingH)){chosen.layers=Math.ceil(chosen.boxesPerCrate/chosen.perLayer);chosen.packingH=chosen.layers*(chosen.orientation==='height'?d.h:d.w);chosen.overallH=chosen.packingH+PP_LEG_HEIGHT+2*PP_WOOD_WIDTH;chosen.valid=chosen.overallH<=PP_MAX_OVERALL_HEIGHT;}
+ return chosen;
+}
+
+function ppBuildCrateMaster(force=false){
+ const lookup=ppExcelLookup(), widthMap=ppProfileWidthMap(), prior=new Map((ppCrateMasterRows||[]).map(r=>[ppMasterKey(r.profile,r.itemCode,r.length),r]));
+ const source=(Array.isArray(masterData)?masterData:[]);
+ const combos=new Map();
+ source.forEach(m=>{
+  const profile=String(m.profile||'').trim(), itemCode=String(m.itemCode||'').trim(), length=cleanLen(m.length);
+  if(!profile||!length)return;
+  const k=ppMasterKey(profile,itemCode,length);
+  if(!combos.has(k))combos.set(k,{profile,itemCode,length,pcsPerBox:Math.max(1,ppNum(m.boxCapacity)||ppNum(m.pcsPerBox)||ppNum(m.pcsForBox)||1),unitWeight:ppNum(m.unitWeight),master:true});
+ });
+ // Include all Excel rows even if the current catalog is missing the combination.
+ [...(AIS_CRATE_EXCEL_ROWS||[]),...(ppUploadedExcelRows||[])].forEach(r=>{const k=ppMasterKey(r.profile,r.itemCode,r.length);if(!combos.has(k))combos.set(k,{profile:r.profile,itemCode:r.itemCode,length:r.length,pcsPerBox:1,unitWeight:0,master:false});});
+ const next=[];
+ combos.forEach((c,k)=>{
+  const ex=lookup.get(k), old=prior.get(k)||{};
+  const boxSize=old.boxSize||ex?.boxSize||'';
+  const width=(old.manual&&old.crateWidth)?old.crateWidth:(widthMap[ppNormalizeProfile(c.profile)]??ex?.crateWidth??old.crateWidth??'');
+  // Master Catalog is authoritative for Pcs/Box; ignore stale cached crate-master values.
+  const row={...c,...old,profile:c.profile,itemCode:c.itemCode,length:c.length,pcsPerBox:Math.max(1,ppNum(c.pcsPerBox)||1),unitWeight:old.unitWeight??c.unitWeight,boxSize,crateWidth:width,orientation:old.orientation||'auto',excelMatched:!!ex,source:ex?'AIS Excel':(old.source||'Manual'),manual:!!old.manual};
+  row.calc=ppCrateCalc(row);
+  next.push(row);
+ });
+ ppCrateMasterRows=next.sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.itemCode.localeCompare(b.itemCode,undefined,{numeric:true})||ppNum(a.length)-ppNum(b.length));
+ ppRenderCrateMaster(); ppPopulateCrateStandards(); ppRefreshNextPlLines();
+}
+function ppRenderCrateMaster(){
+ const body=document.getElementById('ppCrateMasterBody');if(!body)return;
+ const q=(document.getElementById('ppCrateMasterSearch')?.value||'').toLowerCase();
+ const rows=ppCrateMasterRows.filter(r=>[r.profile,r.itemCode,r.length,r.boxSize,r.crateWidth].join(' ').toLowerCase().includes(q));
+ const matched=ppCrateMasterRows.filter(r=>r.excelMatched).length,missing=ppCrateMasterRows.filter(r=>!r.boxSize||!r.crateWidth||!r.calc.valid).length;
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+ set('ppCrateMasterCount',ppCrateMasterRows.length);set('ppCrateMasterMatched',matched);set('ppCrateMasterMissing',missing);
+ body.innerHTML=rows.length?rows.map(r=>{const k=ppMasterKey(r.profile,r.itemCode,r.length),idx=ppCrateMasterRows.indexOf(r),c=ppCrateCalc(r),status=(!r.boxSize||!r.crateWidth||!c.valid)?'<span style="color:#b45309;font-weight:800">Manual data needed</span>':(r.excelMatched?'<span style="color:#047857;font-weight:800">Excel matched</span>':'<span style="color:#1d4ed8;font-weight:800">Manual / Catalog</span>');
+ const field=(name,val,min=1)=>`<input class="pp-inline-dim" aria-label="${name}" type="number" min="${min}" step="1" value="${ppEsc(val??'')}" onchange="ppUpdateCrateMasterField(${idx},'${name}',this.value)" style="width:92px;min-width:76px;padding:7px;border:1px solid #93c5fd;border-radius:8px;background:#f0f9ff;color:#12364d;font-weight:700">`;
+ return `<tr><td><b>${ppEsc(r.profile)}</b></td><td>${ppEsc(r.itemCode||'-')}</td><td>${ppEsc(r.length)}</td><td>${r.pcsPerBox||1}</td><td>${ppEsc(r.boxSize||'—')}</td><td>${field('crateWidth',r.crateWidth||c.outerW||'')}</td><td>${field('manualOuterL',r.manualOuterL||c.outerL||'')}</td><td>${field('manualPackingH',r.manualPackingH||c.packingH||'')}</td><td><select onchange="ppUpdateCrateMasterField(${idx},'orientation',this.value)" style="padding:7px;border:1px solid #93c5fd;border-radius:8px;background:#f0f9ff;color:#12364d;font-weight:700"><option value="auto" ${(r.orientation||'auto')==='auto'?'selected':''}>Auto best fit</option><option value="height" ${r.orientation==='height'?'selected':''}>Height vertical</option><option value="width" ${r.orientation==='width'?'selected':''}>Width vertical</option></select></td><td>${status}</td><td><button class="btn btn-sm" onclick="ppEditCrateMaster('${encodeURIComponent(k)}')"><i class="fa-solid fa-pen"></i> Box / PCS</button></td></tr>`;
+ }).join(''):'<tr><td colspan="11">No matching Master Catalog records.</td></tr>';
+}
+function ppUpdateCrateMasterField(index,field,value){
+ const r=ppCrateMasterRows[index];if(!r)return;
+ if(field==='orientation'){r.orientation=['auto','height','width'].includes(value)?value:'auto';}
+ else {const n=ppNum(value);if(!n||n<1){alert('Enter a dimension greater than zero.');ppRenderCrateMaster();return;}if(field==='manualPackingH'&&n>PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH){alert('Packing height must be 808 mm or less so overall height stays within 1100 mm.');ppRenderCrateMaster();return;}r[field]=n;if(field==='crateWidth')r.manual=true;}
+ r.manual=true;r.source='Manual / edited';r.calc=ppCrateCalc(r);if(!r.calc.valid){alert(r.calc.reason||'These dimensions do not fit the 1100 mm height limit.');}
+ ppRenderCrateMaster();ppPopulateCrateStandards();ppRefreshNextPlLines();ppSaveCrateMaster();
+}
+
+function ppAddManualCrateMaster(){
+ const profile=(prompt('Profile code')||'').trim();if(!profile)return;
+ const itemCode=(prompt('Item Code')||'').trim();if(!itemCode)return;
+ const length=ppNum(prompt('Cutting length (mm)',''));if(!length){alert('Enter a valid cutting length.');return;}
+ const k=ppMasterKey(profile,itemCode,length);if(ppCrateMasterRows.some(r=>ppMasterKey(r.profile,r.itemCode,r.length)===k)){alert('This Profile + Item Code + Length already exists. Use Edit.');return;}
+ const boxSize=(prompt('Box Size L x W x H (mm)','')||'').trim();
+ const width=ppNum(prompt('Crate outer width (mm)',''))||'';
+ const pcs=Math.max(1,ppNum(prompt('PCS per Box','1'))||1);
+ const row={profile,itemCode,length,boxSize,crateWidth:width,pcsPerBox:pcs,unitWeight:0,excelMatched:false,source:'Manual',manual:true,master:false};
+ row.calc=ppCrateCalc(row);ppCrateMasterRows.push(row);ppCrateMasterRows.sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.itemCode.localeCompare(b.itemCode,undefined,{numeric:true})||ppNum(a.length)-ppNum(b.length));ppRenderCrateMaster();ppPopulateCrateStandards();
+}
+function ppEditCrateMaster(enc){
+ const k=decodeURIComponent(enc),r=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===k);if(!r)return;
+ const calc=ppCrateCalc(r);
+ const box=prompt(`Box Size L x W x H (mm) for ${r.profile} / ${r.itemCode} / ${r.length}`,r.boxSize||'');if(box===null)return;
+ const width=prompt('Crate OUTER width (mm) — Excel standard width',r.crateWidth||calc.outerW||'');if(width===null)return;
+ const pcs=prompt('PCS per Box (Master Catalog)',r.pcsPerBox||1);if(pcs===null)return;
+ const outL=prompt('Crate OUTER length (mm) — blank = auto calculate',r.manualOuterL||calc.outerL||'');if(outL===null)return;
+ const packH=prompt('Packing height excluding 100 mm legs (mm) — blank = auto calculate from layers',r.manualPackingH||calc.packingH||'');if(packH===null)return;
+ const perLayer=prompt('Boxes per layer — blank = auto calculate from box and crate width',r.manualPerLayer||calc.perLayer||'');if(perLayer===null)return;
+ const boxes=prompt('Boxes per crate — enter capacity; blank = auto calculate',r.manualBoxesPerCrate||calc.boxesPerCrate||'');if(boxes===null)return;
+ const previousCalc=calc;
+ const nextBoxCap=ppNum(boxes)||null,nextPerLayer=ppNum(perLayer)||null,nextPackH=ppNum(packH)||null;
+ r.boxSize=box.trim();r.crateWidth=ppNum(width)||'';r.pcsPerBox=Math.max(1,ppNum(pcs)||1);
+ r.manualOuterL=ppNum(outL)||null;r.manualPerLayer=nextPerLayer;
+ r.manualBoxesPerCrate=nextBoxCap;
+ r.manualPackingH=(nextBoxCap&&nextBoxCap!==previousCalc.boxesPerCrate&&nextPackH===previousCalc.packingH)?null:nextPackH;
+ const orient=prompt('Box orientation: auto, height, or width',r.orientation||'auto');if(orient===null)return;r.orientation=['auto','height','width'].includes(orient.trim().toLowerCase())?orient.trim().toLowerCase():'auto';
+ r.manual=true;r.source='Manual / edited';r.calc=ppCrateCalc(r);
+ ppRenderCrateMaster();ppPopulateCrateStandards();ppRefreshNextPlLines();ppSaveCrateMaster();
+}
+
+async function ppSaveCrateMaster(){
+ try{localStorage.setItem(AIS_CRATE_STATE_KEY,JSON.stringify(ppCrateMasterRows.map(({calc,...r})=>r)));}catch(e){}
+ if(typeof supabaseClient!=='undefined'&&Array.isArray(dailyInstructionsList)&&currentUserRole){
+  try{
+   const target='AIS_CRATE_MASTER_V1',payload=JSON.stringify(ppCrateMasterRows.map(({calc,...r})=>r));
+   const existing=dailyInstructionsList.find(x=>String(x.target_user||'')===target);
+   if(existing){const {error}=await supabaseClient.from('daily_instructions').update({message:payload}).eq('id',existing.id);if(error)throw error;existing.message=payload;}
+   else{const rec={target_date:new Date().toISOString().slice(0,10),target_user:target,priority:'Normal',message:payload,status:'Completed',action_taken:'AIS Crate Master Data'};const {data,error}=await supabaseClient.from('daily_instructions').insert([rec]).select().single();if(error)throw error;dailyInstructionsList.push({...rec,id:data?.id||-Date.now()});}
+   if(typeof showToast==='function')showToast('Crate Master saved to cloud.','success');return;
+  }catch(e){console.error('Crate master cloud save failed',e);if(typeof showToast==='function')showToast('Cloud save failed; browser backup saved. Check permissions/database.','error');return;}
+ }
+ if(typeof showToast==='function')showToast('Crate Master saved in this browser. Cloud save requires signed-in access.','warning');
+}
+function ppLoadCrateMasterSaved(){
+ let saved=null;const db=(dailyInstructionsList||[]).find(x=>String(x.target_user||'')==='AIS_CRATE_MASTER_V1');
+ if(db?.message){try{saved=JSON.parse(db.message)}catch(e){}}
+ if(!saved){try{saved=JSON.parse(localStorage.getItem(AIS_CRATE_STATE_KEY)||'null')}catch(e){}}
+ if(Array.isArray(saved)){ppCrateMasterRows=saved.map(r=>({...r,calc:ppCrateCalc(r)}));}
+ ppBuildCrateMaster(false);
+}
+function ppExportCrateMaster(){
+ const head=['Profile','Item Code','Length mm','Box Size','Crate Width mm','Pcs per Box','Crate Length mm','Packing Height mm','Boxes per Layer','Layers','Boxes per Crate','Status'];
+ const lines=[head,...ppCrateMasterRows.map(r=>{const c=ppCrateCalc(r);return [r.profile,r.itemCode,r.length,r.boxSize,r.crateWidth,r.pcsPerBox,c.outerL||'',c.packingH||'',c.perLayer||'',c.layers||'',c.boxesPerCrate||'',(!r.boxSize||!r.crateWidth)?'Manual data needed':r.source]})];
+ const csv=lines.map(a=>a.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\r\n');
+ const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='AIS_Crate_Master.csv';a.click();URL.revokeObjectURL(url);
+}
+function ppPopulateCrateStandards(){
+ const sel=document.getElementById('ppCrateStandard');if(!sel)return;const old=sel.value;
+ sel.innerHTML='<option value="">Auto from selected profile/length</option>'+ppCrateMasterRows.filter(r=>r.boxSize).map(r=>`<option value="${ppEsc(ppMasterKey(r.profile,r.itemCode,r.length))}">${ppEsc(r.profile)} · ${ppEsc(r.itemCode)} · ${ppEsc(r.length)} mm</option>`).join('');
+ if([...sel.options].some(o=>o.value===old))sel.value=old;
+}
+function ppGetPlanningRows(){
+ try{
+  const rows=typeof nextPlGetRows==='function'?nextPlGetRows():[];
+  return rows.map(r=>({...r,planningQty:Math.max(0,ppNum(r.selectedQty)||ppNum((typeof nextPlSelection!=='undefined'?nextPlSelection[r.rowKey]:0))||ppNum(r.pendingQty))})).filter(r=>r.poNumber&&r.profile&&r.length);
+ }catch(e){console.warn('Next PL rows unavailable',e);return [];}
+}
+function ppRefreshNextPlLines(){
+ const sel=document.getElementById('ppNextPlLine');if(!sel)return;
+ ppCrateNextRows=ppGetPlanningRows();
+ const old=sel.value;
+ sel.innerHTML='<option value="">Select Next Planning PL line</option>'+ppCrateNextRows.map((r,i)=>`<option value="${i}">${ppEsc(r.poNumber)} · ${ppEsc(r.profile)} · ${ppEsc(r.itemCode)} · ${ppEsc(r.length)} mm · ${Math.round(r.planningQty).toLocaleString()} PCS</option>`).join('');
+ if(old!==''&&Number(old)<ppCrateNextRows.length)sel.value=old;
+ if(sel.value!=='')ppOnNextPlLineChange();
+}
+function ppOnNextPlLineChange(){
+ const i=Number(document.getElementById('ppNextPlLine')?.value),r=ppCrateNextRows[i];if(!r)return;
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??'';};
+ set('ppPlanPo',r.poNumber);set('ppPlanProfile',r.profile);set('ppPlanItemCode',r.itemCode);set('ppPlanLength',r.length);set('ppPlanQty',r.planningQty);
+ const m=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===ppMasterKey(r.profile,r.itemCode,r.length));
+ const cap=Math.max(1,ppNum(m?.pcsPerBox)||ppNum(r.master?.boxCapacity)||1);
+ set('ppPlanPcsPerBox',cap);set('ppPlanBoxQty',Math.ceil(r.planningQty/cap));
+ const bs=document.getElementById('ppBoxSelect');if(bs){bs.innerHTML='<option value="">Select matched box data</option>'+ppCrateMasterRows.filter(x=>x.boxSize).map(x=>`<option value="${ppEsc(ppMasterKey(x.profile,x.itemCode,x.length))}">${ppEsc(x.profile)} · ${ppEsc(x.itemCode)} · ${ppEsc(x.length)} mm</option>`).join('');const k=ppMasterKey(r.profile,r.itemCode,r.length);bs.value=[...bs.options].some(o=>o.value===k)?k:'';}
+ const std=document.getElementById('ppCrateStandard');if(std){const k=ppMasterKey(r.profile,r.itemCode,r.length);std.value=[...std.options].some(o=>o.value===k)?k:'';}
+ ppApplyCrateStandard();ppAutoCrateDesign();
+}
+function ppApplyCrateStandard(){
+ const k=document.getElementById('ppCrateStandard')?.value;
+ const r=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===k);
+ if(r){const c=ppCrateCalc(r);if(c.valid){const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};set('ppOuterCrateL',c.outerL);set('ppOuterCrateW',c.outerW);set('ppOuterCrateH',c.overallH);set('ppCrateTare',0);set('ppPlanBoxesPerCrate',c.boxesPerCrate);set('ppPlanBoxesPerCrate',c.boxesPerCrate);}}
+ ppAutoCrateDesign();
+}
+function ppAutoCrateDesign(){
+ const i=Number(document.getElementById('ppNextPlLine')?.value),r=ppCrateNextRows[i];if(!r)return;
+ const master=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===ppMasterKey(r.profile,r.itemCode,r.length));
+ if(!master)return;
+ const c=ppCrateCalc(master);if(!c.valid)return;
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
+ set('ppOuterCrateL',c.outerL);set('ppOuterCrateW',c.outerW);set('ppOuterCrateH',c.overallH);
+ set('ppCrateL',Math.max(1,c.outerL-2*PP_WOOD_THICKNESS));set('ppCrateW',Math.max(1,c.outerW-2*PP_WOOD_THICKNESS));set('ppCrateH',c.packingH);
+ set('ppTargetBoxes',Math.ceil(r.planningQty/Math.max(1,ppNum(master.pcsPerBox))));
+ set('ppPlanBoxesPerCrate',c.boxesPerCrate);
+ ppCalculateCrate();ppDrawCratePreview(master,c);
+}
+function ppDrawCratePreview(row,c,boxCount){
+ const host=document.getElementById('ppCrate3DPreview');if(!host)return;
+ const d=c.box||ppDims(row.boxSize);if(!d){host.innerHTML='<div class="pp-empty">Add box dimensions in Crate Master.</div>';return;}
+ const cols=Math.max(1,c.perLayer||1),layers=Math.max(1,c.layers||1),count=Math.min(boxCount||c.boxesPerCrate,cols*layers,32);
+ let boxes='';for(let n=0;n<count;n++){const x=32+(n%cols)*Math.min(70,600/cols),y=80+Math.floor(n/cols)*Math.min(24,180/layers);boxes+=`<rect x="${x}" y="${y}" width="${Math.min(65,560/cols)}" height="${Math.min(20,160/layers)}" rx="2" fill="${n%2?'#d6a66a':'#e7c28d'}" stroke="#9a6a36" stroke-width="1"/>`;}
+ host.innerHTML=`<svg viewBox="0 0 700 300" role="img" aria-label="Schematic crate layout"><defs><linearGradient id="ppwood" x1="0" x2="1"><stop stop-color="#c18a4a"/><stop offset="1" stop-color="#8b5a2b"/></linearGradient></defs><polygon points="60,90 500,60 640,115 200,150" fill="#ead0a3" stroke="#895b30" stroke-width="5"/><polygon points="60,90 200,150 200,240 60,175" fill="#c18a4a" stroke="#895b30" stroke-width="5"/><polygon points="200,150 640,115 640,205 200,240" fill="#b77b3f" stroke="#895b30" stroke-width="5"/><polygon points="72,97 495,69 620,118 200,143" fill="#f6e5c5" stroke="#956532" stroke-width="3"/>${boxes}<g fill="url(#ppwood)" stroke="#70451f" stroke-width="3"><rect x="72" y="178" width="24" height="74"/><rect x="176" y="225" width="24" height="40"/><rect x="600" y="195" width="24" height="40"/><rect x="590" y="210" width="24" height="35"/></g><g font-size="14" font-weight="700" fill="#153b59"><text x="280" y="285">L ${c.outerL} × W ${c.outerW} × Packing H ${c.packingH} mm</text><text x="280" y="25">Boxes/layer: ${c.perLayer} · Layers: ${c.layers} · Capacity: ${c.boxesPerCrate}</text></g></svg>`;
+ const info=document.getElementById('ppCrate3DInfo');if(info)info.innerHTML=`<b>${ppEsc(row.profile)} / ${ppEsc(row.itemCode)}</b><br>Box size: ${ppEsc(row.boxSize)} mm<br>Outer crate: ${c.outerL} × ${c.outerW} × ${c.overallH} mm (includes 100 mm legs)<br>Packing height: ${c.packingH} mm · Boxes/layer: ${c.perLayer} · Layers: ${c.layers} · Boxes/crate: ${c.boxesPerCrate}`;
+ const visual=document.getElementById('ppCrateVisual');if(visual)visual.innerHTML=host.innerHTML;
+ const breakdown=document.getElementById('ppCrateBreakdown');if(breakdown)breakdown.innerHTML=`${c.perLayer} boxes/layer × ${c.layers} layers = ${c.boxesPerCrate} boxes/crate. Box length is aligned with crate length.`;
+ const per=document.getElementById('ppBoxesPerCrate');if(per)per.textContent=c.boxesPerCrate;
+ const fit=document.getElementById('ppCrateFitNote');if(fit)fit.textContent=`Outer height ${c.overallH} mm; 100 mm legs excluded from packing height.`;
+}
+function ppAddCratePlan(){
+ const i=Number(document.getElementById('ppNextPlLine')?.value),selected=ppCrateNextRows[i];if(!selected){alert('Select a Next Planning PL line first.');return;}
+ const group=ppCrateNextRows.filter(r=>r.poNumber===selected.poNumber&&r.profile===selected.profile&&r.itemCode===selected.itemCode&&r.planningQty>0).map(r=>{
+  const m=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===ppMasterKey(r.profile,r.itemCode,r.length));
+  return {r,m,c:m&&ppCrateCalc(m),pcsPerBox:Math.max(1,ppNum(m?.pcsPerBox)||ppNum(r.master?.boxCapacity)||1),boxes:Math.ceil(r.planningQty/Math.max(1,ppNum(m?.pcsPerBox)||ppNum(r.master?.boxCapacity)||1))};
+ }).filter(x=>x.c?.valid);
+ if(!group.length){alert('Box size or crate dimensions are missing. Open Crate Master Data and edit this profile/length first.');return;}
+ const sig=selected.poNumber+'|'+selected.profile+'|'+selected.itemCode;
+ if(ppCratePlans.some(x=>x.groupKey===sig)){alert('This PO/Profile/Item Code is already in the crate list. Use Copy or remove existing rows before regenerating.');return;}
+ const formL=ppNum(document.getElementById('ppOuterCrateL')?.value),formW=ppNum(document.getElementById('ppOuterCrateW')?.value);
+ const formH=ppNum(document.getElementById('ppCrateH')?.value)||ppNum(document.getElementById('ppOuterCrateH')?.value)-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH;
+ const formCap=ppNum(document.getElementById('ppPlanBoxesPerCrate')?.value);
+ const maxL=Math.max(...group.map(x=>x.c.box.l)),maxW=Math.max(...group.map(x=>x.c.box.w)),maxH=Math.max(...group.map(x=>x.c.box.h));
+ const width=formW||ppNum(group.find(x=>x.m.crateWidth)?.m.crateWidth)||Math.max(...group.map(x=>x.c.outerW));
+ const perLayer=Math.max(1,Math.floor((width-2*PP_WOOD_THICKNESS)/maxW));
+ const defaultLayers=Math.floor((PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH)/maxH);
+ const defaultCap=perLayer*Math.max(1,defaultLayers);
+ const cap=Math.max(1,Math.min(Math.floor(formCap||defaultCap),defaultCap));
+ const outerL=formL||Math.max(...group.map(x=>x.c.outerL));
+ const packingH=formH>0?formH:Math.max(...group.map(x=>x.c.packingH));
+ const overallH=packingH+PP_LEG_HEIGHT+2*PP_WOOD_WIDTH;
+ if(overallH>PP_MAX_OVERALL_HEIGHT){if(!confirm(`Overall crate height ${overallH} mm exceeds ${PP_MAX_OVERALL_HEIGHT} mm. Add anyway for review?`))return;}
+ let queue=[];group.forEach(x=>{for(let b=0;b<x.boxes;b++)queue.push({r:x.r,m:x.m,pcsPerBox:x.pcsPerBox,unitWeight:ppNum(x.r.unitWeight||x.m.unitWeight),boxIndex:b,boxPCS:Math.min(x.pcsPerBox,Math.max(0,x.r.planningQty-b*x.pcsPerBox))});});
+ while(queue.length){
+  const part=queue.splice(0,cap),byLength={};part.forEach(x=>{const k=String(x.r.length);byLength[k]??={length:x.r.length,itemCode:x.r.itemCode,boxes:0,pcs:0};byLength[k].boxes++;byLength[k].pcs+=x.boxPCS;});
+  const pcs=part.reduce((s,x)=>s+x.boxPCS,0),weight=part.reduce((s,x)=>s+x.boxPCS*x.unitWeight,0);
+  const crateIndex=ppCratePlans.length+1;
+  ppCratePlans.push({id:'C-'+String(crateIndex).padStart(2,'0'),groupKey:sig,po:selected.poNumber,profile:selected.profile,itemCode:selected.itemCode,lengths:Object.values(byLength),length:Object.values(byLength).map(x=>x.length).join(' / '),pcs,pcsPerBox:part[0].pcsPerBox,boxes:part.length,outerL,outerW:width,packingH,overallH,perLayer,layers:Math.ceil(part.length/perLayer),unitWeight:0,boxSize:part[0].m.boxSize,crateWidth:width,weight,boxRows:part.map(x=>({length:x.r.length,boxSize:x.m.boxSize,pcs:x.boxPCS})),manual:false});
+ }
+ if(ppCratePlans.length>55&&typeof showToast==='function')showToast('Plan exceeds 55 crates. Review the 18,000 kg shipment target and split into another PL if needed.','warning');
+ ppRenderCratePlan();const m=group[0].m;ppDrawCratePreview(m,{valid:true,box:group[0].c.box,outerL,outerW:width,packingH,overallH,perLayer,layers:Math.ceil(cap/perLayer),boxesPerCrate:cap},cap);
+}
+function ppGenerateAllNextPLCrates(){
+ ppRefreshNextPlLines();
+ if(!ppCrateNextRows.length){alert('No selected Next Planning PL quantities were found.');return;}
+ if(ppCratePlans.length&&!confirm('Clear the current crate list and regenerate it from all current Next PL lines?'))return;
+ ppCratePlans=[];
+ const groups=new Map();
+ ppCrateNextRows.forEach((r,i)=>{if(!(r.planningQty>0))return;const key=[r.poNumber,r.profile,r.itemCode].join('|');if(!groups.has(key))groups.set(key,i);});
+ let added=0,missing=[];
+ for(const i of groups.values()){
+  const r=ppCrateNextRows[i],m=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===ppMasterKey(r.profile,r.itemCode,r.length));
+  if(!m||!ppCrateCalc(m).valid){missing.push(`${r.profile}/${r.itemCode}/${r.length}`);continue;}
+  const sel=document.getElementById('ppNextPlLine');if(sel)sel.value=String(i);
+  ppOnNextPlLineChange();
+  const before=ppCratePlans.length;ppAddCratePlan();if(ppCratePlans.length>before)added+=ppCratePlans.length-before;
+ }
+ ppRenderCratePlan();ppPersistCratePlans();
+ if(missing.length)alert(`Generated ${added} crates. These lines need box/crate data in Crate Master first:\\n${missing.slice(0,12).join('\\n')}${missing.length>12?'\\n…':''}`);
+ else if(typeof showToast==='function')showToast(`Generated ${added} crates from the current Next PL. Review crate quantities before packing.`,'success');
+}
+function ppPersistCratePlans(){try{localStorage.setItem(PP_CRATE_PLAN_STATE_KEY,JSON.stringify(ppCratePlans));}catch(e){console.warn('Could not save crate plan locally',e);}}
+function ppEditCratePlan(i){
+ const r=ppCratePlans[i];if(!r)return;
+ const L=prompt('Crate outer length (mm)',r.outerL);if(L===null)return;
+ const W=prompt('Crate outer width (mm)',r.outerW);if(W===null)return;
+ const H=prompt('Packing height excluding 100 mm legs (mm)',r.packingH);if(H===null)return;
+ const B=prompt('Boxes in this crate',r.boxes);if(B===null)return;
+ const P=prompt('PCS allocated to this crate',r.pcs);if(P===null)return;
+ const oldBoxes=ppNum(r.boxes),oldPcs=ppNum(r.pcs),oldWeight=ppNum(r.weight);
+ r.outerL=Math.max(1,ppNum(L)||r.outerL);r.outerW=Math.max(1,ppNum(W)||r.outerW);
+ r.boxes=Math.max(0,Math.floor(ppNum(B)));r.pcs=Math.max(0,Math.floor(ppNum(P)));
+ r.layers=Math.max(1,Math.ceil(r.boxes/Math.max(1,r.perLayer||1)));
+ const boxHeights=(r.boxRows||[]).map(x=>ppDims(x.boxSize)?.h||0).filter(Boolean);
+ r.packingH=(r.boxes!==oldBoxes&&boxHeights.length)?r.layers*Math.max(...boxHeights):Math.max(1,ppNum(H)||r.packingH);
+ r.overallH=r.packingH+PP_LEG_HEIGHT+2*PP_WOOD_WIDTH;
+ const weightPerPc=oldPcs>0?oldWeight/oldPcs:0;r.weight=r.pcs*weightPerPc;r.manual=true;
+ ppRenderCratePlan();ppPersistCratePlans();ppShowCrate3D(i);
+}
+function ppCopyCratePlan(i){
+ const src=ppCratePlans[i];if(!src)return;
+ const copy=JSON.parse(JSON.stringify(src));copy.id='C-'+String(ppCratePlans.length+1).padStart(2,'0');copy.manual=true;copy.pcs=0;copy.boxes=0;copy.weight=0;copy.length=src.length;copy.groupKey=(src.groupKey||'')+'|COPY|'+Date.now();
+ ppCratePlans.splice(i+1,0,copy);ppCratePlans.forEach((r,n)=>{r.id='C-'+String(n+1).padStart(2,'0')});ppRenderCratePlan();ppPersistCratePlans();
+ if(typeof showToast==='function')showToast('Copied crate design as an empty crate row. Use Edit to enter boxes and PCS for this crate.','success');
+}
+
+function ppRenderCratePlan(){
+ const body=document.getElementById('ppCratePlanBody');if(!body)return;
+ body.innerHTML=ppCratePlans.length?ppCratePlans.map((r,i)=>`<tr><td>${ppEsc(r.po)}</td><td>${ppEsc(r.profile)}</td><td>${ppEsc(r.itemCode)}</td><td>${ppEsc(r.length)}</td><td>${ppNum(r.pcs).toLocaleString()}</td><td>${r.pcsPerBox}</td><td>${r.boxes}</td><td><button class="btn btn-sm pp-dimension-edit" title="Edit dimensions and capacity" onclick="ppEditCratePlan(${i})">${r.outerL} × ${r.outerW} × ${r.packingH} <i class="fa-solid fa-pen"></i></button></td><td>${r.overallH}</td><td>${ppNum(r.weight).toFixed(1)}</td><td>1</td><td><button class="btn btn-accent" onclick="ppShowCrate3D(${i})"><i class="fa-solid fa-cube"></i> 3D</button></td><td><div class="pp-row-actions"><button class="btn btn-sm" title="Edit crate" onclick="ppEditCratePlan(${i})"><i class="fa-solid fa-pen"></i></button><button class="btn btn-sm" title="Copy crate design" onclick="ppCopyCratePlan(${i})"><i class="fa-solid fa-copy"></i> Copy</button><button class="btn btn-sm" title="Remove crate" onclick="ppRemoveCratePlan(${i})"><i class="fa-solid fa-trash"></i></button></div></td></tr>`).join(''):'<tr><td colspan="13">Select a Next PL line or generate the list from all current Next PL quantities.</td></tr>';
+ const totalW=ppCratePlans.reduce((s,r)=>s+ppNum(r.weight),0),totalPcs=ppCratePlans.reduce((s,r)=>s+ppNum(r.pcs),0),note=document.getElementById('ppCrateFitNote');if(note)note.textContent=`${ppCratePlans.length} crate rows · ${totalPcs.toLocaleString()} PCS · estimated profile weight ${totalW.toLocaleString(undefined,{maximumFractionDigits:1})} kg / 18,000 kg target. Edited values stay saved in this browser until edited again.`;
+ ppPersistCratePlans();
+}
+
+function ppShowCrate3D(i){const r=ppCratePlans[i];if(!r)return;const firstLen=r.lengths?.[0]?.length??r.length;const m=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===ppMasterKey(r.profile,r.itemCode,firstLen));if(m){const c=ppCrateCalc(m);c.outerL=r.outerL;c.outerW=r.outerW;c.packingH=r.packingH;c.overallH=r.overallH;c.perLayer=r.perLayer;c.layers=r.layers;c.boxesPerCrate=r.boxes;ppDrawCratePreview(m,c,r.boxes);}}
+function ppRemoveCratePlan(i){ppCratePlans.splice(i,1);ppCratePlans.forEach((r,n)=>r.id='C-'+String(n+1).padStart(2,'0'));ppRenderCratePlan();ppPersistCratePlans();}
+function ppExportCratePlan(){
+ const head=['Crate No','PO','Profile','Item Code','Length mm','PCS','Pcs/Box','Box Qty','Crate Length mm','Crate Width mm','Packing Height mm','Profile Weight kg'];
+ const lines=[head,...ppCratePlans.map(r=>[r.id,r.po,r.profile,r.itemCode,r.length,r.pcs,r.pcsPerBox,r.boxes,r.outerL,r.outerW,r.packingH,r.overallH,r.weight])];
+ const csv=lines.map(a=>a.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\r\n'),blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='AIS_Crate_Plan.csv';a.click();URL.revokeObjectURL(url);
+}
+function ppImportCrateStandards(event){
+ const f=event.target.files?.[0];if(!f)return;
+ const applyRows=(grid)=>{
+  if(!grid?.length)throw new Error('Empty workbook');
+  let hi=grid.findIndex(row => row.some(v => /profile/i.test(String(v||'')) && row.some(x => /item\s*code|description/i.test(String(x||'')))));
+  if(hi<0)hi=0;
+  const headers=(grid[hi]||[]).map(v=>String(v||'').trim().toLowerCase());
+  const ix=(...names)=>headers.findIndex(h=>names.some(n=>h.includes(n)));
+  const ip=ix('profile'),ii=ix('item code','itemcode','description'),il=ix('cutting length','length'),ib=ix('box size'),iw=ix('crate width');
+  if(ip<0||ii<0||ib<0)throw new Error('Expected Profile, Item Code/Description and Box Size columns');
+  let lastProfile='';
+  const incoming=[];
+  grid.slice(hi+1).forEach(cells=>{
+   let profile=String(cells[ip]||'').trim();if(profile)lastProfile=profile;else profile=lastProfile;
+   const itemCode=String(cells[ii]||'').trim(),boxSize=String(cells[ib]||'').trim();
+   if(!profile||!itemCode||!boxSize)return;
+   const nums=boxSize.match(/\d+(?:\.\d+)?/g)||[];
+   let length=il>=0?ppNum(cells[il]):0;if(!length&&nums.length)length=ppNum(nums[0])-10;
+   const crateWidth=iw>=0&&ppNum(cells[iw])?ppNum(cells[iw]):null;
+   incoming.push({profile,itemCode,length,boxSize,crateWidth});
+  });
+  const widths={};incoming.forEach(r=>{if(r.crateWidth)(widths[r.profile]??=[]).push(r.crateWidth);});
+  incoming.forEach(r=>{if(!r.crateWidth&&widths[r.profile]?.length){const vals=widths[r.profile],cnt={};vals.forEach(v=>cnt[v]=(cnt[v]||0)+1);r.crateWidth=+Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0][0];}});
+  ppUploadedExcelRows=incoming;
+  incoming.forEach(x=>{const r=ppCrateMasterRows.find(r=>ppMasterKey(r.profile,r.itemCode,r.length)===ppMasterKey(x.profile,x.itemCode,x.length));if(r){r.boxSize=x.boxSize;if(x.crateWidth)r.crateWidth=x.crateWidth;r.excelMatched=true;r.source='Uploaded AIS Excel';}});
+  ppBuildCrateMaster(false);
+  if(typeof showToast==='function')showToast(`Imported ${incoming.length} AIS box-size rows. Review missing values, then Save Crate Master.`,'success');
+ };
+ const reader=new FileReader();
+ if(/\.(xlsx|xls)$/i.test(f.name)){
+  reader.onload=()=>{try{if(typeof XLSX==='undefined')throw new Error('Excel reader library is unavailable');const wb=XLSX.read(reader.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];applyRows(XLSX.utils.sheet_to_json(ws,{header:1,defval:''}));}catch(e){alert('Could not read Excel file: '+e.message);}};
+  reader.readAsArrayBuffer(f);
+ }else{
+  reader.onload=()=>{try{const grid=String(reader.result||'').split(/\r?\n/).filter(Boolean).map(line=>line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)|\t/).map(x=>x.replace(/^"|"$/g,'').trim()));applyRows(grid);}catch(e){alert('Could not read file: '+e.message);}};
+  reader.readAsText(f);
+ }
+ event.target.value='';
+}
+function ppSwitchSubtab(id,button){
+ document.querySelectorAll('#packingPlannerTab .pp-subtab-content').forEach(x=>x.classList.remove('active'));
+ document.querySelectorAll('#packingPlannerTab .pp-subtab').forEach(x=>x.classList.remove('active'));
+ document.getElementById(id)?.classList.add('active');button?.classList.add('active');
+ if(id==='ppCrateMasterSubTab')ppRenderCrateMaster();
+ if(id==='ppCrateSubTab')ppRefreshNextPlLines();
+}
+function ppOnBoxSelect(){const k=document.getElementById('ppBoxSelect')?.value;const r=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===k);if(r)ppDrawCratePreview(r,ppCrateCalc(r));}
+function ppSyncCrateDimensions(){ppCalculateCrate();}
+function ppCalculateCrate(){
+ const i=Number(document.getElementById('ppNextPlLine')?.value),r=ppCrateNextRows[i];if(r){const m=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===ppMasterKey(r.profile,r.itemCode,r.length));if(m){ppDrawCratePreview(m,ppCrateCalc(m));return;}}
+}
+function ppSetContainerDefaults(){ppCalculateContainer();}
+function ppCalculateContainer(){
+ const cap=document.getElementById('ppContainerCapacity');if(cap)cap.textContent='—';
+ const vis=document.getElementById('ppContainerVisual');if(vis)vis.innerHTML='<div class="pp-empty">Container loading is the next development stage, after crate dimensions are confirmed.</div>';
+}
+function ppExportPackingPlan(){ppExportCratePlan();}
+function ppImportBoxExcel(event){ppImportCrateStandards(event);}
+function ppRenderCatalog(){
+ const body=document.getElementById('ppCatalogBody');if(!body)return;
+ const rows=ppCrateMasterRows.filter(r=>[r.profile,r.itemCode,r.length,r.boxSize].join(' ').toLowerCase().includes((document.getElementById('ppCatalogSearch')?.value||'').toLowerCase()));
+ body.innerHTML=rows.map(r=>`<tr><td>${ppEsc(r.profile)}</td><td>${ppEsc(r.itemCode)}</td><td>${r.length}</td><td>${ppEsc(r.boxSize||'—')}</td><td>${r.excelMatched?'Excel matched':'Manual data needed'}</td><td><button class="btn" onclick="ppEditCrateMaster('${encodeURIComponent(ppMasterKey(r.profile,r.itemCode,r.length))}')">Edit</button></td></tr>`).join('');
+ const a=document.getElementById('ppCatalogCount');if(a)a.textContent=rows.length;
+}
+function ppSaveCatalog(){ppSaveCrateMaster();}
+function ppExportBoxCatalog(){ppExportCrateMaster();}
+(function ppWrapDataSync(){
+ const original=window.loadDataFromSupabase;
+ if(typeof original==='function'&&!original.__ppWrapped){
+  const wrapped=function(...args){const result=original.apply(this,args);Promise.resolve(result).finally(()=>{setTimeout(()=>{ppLoadCrateMasterSaved();ppRefreshNextPlLines();},400);});return result;};
+  wrapped.__ppWrapped=true;window.loadDataFromSupabase=wrapped;
+ }
+})();
+document.addEventListener('DOMContentLoaded',()=>{
+ try{ppLoadCrateMasterSaved();ppRefreshNextPlLines();const savedPlan=JSON.parse(localStorage.getItem(PP_CRATE_PLAN_STATE_KEY)||'[]');if(Array.isArray(savedPlan)){ppCratePlans=savedPlan;ppRenderCratePlan();}}
+ catch(e){console.warn('AIS crate planner initialization:',e);}
+});
+
+
+
+/* AIS Packing Planner rebuild: three-tab workflow driven by current Next Planning PL */
+let ppSmartCrates = [];
+const PP_SMART_STATE_KEY = 'AIS_SMART_CRATE_PLAN_V1';
+function ppSmartLineKey(r){return [r.poNumber,ppNormalizeProfile(r.profile),String(r.itemCode||'').toUpperCase().replace(/\s+/g,''),ppNormalizeLength(r.length)].join('|');}
+function ppSmartGetAllocations(){const map={};ppSmartCrates.forEach(c=>(c.items||[]).forEach(it=>{const k=it.lineKey;map[k]=(map[k]||0)+ppNum(it.pcs);}));return map;}
+function ppSmartSelectedLine(){const i=Number(document.getElementById('ppNextPlLine')?.value);return ppCrateNextRows[i]||null;}
+function ppSmartMasterFor(r){return ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===ppMasterKey(r.profile,r.itemCode,r.length));}
+function ppSmartPcsBox(r){const m=ppSmartMasterFor(r);return Math.max(1,ppNum(m?.pcsPerBox)||ppNum(r.master?.boxCapacity)||1);}
+function ppSmartFillCrateNumbers(){const s=document.getElementById('ppSmartCrateNo');if(!s)return;const old=s.value;s.innerHTML=Array.from({length:60},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('');if(old)s.value=old;}
+function ppSmartRefresh(){ppRefreshNextPlLines();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();}
+function ppOnNextPlLineChange(){
+ const i=Number(document.getElementById('ppNextPlLine')?.value),r=ppCrateNextRows[i];if(!r)return;
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??'';};
+ set('ppPlanPo',r.poNumber);set('ppPlanProfile',r.profile);set('ppPlanItemCode',r.itemCode);set('ppPlanLength',r.length);set('ppPlanQty',r.planningQty);
+ const m=ppSmartMasterFor(r),cap=ppSmartPcsBox(r);set('ppPlanPcsPerBox',cap);set('ppPlanBoxQty',Math.ceil(ppNum(r.planningQty)/cap));
+ const c=m?ppCrateCalc(m):null;
+ set('ppOuterCrateL',m?.manualOuterL||c?.outerL||'');set('ppOuterCrateW',m?.crateWidth||c?.outerW||'');set('ppCrateH',m?.manualPackingH||'');
+ ppSmartUpdateAllocationPreview();
+}
+function ppSmartUpdateAllocationPreview(){const r=ppSmartSelectedLine();const pcs=ppNum(document.getElementById('ppSmartAllocatePcs')?.value);const pbox=r?ppSmartPcsBox(r):1;const b=document.getElementById('ppSmartAllocateBoxes');if(b)b.value=pcs>0?Math.ceil(pcs/pbox):'';const balance=document.getElementById('ppSmartRemainingPcs');if(balance){const alloc=ppSmartGetAllocations();balance.textContent=ppCrateNextRows.reduce((s,x)=>s+Math.max(0,ppNum(x.planningQty)-(alloc[ppSmartLineKey(x)]||0)),0).toLocaleString();}}
+function ppSmartDimensionChanged(){const r=ppSmartSelectedLine();if(!r)return;const pcs=ppNum(document.getElementById('ppSmartAllocatePcs')?.value),m=ppSmartMasterFor(r),box=ppDims(m?.boxSize);if(!box)return;const width=ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(m?.crateWidth);const innerW=Math.max(0,width-40);const per=Math.max(1,Math.floor(innerW/box.w));const boxes=Math.ceil(pcs/ppSmartPcsBox(r));const layers=Math.max(1,Math.ceil(boxes/per));const h=layers*box.h;const hEl=document.getElementById('ppCrateH');if(hEl&&!hEl.matches(':focus'))hEl.value=h;ppSmartUpdateAllocationPreview();}
+function ppSmartCalcDims(items,manual={}){
+ const masters=items.map(it=>ppSmartMasterFor({profile:it.profile,itemCode:it.itemCode,length:it.length})).filter(Boolean),dims=masters.map(m=>ppDims(m.boxSize)).filter(Boolean);if(!dims.length)return {valid:false};
+ const width=ppNum(manual.outerW)||Math.max(...masters.map(m=>ppNum(m.crateWidth)).filter(Boolean));if(!width)return {valid:false};
+ const innerW=Math.max(1,width-40),maxBoxW=Math.max(...dims.map(d=>d.w));if(maxBoxW>innerW)return {valid:false,reason:'Box width exceeds the crate internal width'};const perLayer=Math.max(1,Math.floor(innerW/maxBoxW));
+ const boxes=items.reduce((s,it)=>s+Math.ceil(ppNum(it.pcs)/Math.max(1,ppNum(it.pcsPerBox))),0);
+ const layers=Math.max(1,Math.ceil(boxes/perLayer)),packingH=ppNum(manual.packingH)||layers*Math.max(...dims.map(d=>d.h));
+ const outerL=ppNum(manual.outerL)||Math.ceil(Math.max(...items.map(it=>ppNum(it.length)||0))+32),overallH=packingH+100+2*96;
+ return {valid:true,outerL,outerW:width,packingH,overallH,perLayer,layers,boxes};
+}
+function ppSmartAddCrateFromSelected(){
+ const r=ppSmartSelectedLine();if(!r){alert('Select a Next Planning PL line first.');return;}
+ const master=ppSmartMasterFor(r),box=ppDims(master?.boxSize);if(!master||!box||!ppNum(master.crateWidth)){alert('This profile/length needs Box Size and Crate Width in tab 3 before allocating PCS.');return;}
+ let pcs=Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value));if(pcs<1){alert('Enter PCS to allocate to this crate.');return;}
+ const allocations=ppSmartGetAllocations(),balance=Math.max(0,ppNum(r.planningQty)-(allocations[ppSmartLineKey(r)]||0));if(pcs>balance){alert(`Only ${balance.toLocaleString()} PCS remain for this PO/profile/item/length.`);return;}
+ const n=Math.max(1,Math.min(60,Math.floor(ppNum(document.getElementById('ppSmartCrateNo')?.value)||1))),roman=document.getElementById('ppSmartRoman')?.value||'I',id=`C-${String(n).padStart(2,'0')}-${roman}`;
+ let crate=ppSmartCrates.find(c=>c.id===id);if(crate){if(!confirm(`Crate ${id} already exists. Add this profile/length to the same crate?`))return;}else{crate={id,items:[],manual:{outerL:ppNum(document.getElementById('ppOuterCrateL')?.value),outerW:ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(master.crateWidth),packingH:0,orientation:document.getElementById('ppBoxOrientation')?.value||master.orientation||'auto'},createdAt:Date.now()};}
+ const pcsPerBox=ppSmartPcsBox(r),requestedPcs=pcs;
+ const makeItem=q=>({lineKey:ppSmartLineKey(r),po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:q,pcsPerBox,boxes:Math.ceil(q/pcsPerBox),unitWeight:ppNum(r.unitWeight||master.unitWeight)});
+ let newItem=makeItem(pcs),testCalc=ppSmartCalcDims([...(crate.items||[]),newItem],{...(crate.manual||{}),packingH:0,orientation:document.getElementById('ppBoxOrientation')?.value||crate.manual?.orientation||master.orientation||'auto'});
+ if(!testCalc.valid){
+   const maxBoxes=Math.max(0,Math.floor(ppNum(testCalc.maxCapacity))-((crate.items||[]).reduce((sum,it)=>sum+ppNum(it.boxes),0)));
+   const maxPcs=maxBoxes*pcsPerBox;
+   if(maxPcs<1){alert((testCalc.reason||'This crate is full.')+' Create another crate for the remaining PCS.');return;}
+   if(!confirm(`This crate can fit only ${maxBoxes} additional boxes (${maxPcs} PCS) within the 1100 mm overall height limit. Reduce this crate allocation from ${requestedPcs} to ${Math.min(requestedPcs,maxPcs)} PCS and keep the rest for another crate?`))return;
+   pcs=Math.min(requestedPcs,maxPcs);newItem=makeItem(pcs);testCalc=ppSmartCalcDims([...(crate.items||[]),newItem],{...(crate.manual||{}),packingH:0,orientation:document.getElementById('ppBoxOrientation')?.value||crate.manual?.orientation||master.orientation||'auto'});
+   if(!testCalc.valid){alert(testCalc.reason||'Could not calculate a safe crate layout.');return;}
+ }
+ if(testCalc.overallH>PP_MAX_OVERALL_HEIGHT){alert(`This allocation would make the crate ${testCalc.overallH} mm high, above the ${PP_MAX_OVERALL_HEIGHT} mm limit. Reduce PCS or use another crate.`);return;}
+ if(!ppSmartCrates.includes(crate))ppSmartCrates.push(crate);
+ crate.items.push(newItem);Object.assign(crate,{outerL:testCalc.outerL,outerW:testCalc.outerW,packingH:testCalc.packingH,overallH:testCalc.overallH,perLayer:testCalc.per,layers:testCalc.layers,boxes:testCalc.boxes,orientation:testCalc.orientation,manual:{...(crate.manual||{}),outerL:testCalc.outerL,outerW:testCalc.outerW,packingH:0,orientation:testCalc.orientation}});
+ ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();
+ const next=document.getElementById('ppSmartCrateNo');if(next)next.value=String(Math.min(60,n+1));const pcsInput=document.getElementById('ppSmartAllocatePcs');if(pcsInput)pcsInput.value='';ppSmartUpdateAllocationPreview();
+ if(pcs<requestedPcs&&typeof showToast==='function')showToast(`${pcs} PCS added to ${id}; ${requestedPcs-pcs} PCS remain for another crate.`,'warning');
+ ppSmartShowPreview(ppSmartCrates.indexOf(crate));
+}
+function ppSmartAddProfileToCrate(i){
+ const c=ppSmartCrates[i];if(!c)return;
+ const options=ppCrateNextRows.map((r,n)=>`${n}: ${r.poNumber} / ${r.profile} / ${r.itemCode} / ${r.length} mm`).join('\n');
+ const raw=prompt('Enter Next PL line number to add as another profile/length:\n'+options,'0');if(raw===null)return;
+ const r=ppCrateNextRows[Math.floor(ppNum(raw))];if(!r){alert('Invalid Next PL line number.');return;}
+ const alloc=ppSmartGetAllocations(),balance=Math.max(0,ppNum(r.planningQty)-(alloc[ppSmartLineKey(r)]||0));if(!balance){alert('No PCS remaining for this line.');return;}
+ let pcs=Math.floor(ppNum(prompt(`PCS to add (remaining ${balance})`,String(balance))));if(pcs<1||pcs>balance){alert(`Enter PCS from 1 to ${balance}.`);return;}
+ const m=ppSmartMasterFor(r);if(!ppDims(m?.boxSize)||!ppNum(m?.crateWidth)){alert('Add box size and crate width in Crate Master first.');return;}
+ const pbox=ppSmartPcsBox(r),mk=q=>({lineKey:ppSmartLineKey(r),po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:q,pcsPerBox:pbox,boxes:Math.ceil(q/pbox),unitWeight:ppNum(r.unitWeight||m.unitWeight)});
+ let item=mk(pcs),calc=ppSmartCalcDims([...(c.items||[]),item],{...(c.manual||{}),packingH:0,orientation:c.orientation||c.manual?.orientation||m.orientation||'auto'});
+ if(!calc.valid){const maxBoxes=Math.max(0,Math.floor(ppNum(calc.maxCapacity))-(c.items||[]).reduce((a,x)=>a+ppNum(x.boxes),0)),maxPcs=maxBoxes*pbox;if(maxPcs<1){alert('This crate has no safe capacity left. Use another crate.');return;}if(!confirm(`Only ${maxBoxes} boxes (${maxPcs} PCS) can be added within the 1100 mm height limit. Reduce this addition to ${Math.min(pcs,maxPcs)} PCS?`))return;pcs=Math.min(pcs,maxPcs);item=mk(pcs);calc=ppSmartCalcDims([...(c.items||[]),item],{...(c.manual||{}),packingH:0,orientation:c.orientation||c.manual?.orientation||m.orientation||'auto'});if(!calc.valid){alert(calc.reason||'This profile does not fit safely.');return;}}
+ c.items.push(item);Object.assign(c,{outerL:calc.outerL,outerW:calc.outerW,packingH:calc.packingH,overallH:calc.overallH,perLayer:calc.per,layers:calc.layers,boxes:calc.boxes,orientation:calc.orientation,manual:{...(c.manual||{}),outerL:calc.outerL,outerW:calc.outerW,packingH:0,orientation:calc.orientation}});ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();ppSmartShowPreview(i);
+}
+function ppSmartEditPcs(i){const c=ppSmartCrates[i];if(!c)return;const allocations=ppSmartGetAllocations();for(const it of (c.items||[])){const r=ppCrateNextRows.find(x=>ppSmartLineKey(x)===it.lineKey);const balance=r?Math.max(0,ppNum(r.planningQty)-(allocations[it.lineKey]||0)+ppNum(it.pcs)):ppNum(it.pcs);const next=prompt(`${it.po} / ${it.profile} / ${it.itemCode} / ${it.length} mm — PCS (max ${balance})`,String(it.pcs));if(next===null)return;const qty=Math.floor(ppNum(next));if(qty<0||qty>balance){alert(`Enter PCS from 0 to ${balance}.`);return;}it.pcs=qty;it.boxes=Math.ceil(qty/Math.max(1,ppNum(it.pcsPerBox)));}c.items=(c.items||[]).filter(it=>ppNum(it.pcs)>0);const calc=ppSmartCalcDims(c.items,c.manual&&typeof c.manual==='object'?c.manual:{});if(calc.valid)Object.assign(c,calc);ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();}
+function ppSmartEditCrate(i){const c=ppSmartCrates[i];if(!c)return;const l=prompt('Crate outer length (mm)',c.outerL||'');if(l===null)return;const w=prompt('Crate outer width (mm)',c.outerW||'');if(w===null)return;const h=prompt('Packing height excluding legs/frame allowance (mm)',c.packingH||'');if(h===null)return;c.manual={outerL:Math.max(1,ppNum(l)),outerW:Math.max(1,ppNum(w)),packingH:Math.max(1,ppNum(h))};const calc=ppSmartCalcDims(c.items,c.manual);Object.assign(c,calc);c.manual=true;ppSmartPersist();ppSmartRenderCrateList();ppSmartRefreshPreviewOptions();ppSmartShowPreview(i);}
+function ppSmartCopyCrate(i){const src=ppSmartCrates[i];if(!src)return;const copy=JSON.parse(JSON.stringify(src));const used=new Set(ppSmartCrates.map(c=>c.id));let n=1;while(n<=60&&used.has(`C-${String(n).padStart(2,'0')}-I`))n++;if(n>60){alert('All crate numbers 1–60 are used.');return;}copy.id=`C-${String(n).padStart(2,'0')}-I`;copy.items=[];copy.createdAt=Date.now();ppSmartCrates.push(copy);ppSmartPersist();ppSmartRenderCrateList();ppSmartRefreshPreviewOptions();}
+function ppSmartRemoveCrate(i){if(!confirm('Remove this crate and return its PCS to the Next PL remaining balance?'))return;ppSmartCrates.splice(i,1);ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();}
+function ppSmartRenderCrateList(){const body=document.getElementById('ppCratePlanBody');if(!body)return;body.innerHTML=ppSmartCrates.length?ppSmartCrates.map((c,i)=>{const items=c.items||[],pcs=items.reduce((s,x)=>s+ppNum(x.pcs),0),boxes=items.reduce((s,x)=>s+ppNum(x.boxes),0),weight=items.reduce((s,x)=>s+ppNum(x.pcs)*ppNum(x.unitWeight),0);return `<tr><td><b>${ppEsc(c.id)}</b></td><td>${ppEsc([...new Set(items.map(x=>x.po))].join(', '))}</td><td>${ppEsc([...new Set(items.map(x=>x.profile))].join(' / '))}</td><td>${ppEsc([...new Set(items.map(x=>x.itemCode))].join(' / '))}</td><td>${ppEsc([...new Set(items.map(x=>x.length))].join(' / '))}</td><td>${pcs.toLocaleString()}</td><td>${items.map(x=>x.pcsPerBox).join(' / ')}</td><td>${boxes.toLocaleString()}</td><td><button class="btn btn-sm pp-dimension-edit" onclick="ppSmartEditCrate(${i})">${c.outerL||'—'} × ${c.outerW||'—'} × ${c.packingH||'—'} <i class="fa-solid fa-pen"></i></button></td><td>${c.overallH||'—'}</td><td>${weight.toFixed(1)}</td><td><button class="btn btn-accent" onclick="ppSmartShowPreview(${i})">2D/3D</button></td><td><div class="pp-row-actions"><button class="btn btn-sm" onclick="ppSmartAddProfileToCrate(${i})">+ Profile</button><button class="btn btn-sm" onclick="ppSmartEditPcs(${i})">Edit PCS</button><button class="btn btn-sm" onclick="ppSmartCopyCrate(${i})">Copy</button><button class="btn btn-sm" onclick="ppSmartEditCrate(${i})">Edit</button><button class="btn btn-sm" onclick="ppSmartRemoveCrate(${i})">Remove</button></div></td></tr>`;}).join(''):'<tr><td colspan="13">No crates yet. Select a Next PL line and allocate PCS.</td></tr>';
+ const pcs=ppSmartCrates.reduce((s,c)=>s+(c.items||[]).reduce((a,x)=>a+ppNum(x.pcs),0),0),weight=ppSmartCrates.reduce((s,c)=>s+(c.items||[]).reduce((a,x)=>a+ppNum(x.pcs)*ppNum(x.unitWeight),0),0);const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('ppSmartCrateCount',ppSmartCrates.length);set('ppSmartAllocatedPcs',pcs.toLocaleString());set('ppSmartTotalWeight',weight.toLocaleString(undefined,{maximumFractionDigits:1})+' kg');ppSmartRefreshPreviewOptions();}
+let ppSmartSaveTimer=null,ppSmartCloudSaving=false,ppSmartPendingCloudPayload=null;
+function ppSmartPersist(){
+ const payload=JSON.stringify(ppSmartCrates);
+ try{localStorage.setItem(PP_SMART_STATE_KEY,payload);}catch(e){console.warn('Could not save crate plan locally',e);}
+ ppSmartPendingCloudPayload=payload;
+ if(ppSmartSaveTimer)clearTimeout(ppSmartSaveTimer);
+ ppSmartSaveTimer=setTimeout(()=>ppSmartSaveCloud(),500);
+}
+async function ppSmartSaveCloud(explicitPayload){
+ if(explicitPayload){ppSmartPendingCloudPayload=explicitPayload;if(ppSmartSaveTimer){clearTimeout(ppSmartSaveTimer);ppSmartSaveTimer=null;}}
+ if(ppSmartCloudSaving)return;
+ const payload=ppSmartPendingCloudPayload;if(payload==null)return;
+ ppSmartPendingCloudPayload=null;ppSmartCloudSaving=true;
+ try{
+  if(typeof supabaseClient==='undefined'||!supabaseClient||!Array.isArray(dailyInstructionsList)||!currentUserRole){ppSmartPendingCloudPayload=payload;return;}
+  const target='AIS_CRATE_PLAN_V1';
+  const existing=dailyInstructionsList.find(x=>String(x.target_user||'')===target);
+  if(existing){const {error}=await supabaseClient.from('daily_instructions').update({message:payload}).eq('id',existing.id);if(error)throw error;existing.message=payload;}
+  else{const rec={target_date:new Date().toISOString().slice(0,10),target_user:target,priority:'Normal',message:payload,status:'Completed',action_taken:'AIS Crate Packing Plan'};const {data,error}=await supabaseClient.from('daily_instructions').insert([rec]).select().single();if(error)throw error;dailyInstructionsList.push({...rec,id:data?.id||-Date.now()});}
+  if(typeof showToast==='function')showToast('Crate list saved to cloud.','success');
+ }catch(e){console.error('Crate plan cloud save failed',e);ppSmartPendingCloudPayload=payload;if(typeof showToast==='function')showToast('Browser backup saved, but cloud save failed. Check database permissions.','error');}
+ finally{ppSmartCloudSaving=false;if(ppSmartPendingCloudPayload&&ppSmartPendingCloudPayload!==payload){if(ppSmartSaveTimer)clearTimeout(ppSmartSaveTimer);ppSmartSaveTimer=setTimeout(()=>ppSmartSaveCloud(),400);}}
+}
+function ppSmartSaveNow(){ppSmartPersist();return ppSmartSaveCloud(JSON.stringify(ppSmartCrates));}
+
+function ppSmartLoadSaved(){
+ try{const db=(dailyInstructionsList||[]).find(x=>String(x.target_user||'')==='AIS_CRATE_PLAN_V1');const cloud=db?.message?JSON.parse(db.message):null;if(Array.isArray(cloud)){ppSmartCrates=cloud;localStorage.setItem(PP_SMART_STATE_KEY,JSON.stringify(cloud));return;}}catch(e){console.warn('Could not load cloud crate plan',e);}
+ try{const local=JSON.parse(localStorage.getItem(PP_SMART_STATE_KEY)||'[]');if(Array.isArray(local))ppSmartCrates=local;}catch(e){}
+}
+function ppSmartRefreshPreviewOptions(){const s=document.getElementById('ppSmartPreviewCrate');if(!s)return;const old=s.value;s.innerHTML='<option value="">Select a crate</option>'+ppSmartCrates.map((c,i)=>`<option value="${i}">${ppEsc(c.id)} — ${ppEsc([...new Set((c.items||[]).map(x=>x.profile+' / '+x.length+'mm'))].join(', '))}</option>`).join('');if(old!==''&&Number(old)<ppSmartCrates.length)s.value=old;}
+function ppSmartShowSelectedPreview(){const i=Number(document.getElementById('ppSmartPreviewCrate')?.value);if(Number.isInteger(i)&&ppSmartCrates[i])ppSmartShowPreview(i);}
+function ppSmartShowPreview(i){const c=ppSmartCrates[i];if(!c)return;const mode=document.getElementById('ppSmartViewMode')?.value||'3d',host=document.getElementById('ppCrate3DPreview');if(!host)return;const items=c.items||[],maxW=Math.max(1,ppNum(c.outerW)-40),maxL=Math.max(1,ppNum(c.outerL)-40),boxList=items.map(it=>({it,m:ppSmartMasterFor(it),d:ppDims(ppSmartMasterFor(it)?.boxSize)})).filter(x=>x.d);if(!boxList.length){host.innerHTML='<div class="pp-empty">Box size missing for this crate. Update tab 3 first.</div>';return;}const totalBoxes=items.reduce((s,x)=>s+ppNum(x.boxes),0),maxBoxW=Math.max(...boxList.map(x=>x.d.w)),per=Math.max(1,Math.floor(maxW/maxBoxW)),layers=Math.max(1,Math.ceil(totalBoxes/per)),boxH=Math.max(...boxList.map(x=>x.d.h)),packH=ppNum(c.packingH)||layers*boxH;let svg='';
+ if(mode==='top'){let rects='',n=0;items.forEach((it,idx)=>{const m=ppSmartMasterFor(it),d=ppDims(m?.boxSize);if(!d)return;for(let b=0;b<ppNum(it.boxes)&&n<90;b++,n++){const col=n%per,row=Math.floor(n/per),bw=Math.max(20,Math.min(105,720/per-3)),bh=Math.max(18,Math.min(45,500/Math.max(1,layers)-3));rects+=`<rect x="${45+col*(720/per)}" y="${55+row*(500/Math.max(1,layers))}" width="${bw}" height="${bh}" rx="3" fill="${idx%2?'#c9a16b':'#e7c99a'}" stroke="#8b6334"/><text x="${45+col*(720/per)+4}" y="${55+row*(500/Math.max(1,layers))+bh/2+4}" font-size="10" fill="#4b3420">${ppEsc(it.profile)}</text>`;}});svg=`<svg viewBox="0 0 820 620"><rect x="25" y="25" width="770" height="560" rx="8" fill="#f4e3c2" stroke="#84572c" stroke-width="8"/>${rects}<text x="30" y="610" font-size="18" font-weight="700" fill="#164e63">Top view · ${c.outerL} × ${c.outerW} mm · Box length runs along crate length</text></svg>`;
+ }else if(mode==='side'){let rects='',n=0;items.forEach((it,idx)=>{const d=ppDims(ppSmartMasterFor(it)?.boxSize);if(!d)return;for(let b=0;b<ppNum(it.boxes)&&n<90;b++,n++){const col=n%per,row=Math.floor(n/per),bw=730/per,bh=470/Math.max(1,layers);rects+=`<rect x="${40+col*bw}" y="${45+row*bh}" width="${bw-3}" height="${bh-3}" fill="${idx%2?'#c9a16b':'#e7c99a'}" stroke="#8b6334"/>`;}});svg=`<svg viewBox="0 0 820 620"><rect x="25" y="25" width="770" height="560" rx="6" fill="#e8cda0" stroke="#84572c" stroke-width="8"/>${rects}<rect x="35" y="550" width="60" height="55" fill="#a97842"/><rect x="725" y="550" width="60" height="55" fill="#a97842"/><text x="30" y="615" font-size="18" font-weight="700" fill="#164e63">Side view · Packing height ${packH} mm + 100 mm legs</text></svg>`;
+ }else{const L=500,W=190,H=Math.max(60,Math.min(250,packH/4)),dx=120,dy=65,x=90,y=150;let boxesSvg='';let n=0;for(let row=0;row<layers&&n<36;row++){for(let col=0;col<per&&n<totalBoxes&&n<36;col++,n++){const bx=x+col*(L/per),by=y-row*(H/layers);boxesSvg+=`<polygon points="${bx},${by} ${bx+L/per-5},${by-20} ${bx+L/per-5+dx/per},${by-20-dy/per} ${bx+dx/per},${by-dy/per}" fill="${n%2?'#d9b17c':'#e8cda0'}" stroke="#8b6334"/><polygon points="${bx},${by} ${bx+dx/per},${by-dy/per} ${bx+dx/per},${by-dy/per+H/layers} ${bx},${by+H/layers}" fill="#b8874d" stroke="#8b6334"/><polygon points="${bx},${by+H/layers} ${bx+L/per-5},${by+H/layers-20} ${bx+L/per-5},${by-20+H/layers} ${bx},${by+H/layers}" fill="#c99a60" stroke="#8b6334"/>`;}}svg=`<svg viewBox="0 0 820 620"><polygon points="${x},${y} ${x+L},${y-20} ${x+L+dx},${y-20-dy} ${x+dx},${y-dy}" fill="#f1dfbc" stroke="#754b26" stroke-width="6"/><polygon points="${x},${y} ${x+dx},${y-dy} ${x+dx},${y-dy+H} ${x},${y+H}" fill="#bc8749" stroke="#754b26" stroke-width="6"/><polygon points="${x},${y+H} ${x+L},${y+H-20} ${x+L},${y-20+H} ${x},${y+H}" fill="#c18b4e" stroke="#754b26" stroke-width="6"/>${boxesSvg}<g fill="#9c6b37" stroke="#70451f" stroke-width="3"><rect x="${x+20}" y="${y+H+3}" width="24" height="65"/><rect x="${x+L-35}" y="${y+H-10}" width="24" height="65"/><rect x="${x+dx+5}" y="${y-dy+H-10}" width="24" height="65"/></g><text x="30" y="575" font-size="18" font-weight="700" fill="#164e63">${ppEsc(c.id)} · L ${c.outerL} × W ${c.outerW} × Packing H ${packH} mm</text><text x="30" y="602" font-size="15" fill="#164e63">${totalBoxes} boxes · ${items.reduce((s,x)=>s+ppNum(x.pcs),0).toLocaleString()} PCS · ${layers} layers</text></svg>`;}
+ host.innerHTML=svg;const info=document.getElementById('ppCrate3DInfo');if(info)info.innerHTML=`<b>${ppEsc(c.id)}</b> · ${items.map(x=>`${ppEsc(x.po)} / ${ppEsc(x.profile)} / ${ppEsc(x.itemCode)} / ${ppEsc(x.length)} mm: ${ppNum(x.pcs).toLocaleString()} PCS (${x.boxes} boxes)`).join('<br>')}<br><b>Dimensions:</b> ${c.outerL||'—'} × ${c.outerW||'—'} × ${packH} mm packing area; overall height ${c.overallH||packH+292} mm including legs/frame allowance.<br><b>Arrangement:</b> about ${per} boxes per layer × ${layers} layers.`;
+ const sel=document.getElementById('ppSmartPreviewCrate');if(sel)sel.value=String(i);
+}
+function ppSmartRenderContainer(){const host=document.getElementById('ppContainerVisual');if(!host)return;if(!ppSmartCrates.length){host.innerHTML='<div class="pp-empty">Generate crate records first to preview the container layout.</div>';return;}const cols=Math.max(1,Math.min(6,Math.floor(ppNum(document.getElementById('ppSmartContainerCols')?.value)||2))),rows=Math.max(1,Math.min(20,Math.floor(ppNum(document.getElementById('ppSmartContainerRows')?.value)||8))),items=ppSmartCrates.slice(0,cols*rows);let cells='';items.forEach((c,i)=>{const col=i%cols,row=Math.floor(i/cols),x=30+col*(720/cols),y=35+row*(500/rows),w=690/cols,h=470/rows;cells+=`<rect x="${x}" y="${y}" width="${w-8}" height="${h-8}" rx="5" fill="${i%2?'#c6d9e8':'#b8d8d2'}" stroke="#356477" stroke-width="2"/><text x="${x+8}" y="${y+20}" font-size="${Math.min(16,Math.max(9,160/cols))}" font-weight="700" fill="#12364d">${ppEsc(c.id)}</text><text x="${x+8}" y="${y+38}" font-size="${Math.min(12,130/cols)}" fill="#12364d">${(c.items||[]).reduce((s,it)=>s+ppNum(it.pcs),0).toLocaleString()} PCS</text>`;});host.innerHTML=`<svg viewBox="0 0 780 590"><rect x="12" y="12" width="756" height="560" rx="12" fill="#e8f1f7" stroke="#52758b" stroke-width="8"/>${cells}<text x="25" y="585" font-size="15" font-weight="700" fill="#164e63">Schematic top-down loading plan · ${items.length} of ${ppSmartCrates.length} crates shown · not a certified loading diagram</text></svg>`;const total=items.reduce((s,c)=>s+(c.items||[]).reduce((a,it)=>a+ppNum(it.pcs)*ppNum(it.unitWeight),0),0);const cap=document.getElementById('ppContainerCapacity');if(cap)cap.innerHTML=`Showing <b>${items.length}</b> crates in ${rows} rows × ${cols} across. Estimated profile weight <b>${total.toLocaleString(undefined,{maximumFractionDigits:1})} kg</b> (crate tare weight not included). Confirm internal dimensions, door clearance and payload before loading.`;}
+function ppSmartExport(){const rows=[['Crate No','PO','Profile','Item Code','Length mm','PCS','Pcs per Box','Box Qty','Crate Length mm','Crate Width mm','Packing Height mm','Overall Height mm']];ppSmartCrates.forEach(c=>(c.items||[]).forEach(it=>rows.push([c.id,it.po,it.profile,it.itemCode,it.length,it.pcs,it.pcsPerBox,it.boxes,c.outerL,c.outerW,c.packingH])));const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n'),blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='AIS_Next_PL_Crate_List.csv';a.click();URL.revokeObjectURL(url);}
+function ppRenderCrateMaster(){
+ const body=document.getElementById('ppCrateMasterBody');if(!body)return;const q=(document.getElementById('ppCrateMasterSearch')?.value||'').toLowerCase();const rows=ppCrateMasterRows.filter(r=>[r.profile,r.itemCode,r.length,r.boxSize,r.crateWidth].join(' ').toLowerCase().includes(q));const matched=ppCrateMasterRows.filter(r=>r.excelMatched).length,missing=ppCrateMasterRows.filter(r=>!r.boxSize||!r.crateWidth||!ppCrateCalc(r).valid).length;const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('ppCrateMasterCount',ppCrateMasterRows.length);set('ppCrateMasterMatched',matched);set('ppCrateMasterMissing',missing);
+ body.innerHTML=rows.length?rows.map(r=>{const k=ppMasterKey(r.profile,r.itemCode,r.length),c=ppCrateCalc(r),status=(!r.boxSize||!r.crateWidth||!c.valid)?'<b style="color:#b45309">Manual data needed</b>':(r.excelMatched?'<b style="color:#047857">Excel matched</b>':'<b style="color:#1d4ed8">Catalog / manual</b>');return `<tr><td><b>${ppEsc(r.profile)}</b></td><td>${ppEsc(r.itemCode||'—')}</td><td>${ppEsc(r.length)}</td><td>${ppNum(r.pcsPerBox)||1}</td><td>${ppEsc(r.boxSize||'—')}</td><td>${r.crateWidth||'—'}</td><td><button class="btn btn-sm pp-dimension-edit" onclick="ppEditCrateMaster('${encodeURIComponent(k)}')">${c.valid?`${c.outerL} × ${c.outerW} × ${c.packingH}`:'Edit dimensions'} <i class="fa-solid fa-pen"></i></button></td><td>${c.valid?c.perLayer:'—'}</td><td>${c.valid?c.layers:'—'}</td><td>${c.valid?c.boxesPerCrate:'—'}</td><td>${status}</td><td><button class="btn btn-sm" onclick="ppEditCrateMaster('${encodeURIComponent(k)}')">Edit</button></td></tr>`;}).join(''):'<tr><td colspan="12">No matching catalog rows.</td></tr>';
+}
+function ppEditCrateMaster(enc){const k=decodeURIComponent(enc),r=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===k);if(!r)return;const c=ppCrateCalc(r);const box=prompt(`Box Size L × W × H (mm) — ${r.profile} / ${r.itemCode} / ${r.length}`,r.boxSize||'');if(box===null)return;const width=prompt('Crate OUTER width (mm) — use Excel standard where available',r.crateWidth||c.outerW||'');if(width===null)return;const pcs=prompt('PCS per Box (Master Catalog)',String(r.pcsPerBox||1));if(pcs===null)return;const L=prompt('Crate OUTER length (mm) — default box length + 32 mm; enter double length if two rows fit',String(r.manualOuterL||c.outerL||''));if(L===null)return;const H=prompt('Packing height excluding legs/frame allowance (mm) — blank to auto calculate from box count',String(r.manualPackingH||c.packingH||''));if(H===null)return;const per=prompt('Boxes per layer — blank to auto calculate from width',String(r.manualPerLayer||c.perLayer||''));if(per===null)return;const boxes=prompt('Boxes per crate — blank to auto calculate from height',String(r.manualBoxesPerCrate||c.boxesPerCrate||''));if(boxes===null)return;r.boxSize=box.trim();r.crateWidth=ppNum(width)||'';r.pcsPerBox=Math.max(1,Math.floor(ppNum(pcs)||1));r.manualOuterL=ppNum(L)||null;r.manualPackingH=ppNum(H)||null;r.manualPerLayer=ppNum(per)||null;r.manualBoxesPerCrate=ppNum(boxes)||null;r.manual=true;r.source='Manual / edited';r.calc=ppCrateCalc(r);ppRenderCrateMaster();ppSaveCrateMaster();ppRefreshNextPlLines();}
+function ppSwitchSubtab(id,button){document.querySelectorAll('#packingPlannerTab .pp-subtab-content').forEach(x=>x.classList.remove('active'));document.querySelectorAll('#packingPlannerTab .pp-subtab').forEach(x=>x.classList.remove('active'));document.getElementById(id)?.classList.add('active');button?.classList.add('active');if(id==='ppCrateMasterSubTab')ppRenderCrateMaster();if(id==='ppCrateSubTab')ppRefreshNextPlLines();if(id==='ppContainerSubTab'){ppSmartRefreshPreviewOptions();ppSmartRenderContainer();}}
+(function ppSmartInit(){document.addEventListener('DOMContentLoaded',()=>{try{ppSmartFillCrateNumbers();const saved=JSON.parse(localStorage.getItem(PP_SMART_STATE_KEY)||'[]');if(Array.isArray(saved))ppSmartCrates=saved;ppSmartLoadSaved();ppBuildCrateMaster(false);ppSmartRenderCrateList();ppSmartRefreshPreviewOptions();ppSmartRefresh();}catch(e){console.warn('Packing planner initialization failed',e);}});})();
+(function ppSmartRefreshAfterMainData(){
+ const original=window.loadDataFromSupabase;
+ if(typeof original==='function'&&!original.__ppSmartWrapped){
+  const wrapped=function(...args){const result=original.apply(this,args);Promise.resolve(result).finally(()=>setTimeout(()=>{try{ppLoadCrateMasterSaved();ppSmartLoadSaved();ppBuildCrateMaster(true);ppSmartRenderCrateList();ppSmartRefresh();}catch(e){console.warn('Crate planner refresh after data load:',e);}},350));return result;};
+  wrapped.__ppSmartWrapped=true;window.loadDataFromSupabase=wrapped;
+ }
+})();
+
+
+/* AIS crate height/orientation refinement: dynamic height, strict 1100 mm overall limit, per-crate layout */
+function ppSmartOrientationMetrics(items, manual={}) {
+ const masters=items.map(it=>ppSmartMasterFor(it)).filter(Boolean);
+ const parsed=items.map(it=>({it,m:ppSmartMasterFor(it),d:ppDims(ppSmartMasterFor(it)?.boxSize)})).filter(x=>x.d);
+ if(!parsed.length) return {valid:false,reason:'Box size data is missing. Update Crate Master Data.'};
+ const width=ppNum(manual.outerW)||Math.max(...masters.map(m=>ppNum(m.crateWidth)).filter(Boolean));
+ if(!width) return {valid:false,reason:'Crate width is missing from the AIS Excel data or manual master data.'};
+ const innerW=width-2*PP_WOOD_THICKNESS;
+ if(innerW<=0) return {valid:false,reason:'Crate internal width is too small.'};
+ const maxPack=PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH;
+ const orientation=manual.orientation || document.getElementById('ppBoxOrientation')?.value || 'auto';
+ const candidates=[];
+ for(const key of ['height','width']) {
+   if(orientation!=='auto' && orientation!==key) continue;
+   const across=parsed.map(x=>key==='height'?x.d.w:x.d.h);
+   const vertical=parsed.map(x=>key==='height'?x.d.h:x.d.w);
+   const maxAcross=Math.max(...across),maxVertical=Math.max(...vertical);
+   const per=Math.floor(innerW/maxAcross);
+   if(per<1) continue;
+   const maxLayers=Math.floor(maxPack/maxVertical);
+   if(maxLayers<1) continue;
+   const boxes=items.reduce((sum,it)=>sum+Math.ceil(ppNum(it.pcs)/Math.max(1,ppNum(it.pcsPerBox))),0);
+   const layers=Math.max(1,Math.ceil(boxes/per));
+   const packingH=layers*maxVertical;
+   const overallH=packingH+PP_LEG_HEIGHT+2*PP_WOOD_WIDTH;
+   candidates.push({orientation:key,width,innerW,per,layers,boxes,packingH,overallH,maxCapacity:per*maxLayers,maxLayers,maxAcross,maxVertical,valid:overallH<=PP_MAX_OVERALL_HEIGHT});
+ }
+ if(!candidates.length) return {valid:false,reason:`Neither box orientation fits within the crate width and maximum ${maxPack} mm packing height.`};
+ if(orientation==='auto') candidates.sort((a,b)=>b.maxCapacity-a.maxCapacity || a.overallH-b.overallH);
+ const chosen=candidates[0];
+ if(!chosen.valid) return {...chosen,valid:false,reason:`This box quantity needs ${chosen.overallH} mm overall height. Maximum is ${PP_MAX_OVERALL_HEIGHT} mm. Reduce PCS or use another crate.`};
+ return {...chosen,valid:true};
+}
+function ppSmartCalcDims(items,manual={}) {
+ const parsed=items.map(it=>({it,m:ppSmartMasterFor(it),d:ppDims(ppSmartMasterFor(it)?.boxSize)})).filter(x=>x.d);
+ if(!parsed.length) return {valid:false,reason:'Box size data is missing.'};
+ const metric=ppSmartOrientationMetrics(items,manual);
+ if(!metric.valid) return metric;
+ const outerL=ppNum(manual.outerL)||Math.ceil(Math.max(...items.map(it=>ppNum(it.length)||0))+32);
+ return {...metric,outerL,outerW:metric.width,packingH:metric.packingH,overallH:metric.overallH,perLayer:metric.per,layers:metric.layers,boxes:metric.boxes,orientation:metric.orientation};
+}
+function ppSmartDimensionChanged() {
+ const r=ppSmartSelectedLine();
+ if(!r) return;
+ const master=ppSmartMasterFor(r); if(!master) return;
+ const pcs=Math.max(0,Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value)));
+ const item={lineKey:ppSmartLineKey(r),po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs,pcsPerBox:ppSmartPcsBox(r),boxes:Math.ceil(pcs/ppSmartPcsBox(r)),unitWeight:ppNum(r.unitWeight||master.unitWeight)};
+ const manual={outerL:ppNum(document.getElementById('ppOuterCrateL')?.value),outerW:ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(master.crateWidth),packingH:0,orientation:document.getElementById('ppBoxOrientation')?.value||'auto'};
+ const calc=ppSmartCalcDims([item],manual);
+ const hEl=document.getElementById('ppCrateH');
+ const note=document.getElementById('ppOrientationFitNote');
+ if(calc.valid) {
+   if(hEl && document.activeElement!==hEl) { hEl.value=calc.packingH; hEl.dataset.autoValue=String(calc.packingH); }
+   if(note) note.innerHTML=`<b>Recommended:</b> ${calc.orientation==='height'?'Box Height vertical (standard)':'Box Width vertical (rotated 90°)'} · ${calc.per} boxes/layer × ${calc.layers} layers = ${calc.boxes} boxes · packing height ${calc.packingH} mm + 292 mm frame/legs = ${calc.overallH} mm overall.`;
+ } else {
+   if(note) note.innerHTML=`<b style="color:#b91c1c">Cannot fit:</b> ${ppEsc(calc.reason||'Review box orientation, width and PCS quantity.')}`;
+ }
+ ppSmartUpdateAllocationPreview();
+}
+function ppSmartAddCrateFromSelected() {
+ const r=ppSmartSelectedLine(); if(!r){alert('Select a Next Planning PL line first.');return;}
+ const master=ppSmartMasterFor(r),box=ppDims(master?.boxSize); if(!master||!box||!ppNum(master.crateWidth)){alert('This profile/length needs Box Size and Crate Width in tab 3 before allocating PCS.');return;}
+ const pcs=Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value)); if(pcs<1){alert('Enter PCS to allocate to this crate.');return;}
+ const allocations=ppSmartGetAllocations(),balance=Math.max(0,ppNum(r.planningQty)-(allocations[ppSmartLineKey(r)]||0)); if(pcs>balance){alert(`Only ${balance.toLocaleString()} PCS remain for this PO/profile/item/length.`);return;}
+ const n=Math.max(1,Math.min(60,Math.floor(ppNum(document.getElementById('ppSmartCrateNo')?.value)||1))),roman=document.getElementById('ppSmartRoman')?.value||'I',id=`C-${String(n).padStart(2,'0')}-${roman}`;
+ let crate=ppSmartCrates.find(c=>c.id===id);
+ if(crate){if(!confirm(`Crate ${id} already exists. Add this profile/length to the same crate?`))return;}
+ else {crate={id,items:[],manual:{outerL:ppNum(document.getElementById('ppOuterCrateL')?.value),outerW:ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(master.crateWidth),orientation:document.getElementById('ppBoxOrientation')?.value||'auto'},createdAt:Date.now()};ppSmartCrates.push(crate);}
+ const newItem={lineKey:ppSmartLineKey(r),po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs,pcsPerBox:ppSmartPcsBox(r),boxes:Math.ceil(pcs/ppSmartPcsBox(r)),unitWeight:ppNum(r.unitWeight||master.unitWeight)};
+ const calc=ppSmartCalcDims([...(crate.items||[]),newItem],{...(crate.manual||{}),packingH:0,orientation:document.getElementById('ppBoxOrientation')?.value||crate.manual?.orientation||'auto'});
+ if(!calc.valid){alert(calc.reason||'This box quantity does not fit the crate. Reduce PCS or select another orientation.');if(!crate.items.length)ppSmartCrates=ppSmartCrates.filter(x=>x!==crate);return;}
+ const hEl=document.getElementById('ppCrateH'),typedH=ppNum(hEl?.value),autoH=ppNum(hEl?.dataset?.autoValue);
+ if(hEl?.dataset?.userEdited==='1' && typedH>0 && autoH>0 && typedH!==autoH){
+   const maxPack=PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH;
+   if(typedH<calc.packingH){alert(`Manual packing height ${typedH} mm is below the calculated required height ${calc.packingH} mm for these boxes.`);return;}
+   if(typedH>maxPack){alert(`Packing height must be ${maxPack} mm or less so the overall crate height stays within ${PP_MAX_OVERALL_HEIGHT} mm.`);return;}
+   calc.packingH=typedH;calc.overallH=typedH+PP_LEG_HEIGHT+2*PP_WOOD_WIDTH;
+ }
+ crate.items.push(newItem);crate.outerL=calc.outerL;crate.outerW=calc.outerW;crate.packingH=calc.packingH;crate.overallH=calc.overallH;crate.perLayer=calc.perLayer;crate.layers=calc.layers;crate.boxes=calc.boxes;crate.orientation=calc.orientation;crate.manual={...(crate.manual||{}),outerL:calc.outerL,outerW:calc.outerW,packingH:calc.packingH,orientation:calc.orientation};
+ ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();
+ const next=document.getElementById('ppSmartCrateNo');if(next)next.value=String(Math.min(60,n+1));const pcsInput=document.getElementById('ppSmartAllocatePcs');if(pcsInput)pcsInput.value='';ppSmartUpdateAllocationPreview();
+ ppSmartShowPreview(ppSmartCrates.indexOf(crate));
+}
+function ppSmartShowPreview(i) {
+ const c=ppSmartCrates[i]; if(!c)return;
+ const host=document.getElementById('ppCrate3DPreview'); if(!host)return;
+ const mode=document.getElementById('ppSmartViewMode')?.value||'3d',items=c.items||[];
+ const parsed=items.map(it=>({it,d:ppDims(ppSmartMasterFor(it)?.boxSize)})).filter(x=>x.d);
+ if(!parsed.length){host.innerHTML='<div class="pp-empty">Box size missing. Update Crate Master Data first.</div>';return;}
+ const totalBoxes=items.reduce((s,x)=>s+ppNum(x.boxes),0),calc=ppSmartCalcDims(items,{outerL:c.outerL,outerW:c.outerW,orientation:c.orientation||c.manual?.orientation||'auto'});
+ const orientation=c.orientation||calc.orientation||'height';
+ const cross=parsed.map(x=>orientation==='width'?x.d.h:x.d.w),vertical=parsed.map(x=>orientation==='width'?x.d.w:x.d.h);
+ const innerW=Math.max(1,ppNum(c.outerW)-40),per=Math.max(1,Math.min(99,Math.floor(innerW/Math.max(...cross)))),layers=Math.max(1,Math.ceil(totalBoxes/per)),packH=ppNum(c.packingH)||layers*Math.max(...vertical);
+ const maxShow=72,bw=Math.max(18,Math.min(90,700/per)),bh=Math.max(12,Math.min(42,460/layers));let rects='',n=0;
+ if(mode==='top'){
+   items.forEach((it,idx)=>{for(let b=0;b<ppNum(it.boxes)&&n<maxShow;b++,n++){const col=n%per,row=Math.floor(n/per);rects+=`<rect x="${50+col*(700/per)}" y="${55+row*(460/layers)}" width="${Math.max(8,bw-3)}" height="${Math.max(8,bh-3)}" rx="2" fill="${idx%2?'#d7ad76':'#edd0a0'}" stroke="#84572c"/><text x="${52+col*(700/per)}" y="${58+row*(460/layers)+Math.max(8,bh/2)}" font-size="9" fill="#533a21">${ppEsc(it.profile)}</text>`;}});
+   host.innerHTML=`<svg viewBox="0 0 820 560"><rect x="25" y="25" width="770" height="500" rx="8" fill="#f7e7c8" stroke="#84572c" stroke-width="8"/>${rects}<text x="30" y="548" font-size="17" font-weight="700" fill="#164e63">Top view · boxes' long side follows crate length · ${orientation==='width'?'rotated cross-section':'standard orientation'}</text></svg>`;
+ } else if(mode==='side') {
+   items.forEach((it,idx)=>{for(let b=0;b<ppNum(it.boxes)&&n<maxShow;b++,n++){const col=n%per,row=Math.floor(n/per);rects+=`<rect x="${40+col*(740/per)}" y="${45+row*(450/layers)}" width="${Math.max(5,730/per-3)}" height="${Math.max(5,440/layers-3)}" fill="${idx%2?'#d7ad76':'#edd0a0'}" stroke="#84572c"/>`;}});
+   host.innerHTML=`<svg viewBox="0 0 820 560"><rect x="25" y="25" width="770" height="500" fill="#f7e7c8" stroke="#84572c" stroke-width="8"/>${rects}<rect x="35" y="490" width="60" height="55" fill="#a97842"/><rect x="725" y="490" width="60" height="55" fill="#a97842"/><text x="30" y="548" font-size="17" font-weight="700" fill="#164e63">Side view · ${layers} layers × ${Math.max(...vertical)} mm = ${packH} mm packing height</text></svg>`;
+ } else {
+   const L=510,D=155,H=Math.max(55,Math.min(270,packH/3.4)),x=95,y=170,depthY=65;let blocks='',idx=0;
+   for(let layer=0;layer<layers&&idx<36;layer++)for(let col=0;col<per&&idx<totalBoxes&&idx<36;col++,idx++){
+     const xx=x+col*(L/per),ww=Math.max(14,L/per-4),yy=y-layer*(H/layers);
+     blocks+=`<polygon points="${xx},${yy} ${xx+ww},${yy-12} ${xx+ww+D/per},${yy-12-depthY/per} ${xx+D/per},${yy-depthY/per}" fill="${idx%2?'#d7ad76':'#edd0a0'}" stroke="#84572c"/><polygon points="${xx},${yy} ${xx+D/per},${yy-depthY/per} ${xx+D/per},${yy-depthY/per+H/layers} ${xx},${yy+H/layers}" fill="#b98549" stroke="#84572c"/>`;
+   }
+   host.innerHTML=`<svg viewBox="0 0 820 600"><polygon points="${x},${y} ${x+L},${y-12} ${x+L+D},${y-12-depthY} ${x+D},${y-depthY}" fill="#f1dfbc" stroke="#754b26" stroke-width="6"/>${blocks}<polygon points="${x},${y} ${x+D},${y-depthY} ${x+D},${y-depthY+H} ${x},${y+H}" fill="#bc8749" stroke="#754b26" stroke-width="5"/><polygon points="${x},${y+H} ${x+L},${y+H-12} ${x+L},${y-12+H} ${x},${y+H}" fill="#c18b4e" stroke="#754b26" stroke-width="5"/><g fill="#9c6b37" stroke="#70451f" stroke-width="3"><rect x="${x+20}" y="${y+H}" width="24" height="60"/><rect x="${x+L-30}" y="${y+H-8}" width="24" height="60"/><rect x="${x+D+5}" y="${y-depthY+H-8}" width="24" height="60"/></g><text x="30" y="555" font-size="18" font-weight="700" fill="#164e63">${ppEsc(c.id)} · ${c.outerL} × ${c.outerW} × ${packH} mm packing</text><text x="30" y="580" font-size="15" fill="#164e63">${totalBoxes} boxes · ${items.reduce((s,it)=>s+ppNum(it.pcs),0).toLocaleString()} PCS · ${layers} layers · ${orientation==='width'?'box rotated 90°':'standard box orientation'}</text></svg>`;
+ }
+ const info=document.getElementById('ppCrate3DInfo');if(info)info.innerHTML=`<b>${ppEsc(c.id)}</b><br>${items.map(it=>`${ppEsc(it.po)} / ${ppEsc(it.profile)} / ${ppEsc(it.itemCode)} / ${ppEsc(it.length)} mm: ${ppNum(it.pcs).toLocaleString()} PCS (${it.boxes} boxes)`).join('<br>')}<br><b>Outer dimensions:</b> ${c.outerL} × ${c.outerW} × ${c.overallH} mm overall (packing ${packH} + 100 mm legs + 192 mm frame allowance).<br><b>Arrangement:</b> ${per} boxes/layer × ${layers} layers; ${orientation==='width'?'box width is vertical (rotated 90°)':'box height is vertical (standard)'}.`;
+ const sel=document.getElementById('ppSmartPreviewCrate');if(sel)sel.value=String(i);
+}
+
+(function ppAutoHeightOnLineSelection(){
+ const previous=window.ppOnNextPlLineChange;
+ if(typeof previous==='function'&&!previous.__ppAutoHeightWrapped){
+  const wrapped=function(){previous.apply(this,arguments);setTimeout(()=>{try{ppSmartDimensionChanged();}catch(e){console.warn(e);}},0);};
+  wrapped.__ppAutoHeightWrapped=true;window.ppOnNextPlLineChange=wrapped;
+ }
+})();
+function ppSmartEditCrate(i){
+ const c=ppSmartCrates[i];if(!c)return;
+ const l=prompt('Crate outer length (mm)',c.outerL||'');if(l===null)return;
+ const w=prompt('Crate outer width (mm)',c.outerW||'');if(w===null)return;
+ const h=prompt(`Packing height (mm). Maximum is ${PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH} mm to keep overall height ≤ ${PP_MAX_OVERALL_HEIGHT} mm`,c.packingH||'');if(h===null)return;
+ const manualL=Math.max(1,ppNum(l)),manualW=Math.max(1,ppNum(w)),manualH=Math.max(1,ppNum(h));
+ const calc=ppSmartCalcDims(c.items,{outerL:manualL,outerW:manualW,orientation:c.orientation||c.manual?.orientation||'auto'});
+ if(!calc.valid){alert(calc.reason||'Crate dimensions do not fit.');return;}
+ const maxPack=PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH;
+ if(manualH<calc.packingH){alert(`Packing height ${manualH} mm is too small. The selected boxes need at least ${calc.packingH} mm.`);return;}
+ if(manualH>maxPack){alert(`Packing height must not exceed ${maxPack} mm. Overall height must be ≤ ${PP_MAX_OVERALL_HEIGHT} mm.`);return;}
+ Object.assign(c,calc,{outerL:manualL,outerW:manualW,packingH:manualH,overallH:manualH+PP_LEG_HEIGHT+2*PP_WOOD_WIDTH,manual:{outerL:manualL,outerW:manualW,packingH:manualH,orientation:calc.orientation}});
+ ppSmartPersist();ppSmartRenderCrateList();ppSmartRefreshPreviewOptions();ppSmartShowPreview(i);
+}
+
+
+/* AIS Packing Planner reliability pass — selection-aware allocation, per-crate capacity,
+   editable master dimensions, row orientation, and immediate cloud save. */
+function ppSmartLineBalance(r){
+ if(!r)return 0;
+ const alloc=ppSmartGetAllocations();
+ return Math.max(0,Math.floor(ppNum(r.planningQty))-(alloc[ppSmartLineKey(r)]||0));
+}
+function ppSmartSelectedCrateId(){
+ const n=Math.max(1,Math.floor(ppNum(document.getElementById('ppSmartCrateNo')?.value)||1));
+ const roman=document.getElementById('ppSmartRoman')?.value||'I';
+ return `C-${String(n).padStart(2,'0')}-${roman}`;
+}
+function ppSmartClearSelectedLine(){
+ ['ppPlanPo','ppPlanProfile','ppPlanItemCode','ppPlanLength','ppPlanQty','ppPlanPcsPerBox','ppPlanBoxQty','ppOuterCrateL','ppOuterCrateW','ppCrateH','ppSmartAllocatePcs','ppSmartAllocateBoxes'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+ const note=document.getElementById('ppOrientationFitNote');if(note)note.textContent='Select a Next Planning PL line first. No line quantities are shown until a line is selected.';
+ const rem=document.getElementById('ppSmartRemainingPcs');if(rem)rem.textContent='—';
+}
+function ppOnNextPlLineChange(){
+ const sel=document.getElementById('ppNextPlLine');
+ if(!sel||sel.value===''){ppSmartClearSelectedLine();ppSmartUpdateAllocationPreview();return;}
+ const i=Number(sel.value),r=ppCrateNextRows[i];if(!r){ppSmartClearSelectedLine();return;}
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??'';};
+ set('ppPlanPo',r.poNumber);set('ppPlanProfile',r.profile);set('ppPlanItemCode',r.itemCode);set('ppPlanLength',r.length);set('ppPlanQty',Math.floor(ppNum(r.planningQty)));
+ const m=ppSmartMasterFor(r),cap=ppSmartPcsBox(r);set('ppPlanPcsPerBox',cap);set('ppPlanBoxQty',Math.ceil(ppNum(r.planningQty)/cap));
+ const rowMode=document.getElementById('ppSmartRowMode');if(rowMode)rowMode.value=String(m?.rowMultiplier||1);
+ const orient=document.getElementById('ppBoxOrientation');if(orient)orient.value=m?.orientation||'auto';
+ set('ppOuterCrateL',m?.manualOuterL||Math.ceil((ppNum(r.length)+32)*(ppNum(rowMode?.value)||1)));set('ppOuterCrateW',m?.crateWidth||'');set('ppCrateH','');
+ set('ppSmartAllocatePcs','');
+ ppSmartUpdateAllocationPreview();ppSmartDimensionChanged();
+}
+function ppSmartOrientationMetrics(items,manual={}){
+ const parsed=items.map(it=>({it,m:ppSmartMasterFor(it),d:ppDims(ppSmartMasterFor(it)?.boxSize)}));
+ if(!parsed.length||parsed.some(x=>!x.d))return {valid:false,reason:'Box size data is missing. Update Crate Master Data.'};
+ const masters=parsed.map(x=>x.m),width=ppNum(manual.outerW)||Math.max(...masters.map(m=>ppNum(m?.crateWidth)).filter(Boolean));
+ if(!width)return {valid:false,reason:'Crate width is missing. Add the standard width in Crate Master Data.'};
+ const innerW=width-2*PP_WOOD_THICKNESS,maxPack=PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH;
+ if(innerW<=0)return {valid:false,reason:'Crate internal width is too small.'};
+ const orientation=manual.orientation||document.getElementById('ppBoxOrientation')?.value||'auto';
+ const rowMultiplier=Math.max(1,Math.min(2,Math.floor(ppNum(manual.rowMultiplier)||Math.floor(ppNum(document.getElementById('ppSmartRowMode')?.value)||1))));
+ const boxes=items.reduce((sum,it)=>sum+Math.ceil(Math.max(0,ppNum(it.pcs))/Math.max(1,ppNum(it.pcsPerBox))),0);
+ const candidates=[];
+ for(const key of ['height','width']){
+  if(orientation!=='auto'&&orientation!==key)continue;
+  const crossDims=parsed.map(x=>key==='height'?x.d.w:x.d.h),verticalDims=parsed.map(x=>key==='height'?x.d.h:x.d.w);
+  const across=Math.floor(innerW/Math.max(...crossDims));if(across<1)continue;
+  const perLayer=across*rowMultiplier,vertical=Math.max(...verticalDims),maxLayers=Math.floor(maxPack/vertical);if(maxLayers<1)continue;
+  const layers=Math.max(1,Math.ceil(boxes/perLayer)),packingH=layers*vertical,overallH=packingH+PP_LEG_HEIGHT+2*PP_WOOD_WIDTH;
+  const profileLength=Math.max(...items.map(it=>ppNum(it.length)||0));
+  const outerL=ppNum(manual.outerL)||Math.ceil((profileLength+32)*rowMultiplier);
+  candidates.push({valid:overallH<=PP_MAX_OVERALL_HEIGHT,orientation:key,rowMultiplier,width,innerW,perLayer,layers,boxes,packingH,overallH,maxCapacity:perLayer*maxLayers,maxLayers,maxAcross:Math.max(...crossDims),maxVertical:vertical,outerL,outerW:width});
+ }
+ if(!candidates.length)return {valid:false,reason:`No box orientation fits the crate width and ${maxPack} mm maximum packing height.`};
+ candidates.sort((a,b)=>(a.valid===b.valid?0:a.valid?-1:1)||b.maxCapacity-a.maxCapacity||a.overallH-b.overallH);
+ const chosen=candidates[0];
+ if(!chosen.valid)return {...chosen,valid:false,reason:`This quantity needs ${chosen.overallH} mm overall height. Maximum is ${PP_MAX_OVERALL_HEIGHT} mm. Reduce PCS, choose double-row where the length allows it, or use another crate.`};
+ return chosen;
+}
+function ppSmartCalcDims(items,manual={}){
+ if(!items.length)return {valid:false,reason:'Add at least one profile to calculate dimensions.'};
+ const metric=ppSmartOrientationMetrics(items,manual);if(!metric.valid)return metric;
+ return {...metric,packingH:metric.packingH,overallH:metric.overallH,perLayer:metric.perLayer,layers:metric.layers,boxes:metric.boxes,orientation:metric.orientation,rowMultiplier:metric.rowMultiplier};
+}
+function ppSmartUpdateAllocationPreview(){
+ const r=ppSmartSelectedLine(),pcsInput=document.getElementById('ppSmartAllocatePcs'),boxesInput=document.getElementById('ppSmartAllocateBoxes'),note=document.getElementById('ppOrientationFitNote'),remaining=document.getElementById('ppSmartRemainingPcs');
+ if(!r){if(boxesInput)boxesInput.value='';if(remaining)remaining.textContent='—';if(note)note.textContent='Select a Next Planning PL line first. No line quantities are shown until a line is selected.';return;}
+ const pcs=Math.max(0,Math.floor(ppNum(pcsInput?.value))),pbox=ppSmartPcsBox(r),boxes=pcs?Math.ceil(pcs/pbox):0,balance=ppSmartLineBalance(r),crateId=ppSmartSelectedCrateId(),crate=ppSmartCrates.find(c=>c.id===crateId);
+ if(boxesInput)boxesInput.value=pcs?boxes:'';
+ if(remaining)remaining.textContent=balance.toLocaleString();
+ const existing=crate?(crate.items||[]).reduce((s,it)=>s+ppNum(it.pcs),0):0;
+ if(note){note.innerHTML=`<b>Selected line:</b> ${ppEsc(r.poNumber)} / ${ppEsc(r.profile)} / ${ppEsc(r.itemCode)} / ${ppEsc(r.length)} mm · Next PL ${Math.floor(ppNum(r.planningQty)).toLocaleString()} PCS · already allocated ${Math.max(0,Math.floor(ppNum(r.planningQty))-balance).toLocaleString()} PCS · <b>balance ${balance.toLocaleString()} PCS</b>.<br><b>Target crate ${ppEsc(crateId)}:</b> ${existing.toLocaleString()} PCS already in this crate. This addition: ${pcs.toLocaleString()} PCS = ${boxes.toLocaleString()} boxes. Balance is tracked per PO/profile/item/length.`;}
+}
+function ppSmartDimensionChanged(){
+ const r=ppSmartSelectedLine();if(!r){ppSmartUpdateAllocationPreview();return;}
+ const m=ppSmartMasterFor(r),pcs=Math.max(0,Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value))),pbox=ppSmartPcsBox(r),item={lineKey:ppSmartLineKey(r),po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs,pcsPerBox:pbox,boxes:pcs?Math.ceil(pcs/pbox):0,unitWeight:ppNum(r.unitWeight||m?.unitWeight)};
+ const manual={outerL:ppNum(document.getElementById('ppOuterCrateL')?.value)||Math.ceil(ppNum(r.length)+32),outerW:ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(m?.crateWidth),orientation:document.getElementById('ppBoxOrientation')?.value||'auto',rowMultiplier:ppNum(document.getElementById('ppSmartRowMode')?.value)||1};
+ const crate=ppSmartCrates.find(c=>c.id===ppSmartSelectedCrateId()),items=crate?[...(crate.items||[]),item]:[item];
+ const calc=pcs>0&&m?ppSmartCalcDims(items,manual):null,hEl=document.getElementById('ppCrateH');
+ if(calc?.valid){if(hEl&&document.activeElement!==hEl)hEl.value=calc.packingH;const note=document.getElementById('ppOrientationFitNote');if(note)note.dataset.fit='yes';}
+ else if(calc&&!calc.valid){if(hEl&&document.activeElement!==hEl)hEl.value='';const note=document.getElementById('ppOrientationFitNote');if(note)note.dataset.fit='no';}
+ ppSmartUpdateAllocationPreview();
+ if(calc?.valid){const note=document.getElementById('ppOrientationFitNote');if(note)note.innerHTML+=`<br><b>Recommended arrangement:</b> ${calc.orientation==='height'?'Box height vertical':'Box width vertical (rotate 90°)'} · ${calc.perLayer} boxes/layer · ${calc.layers} layers · ${calc.boxes} boxes total · ${calc.packingH} mm packing height + 292 mm = ${calc.overallH} mm overall. ${calc.rowMultiplier===3?'Triple lengthwise rows selected.':calc.rowMultiplier===2?'Double lengthwise rows selected.':'Single lengthwise row selected.'}`;}
+ else if(calc&&!calc.valid){const note=document.getElementById('ppOrientationFitNote');if(note)note.innerHTML+=`<br><b style="color:#b91c1c">Cannot fit:</b> ${ppEsc(calc.reason||'Check box size and crate dimensions.')}`;}
+}
+function ppSmartAddCrateFromSelected(){
+ const r=ppSmartSelectedLine();if(!r){alert('Select a Next Planning PL line first.');return;}
+ const master=ppSmartMasterFor(r),box=ppDims(master?.boxSize);if(!master||!box||!ppNum(master.crateWidth)){alert('This profile/length needs Box Size and Crate Width in Crate Master Data first.');return;}
+ const requested=Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value));if(requested<1){alert('Enter PCS to allocate to this crate.');return;}
+ const balance=ppSmartLineBalance(r);if(requested>balance){alert(`Only ${balance.toLocaleString()} PCS remain for ${r.poNumber} / ${r.profile} / ${r.itemCode} / ${r.length} mm.`);return;}
+ const id=ppSmartSelectedCrateId();let crate=ppSmartCrates.find(c=>c.id===id);const isNew=!crate;
+ if(!crate)crate={id,items:[],createdAt:Date.now(),manual:{}};
+ const same=crate.items.find(it=>it.lineKey===ppSmartLineKey(r));
+ const pcsPerBox=ppSmartPcsBox(r),item={lineKey:ppSmartLineKey(r),po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:requested,pcsPerBox,boxes:Math.ceil(requested/pcsPerBox),unitWeight:ppNum(r.unitWeight||master.unitWeight)};
+ const items=same?crate.items.map(it=>it===same?{...it,pcs:ppNum(it.pcs)+requested,boxes:Math.ceil((ppNum(it.pcs)+requested)/pcsPerBox)}:it):[...crate.items,item];
+ const manual={...(crate.manual&&typeof crate.manual==='object'?crate.manual:{}),outerL:ppNum(document.getElementById('ppOuterCrateL')?.value)||ppNum(crate.outerL)||Math.ceil((ppNum(r.length)+32)*(ppNum(document.getElementById('ppSmartRowMode')?.value)||1)),outerW:ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(crate.outerW)||ppNum(master.crateWidth),orientation:document.getElementById('ppBoxOrientation')?.value||crate.orientation||'auto',rowMultiplier:ppNum(document.getElementById('ppSmartRowMode')?.value)||ppNum(crate.rowMultiplier)||1};
+ const calc=ppSmartCalcDims(items,manual);if(!calc.valid){if(isNew){}alert(calc.reason||'This crate cannot fit the selected boxes within 1100 mm overall height. Reduce PCS or use another crate.');return;}
+ if(isNew)ppSmartCrates.push(crate);crate.items=items;Object.assign(crate,{outerL:calc.outerL,outerW:calc.outerW,packingH:calc.packingH,overallH:calc.overallH,perLayer:calc.perLayer,layers:calc.layers,boxes:calc.boxes,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier,manual:{...manual,outerL:calc.outerL,outerW:calc.outerW,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier}});
+ ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();
+ const pcsInput=document.getElementById('ppSmartAllocatePcs');if(pcsInput)pcsInput.value='';
+ ppSmartUpdateAllocationPreview();ppSmartShowPreview(ppSmartCrates.indexOf(crate));
+ if(typeof showToast==='function')showToast(`${requested} PCS added to ${id}. Save the crate list to sync to cloud.`,'success');
+}
+function ppSmartAddProfileToCrate(i){
+ const c=ppSmartCrates[i];if(!c)return;
+ const choices=ppCrateNextRows.map((r,n)=>`${n}: ${r.poNumber} / ${r.profile} / ${r.itemCode} / ${r.length} mm — balance ${ppSmartLineBalance(r)} PCS`).join('\n');
+ const raw=prompt('Select Next PL line number to add to '+c.id+':\n'+choices,'0');if(raw===null)return;const r=ppCrateNextRows[Math.floor(ppNum(raw))];if(!r){alert('Invalid Next PL line.');return;}
+ const balance=ppSmartLineBalance(r);if(!balance){alert('No PCS remain for this Next PL line.');return;}
+ const qtyRaw=prompt(`PCS to add to ${c.id} (remaining ${balance})`,String(balance));if(qtyRaw===null)return;const pcs=Math.floor(ppNum(qtyRaw));if(pcs<1||pcs>balance){alert(`Enter PCS from 1 to ${balance}.`);return;}
+ const m=ppSmartMasterFor(r);if(!ppDims(m?.boxSize)||!ppNum(m?.crateWidth)){alert('Add Box Size and Crate Width in Crate Master Data first.');return;}
+ const cap=ppSmartPcsBox(r),lineKey=ppSmartLineKey(r),existing=c.items.find(it=>it.lineKey===lineKey),item={lineKey,po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:pcs+(existing?ppNum(existing.pcs):0),pcsPerBox:cap,boxes:Math.ceil((pcs+(existing?ppNum(existing.pcs):0))/cap),unitWeight:ppNum(r.unitWeight||m.unitWeight)};
+ const items=existing?c.items.map(it=>it===existing?item:it):[...c.items,item],calc=ppSmartCalcDims(items,{...(c.manual||{}),outerL:c.outerL,outerW:c.outerW,orientation:c.orientation||'auto',rowMultiplier:c.rowMultiplier||1});
+ if(!calc.valid){alert(calc.reason||'The added profile does not fit within this crate.');return;}
+ c.items=items;Object.assign(c,{...calc,manual:{...(c.manual||{}),outerL:calc.outerL,outerW:calc.outerW,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier}});ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();ppSmartShowPreview(i);
+}
+function ppSmartEditPcs(i){
+ const c=ppSmartCrates[i];if(!c)return;const original=JSON.parse(JSON.stringify(c));
+ for(const it of c.items||[]){const r=ppCrateNextRows.find(x=>ppSmartLineKey(x)===it.lineKey),alloc=ppSmartGetAllocations(),max=r?Math.max(0,ppNum(r.planningQty)-(alloc[it.lineKey]||0)+ppNum(it.pcs)):ppNum(it.pcs);const raw=prompt(`${it.po} / ${it.profile} / ${it.itemCode} / ${it.length} mm — PCS (max ${max})`,String(it.pcs));if(raw===null)return;const qty=Math.floor(ppNum(raw));if(qty<0||qty>max){alert(`Enter PCS from 0 to ${max}.`);return;}it.pcs=qty;it.boxes=Math.ceil(qty/Math.max(1,ppNum(it.pcsPerBox)));}
+ c.items=(c.items||[]).filter(it=>ppNum(it.pcs)>0);const calc=ppSmartCalcDims(c.items,{...(c.manual||{}),outerL:c.outerL,outerW:c.outerW,orientation:c.orientation||'auto',rowMultiplier:c.rowMultiplier||1});if(c.items.length&&!calc.valid){Object.assign(c,original);alert(calc.reason||'Edited PCS do not fit.');return;}if(calc.valid)Object.assign(c,{...calc,manual:{...(c.manual||{}),outerL:calc.outerL,outerW:calc.outerW,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier}});ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();
+}
+function ppSmartEditCrate(i){
+ const c=ppSmartCrates[i];if(!c)return;const L=prompt('Crate outer LENGTH (mm)',String(c.outerL||''));if(L===null)return;const W=prompt('Crate outer WIDTH (mm)',String(c.outerW||''));if(W===null)return;const orient=prompt('Box orientation: auto / height / width',c.orientation||'auto');if(orient===null)return;const row=prompt('Lengthwise rows: 1 or 2',String(c.rowMultiplier||1));if(row===null)return;
+ const calc=ppSmartCalcDims(c.items,{outerL:ppNum(L),outerW:ppNum(W),orientation:['auto','height','width'].includes(orient.toLowerCase())?orient.toLowerCase():'auto',rowMultiplier:Math.max(1,Math.min(2,Math.floor(ppNum(row)||1)))});if(!calc.valid){alert(calc.reason||'These dimensions do not fit.');return;}Object.assign(c,{...calc,manual:{outerL:calc.outerL,outerW:calc.outerW,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier}});ppSmartPersist();ppSmartRenderCrateList();ppSmartRefreshPreviewOptions();ppSmartShowPreview(i);
+}
+function ppSmartCopyCrate(i){const src=ppSmartCrates[i];if(!src)return;let n=1;const used=new Set(ppSmartCrates.map(c=>c.id));while(n<=60&&used.has(`C-${String(n).padStart(2,'0')}-I`))n++;if(n>60){alert('All crate numbers 1–60 are used.');return;}const copy=JSON.parse(JSON.stringify(src));copy.id=`C-${String(n).padStart(2,'0')}-I`;copy.createdAt=Date.now();copy.items=[];ppSmartCrates.push(copy);ppSmartPersist();ppSmartRenderCrateList();ppSmartRefreshPreviewOptions();}
+function ppSmartRemoveCrate(i){if(!confirm('Remove this crate and return its PCS to the Next PL remaining balance?'))return;ppSmartCrates.splice(i,1);ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();}
+function ppSmartRenderCrateList(){
+ const body=document.getElementById('ppCratePlanBody');if(!body)return;
+ body.innerHTML=ppSmartCrates.length?ppSmartCrates.map((c,i)=>{const items=c.items||[],pcs=items.reduce((s,x)=>s+ppNum(x.pcs),0),boxes=items.reduce((s,x)=>s+ppNum(x.boxes),0),weight=items.reduce((s,x)=>s+ppNum(x.pcs)*ppNum(x.unitWeight),0);return `<tr><td><b>${ppEsc(c.id)}</b></td><td>${ppEsc([...new Set(items.map(x=>x.po))].join(', '))}</td><td>${ppEsc([...new Set(items.map(x=>x.profile))].join(' / '))}</td><td>${ppEsc([...new Set(items.map(x=>x.itemCode))].join(' / '))}</td><td>${ppEsc([...new Set(items.map(x=>x.length))].join(' / '))}</td><td>${pcs.toLocaleString()}</td><td>${items.map(x=>x.pcsPerBox).join(' / ')}</td><td>${boxes.toLocaleString()}</td><td>${c.outerL||'—'}</td><td>${c.outerW||'—'}</td><td>${c.packingH||'—'}</td><td>${c.overallH||'—'}</td><td>${c.perLayer||'—'}</td><td>${c.layers||'—'}</td><td>${c.rowMultiplier===2?'Double':'Single'}</td><td>${weight.toFixed(1)}</td><td><button class="btn btn-accent" onclick="ppSmartShowPreview(${i})">2D/3D</button></td><td><div class="pp-row-actions"><button class="btn btn-sm" onclick="ppSmartAddProfileToCrate(${i})">+ Profile</button><button class="btn btn-sm" onclick="ppSmartEditPcs(${i})">Edit PCS</button><button class="btn btn-sm" onclick="ppSmartCopyCrate(${i})">Copy</button><button class="btn btn-sm" onclick="ppSmartEditCrate(${i})">Edit</button><button class="btn btn-sm" onclick="ppSmartRemoveCrate(${i})">Remove</button><button class="btn btn-sm" onclick="ppSmartSaveNow()">Save</button></div></td></tr>`;}).join(''):'<tr><td colspan="18">No crates yet. Select a Next PL line and allocate PCS.</td></tr>';
+ const pcs=ppSmartCrates.reduce((s,c)=>s+(c.items||[]).reduce((a,x)=>a+ppNum(x.pcs),0),0),weight=ppSmartCrates.reduce((s,c)=>s+(c.items||[]).reduce((a,x)=>a+ppNum(x.pcs)*ppNum(x.unitWeight),0),0),set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('ppSmartCrateCount',ppSmartCrates.length);set('ppSmartAllocatedPcs',pcs.toLocaleString());set('ppSmartTotalWeight',weight.toLocaleString(undefined,{maximumFractionDigits:1})+' kg');ppSmartRefreshPreviewOptions();
+}
+function ppRenderCrateMaster(){
+ const body=document.getElementById('ppCrateMasterBody');if(!body)return;const q=(document.getElementById('ppCrateMasterSearch')?.value||'').toLowerCase();
+ const rows=ppCrateMasterRows.filter(r=>[r.profile,r.itemCode,r.length,r.boxSize,r.crateWidth].join(' ').toLowerCase().includes(q));
+ const matched=ppCrateMasterRows.filter(r=>r.excelMatched).length,missing=ppCrateMasterRows.filter(r=>!r.boxSize||!r.crateWidth||!ppCrateCalc(r).valid).length;
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('ppCrateMasterCount',ppCrateMasterRows.length);set('ppCrateMasterMatched',matched);set('ppCrateMasterMissing',missing);
+ const dim=(idx,field,val)=>`<input type="number" min="1" step="1" value="${ppEsc(val??'')}" aria-label="${field}" style="width:84px;max-width:100%;padding:6px;border:1px solid #93c5fd;border-radius:7px" onchange="ppMasterInlineDim(${idx},'${field}',this.value)">`;
+ body.innerHTML=rows.length?rows.map(r=>{const idx=ppCrateMasterRows.indexOf(r),c=ppCrateCalc(r),height= c.valid?c.packingH:'',overall=c.valid?c.overallH:'',status=(!r.boxSize||!r.crateWidth||!c.valid)?'<b style="color:#b45309">Manual data needed</b>':r.excelMatched?'<b style="color:#047857">Excel matched</b>':'<b style="color:#1d4ed8">Catalog / manual</b>';
+ return `<tr><td><b>${ppEsc(r.profile)}</b></td><td>${ppEsc(r.itemCode||'—')}</td><td>${ppEsc(r.length)}</td><td>${ppNum(r.pcsPerBox)||1}</td><td>${ppEsc(r.boxSize||'—')}</td><td>${dim(idx,'crateWidth',r.crateWidth||c.outerW||'')}</td><td>${dim(idx,'manualOuterL',r.manualOuterL||c.outerL||Math.ceil(ppNum(r.length)+32))}</td><td>${height?dim(idx,'manualPackingH',r.manualPackingH||height):'—'}</td><td>${overall||'—'}</td><td>${c.valid?c.perLayer:'—'}</td><td class="pp-master-orientation"><label class="pp-control-label"><i class="fa-solid fa-arrows-up-down-left-right"></i> Vertical box side</label><select class="pp-master-select" aria-label="Box orientation" title="Choose which box dimension stands vertically" onchange="ppMasterInlineDim(${idx},'orientation',this.value)"><option value="auto" ${(r.orientation||'auto')==='auto'?'selected':''}>✨ Auto best fit</option><option value="height" ${r.orientation==='height'?'selected':''}>↕ Height vertical</option><option value="width" ${r.orientation==='width'?'selected':''}>↻ Width vertical (rotate)</option></select><button class="btn btn-sm pp-preview-btn" title="View crate arrangement" onclick="ppMasterPreview(${idx})"><i class="fa-solid fa-cubes-stacked"></i> Preview</button></td><td class="pp-master-rows"><label class="pp-control-label"><i class="fa-solid fa-layer-group"></i> Boxes across length</label><select class="pp-master-select" aria-label="Lengthwise rows" title="Double doubles the lengthwise box rows" onchange="ppMasterInlineDim(${idx},'rowMultiplier',this.value)"><option value="1" ${(ppNum(r.rowMultiplier)||1)===1?'selected':''}>1 row · Single</option><option value="2" ${ppNum(r.rowMultiplier)===2?'selected':''}>2 rows · Double</option></select><small class="pp-cell-hint">${(ppNum(r.rowMultiplier)||1)===2?'Double row capacity':'Single row capacity'}</small></td><td>${c.valid?c.boxesPerCrate:'—'}</td><td>${status}</td><td><button class="btn btn-sm" onclick="ppEditCrateMaster('${encodeURIComponent(ppMasterKey(r.profile,r.itemCode,r.length))}')">Edit Box/PCS</button></td></tr>`;
+ }).join(''):'<tr><td colspan="15">No matching Master Catalog records.</td></tr>';
+}
+function ppMasterInlineDim(index,field,value){const r=ppCrateMasterRows[index];if(!r)return;if(field==='orientation'){r.orientation=['auto','height','width'].includes(value)?value:'auto';}else if(field==='rowMultiplier'){r.rowMultiplier=Number(value)===2?2:1;}else{const n=ppNum(value);if(n<1){alert('Enter a dimension greater than zero.');ppRenderCrateMaster();return;}if(field==='manualPackingH'&&n>PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH){alert('Packing height cannot exceed 808 mm.');ppRenderCrateMaster();return;}r[field]=n;r.manual=true;}
+ r.manual=true;r.source='Manual / edited';r.calc=ppCrateCalc({...r,orientation:r.orientation,rowMultiplier:r.rowMultiplier});ppRenderCrateMaster();ppPopulateCrateStandards();ppRefreshNextPlLines();ppSaveCrateMaster();
+}
+function ppMasterPreview(index){const r=ppCrateMasterRows[index];if(!r)return;const c=ppCrateCalc(r),d=ppDims(r.boxSize);if(!d||!c.valid){alert('Please set valid box size, crate width and orientation first.');return;}const rowMultiplier=ppNum(r.rowMultiplier)||1,boxesPerLayer=c.perLayer*rowMultiplier,layers=c.layers,packingH=c.packingH,outerL=ppNum(r.manualOuterL)||Math.ceil((ppNum(r.length)+32)*rowMultiplier);const temp={id:'MASTER PREVIEW',items:[{profile:r.profile,itemCode:r.itemCode,length:r.length,pcsPerBox:r.pcsPerBox,pcs:boxesPerLayer*layers*r.pcsPerBox,boxes:boxesPerLayer*layers,lineKey:'master-preview'}],outerL,outerW:ppNum(r.crateWidth),packingH,overallH:packingH+292,perLayer:boxesPerLayer,layers,boxes:boxesPerLayer*layers,orientation:r.orientation||'auto',rowMultiplier};const old=ppSmartCrates;ppSmartCrates=[temp];ppSmartShowPreview(0);ppSmartCrates=old;ppSmartRefreshPreviewOptions();const tab=document.querySelector('#packingPlannerTab .pp-subtab[onclick*="ppContainerSubTab"]');if(tab)ppSwitchSubtab('ppContainerSubTab',tab);}
+
+/* Final geometry override: master data capacity and preview must use the same orientation/row rules. */
+function ppCrateCalc(row){
+ const d=ppDims(row.boxSize);if(!d||!d.l||!d.w||!d.h)return {valid:false,reason:'Box size missing'};
+ const width=ppNum(row.crateWidth);if(width<=0)return {valid:false,reason:'Crate width missing'};
+ const innerW=width-2*PP_WOOD_THICKNESS,maxPack=PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH,rowMultiplier=Math.max(1,Math.min(2,Math.floor(ppNum(row.rowMultiplier)||1)));
+ const requested=row.orientation||'auto',candidates=[];
+ for(const key of ['height','width']){
+  if(requested!=='auto'&&requested!==key)continue;
+  const cross=key==='height'?d.w:d.h,vertical=key==='height'?d.h:d.w,across=Math.floor(innerW/cross),perLayer=across*rowMultiplier;
+  if(across<1)continue;
+  const maxPackUsed=ppNum(row.manualPackingH)>0?Math.min(maxPack,ppNum(row.manualPackingH)):maxPack;
+  const maxLayers=Math.floor(maxPackUsed/vertical);if(maxLayers<1)continue;
+  const layers=maxLayers,boxes=Math.max(1,perLayer*layers),packingH=ppNum(row.manualPackingH)>0?ppNum(row.manualPackingH):layers*vertical,overallH=packingH+292;
+  const autoL=Math.ceil((ppNum(row.length)||d.l)+32)*rowMultiplier,outerL=ppNum(row.manualOuterL)||autoL;
+  candidates.push({valid:overallH<=PP_MAX_OVERALL_HEIGHT,box:d,orientation:key,rowMultiplier,outerL,outerW:width,packingH,overallH,perLayer,layers,boxesPerCrate:boxes,maxCapacity:perLayer*layers,maxLayers,manual:!!(row.manualOuterL||row.manualPackingH)});
+ }
+ if(!candidates.length)return {valid:false,reason:'Box cannot fit the crate width and height limits'};
+ candidates.sort((a,b)=>(a.valid===b.valid?0:a.valid?-1:1)||b.maxCapacity-a.maxCapacity||a.overallH-b.overallH);
+ const c=candidates[0];c.per=c.perLayer;c.rowMultiplier=rowMultiplier;
+ if(!c.valid)c.reason=`Overall height ${c.overallH} mm exceeds ${PP_MAX_OVERALL_HEIGHT} mm.`;
+ return c;
+}
+function ppSmartShowPreview(i){
+ const c=ppSmartCrates[i];if(!c)return;const host=document.getElementById('ppCrate3DPreview');if(!host)return;
+ const mode=document.getElementById('ppSmartViewMode')?.value||'3d',items=c.items||[],parsed=items.map(it=>({it,d:ppDims(ppSmartMasterFor(it)?.boxSize)}));
+ if(!parsed.length||parsed.some(x=>!x.d)){host.innerHTML='<div class="pp-empty">Box size missing. Update Crate Master Data first.</div>';return;}
+ const calc=ppSmartCalcDims(items,{outerL:c.outerL,outerW:c.outerW,orientation:c.orientation||c.manual?.orientation||'auto',rowMultiplier:c.rowMultiplier||c.manual?.rowMultiplier||1});
+ const orientation=c.orientation||calc.orientation||'height',per=Math.max(1,calc.perLayer||c.perLayer||1),layers=Math.max(1,calc.layers||c.layers||1),packH=ppNum(c.packingH)||calc.packingH||1,totalBoxes=items.reduce((s,it)=>s+ppNum(it.boxes),0),maxShow=72;
+ const color=(i)=>i%2?'#d7ad76':'#edd0a0';let svg='';
+ if(mode==='top'||mode==='side'){
+  let rects='',n=0;items.forEach((it,idx)=>{for(let b=0;b<ppNum(it.boxes)&&n<maxShow;b++,n++){const col=n%per,row=Math.floor(n/per);if(mode==='top'){const cellW=700/per,cellH=420/layers;rects+=`<rect x="55" y="${45+row*cellH}" width="${Math.max(4,cellW-3)}" height="${Math.max(4,cellH-3)}" rx="2" fill="${color(idx)}" stroke="#84572c"/>`;}else{const cellW=740/per,cellH=420/layers;rects+=`<rect x="40" y="${45+row*cellH}" width="${Math.max(4,cellW-3)}" height="${Math.max(4,cellH-3)}" fill="${color(idx)}" stroke="#84572c"/>`;}}});
+  svg=mode==='top'?`<svg viewBox="0 0 820 540"><rect x="25" y="25" width="770" height="450" rx="8" fill="#f7e7c8" stroke="#84572c" stroke-width="8"/>${rects}<text x="30" y="510" font-size="17" font-weight="700" fill="#164e63">Top view · ${c.outerL} × ${c.outerW} mm · ${c.rowMultiplier===3?'triple lengthwise rows':c.rowMultiplier===2?'double lengthwise rows':'single lengthwise row'}</text></svg>`:`<svg viewBox="0 0 820 540"><rect x="25" y="25" width="770" height="450" fill="#f7e7c8" stroke="#84572c" stroke-width="8"/>${rects}<rect x="35" y="465" width="60" height="50" fill="#a97842"/><rect x="725" y="465" width="60" height="50" fill="#a97842"/><text x="30" y="510" font-size="17" font-weight="700" fill="#164e63">Side view · ${layers} layers × ${Math.round(packH/layers)} mm = ${packH} mm packing height</text></svg>`;
+ }else{
+  const x=95,y=155,L=500,D=150,baseH=Math.max(70,Math.min(270,packH/3)),layerH=baseH/layers;let blocks='',n=0;
+  for(let layer=0;layer<layers&&n<36;layer++)for(let col=0;col<per&&n<totalBoxes&&n<36;col++,n++){const xx=x+col*(L/per),ww=Math.max(10,L/per-3),yy=y-layer*layerH;blocks+=`<polygon points="${xx},${yy} ${xx+ww},${yy-10} ${xx+ww+D/per},${yy-10-55/per} ${xx+D/per},${yy-55/per}" fill="${color(n)}" stroke="#84572c"/><polygon points="${xx},${yy} ${xx+D/per},${yy-55/per} ${xx+D/per},${yy-55/per+layerH} ${xx},${yy+layerH}" fill="#b98549" stroke="#84572c"/>`;}
+  svg=`<svg viewBox="0 0 820 590"><polygon points="${x},${y} ${x+L},${y-10} ${x+L+D},${y-65} ${x+D},${y-55}" fill="#f1dfbc" stroke="#754b26" stroke-width="6"/>${blocks}<polygon points="${x},${y} ${x+D},${y-55} ${x+D},${y-55+baseH} ${x},${y+baseH}" fill="#bc8749" stroke="#754b26" stroke-width="5"/><polygon points="${x},${y+baseH} ${x+L},${y+baseH-10} ${x+L},${y-10+baseH} ${x},${y+baseH}" fill="#c18b4e" stroke="#754b26" stroke-width="5"/><g fill="#9c6b37" stroke="#70451f" stroke-width="3"><rect x="${x+20}" y="${y+baseH}" width="24" height="60"/><rect x="${x+L-30}" y="${y+baseH-8}" width="24" height="60"/><rect x="${x+D+5}" y="${y-55+baseH-8}" width="24" height="60"/></g><text x="30" y="545" font-size="18" font-weight="700" fill="#164e63">${ppEsc(c.id)} · ${c.outerL} × ${c.outerW} × ${packH} mm packing</text><text x="30" y="570" font-size="15" fill="#164e63">${totalBoxes} boxes · ${items.reduce((s,it)=>s+ppNum(it.pcs),0).toLocaleString()} PCS · ${per} boxes/layer × ${layers} layers · ${orientation==='width'?'rotated':'standard'}</text></svg>`;
+ }
+ host.innerHTML=svg;const info=document.getElementById('ppCrate3DInfo');if(info)info.innerHTML=`<b>${ppEsc(c.id)}</b><br>${items.map(it=>`${ppEsc(it.po)} / ${ppEsc(it.profile)} / ${ppEsc(it.itemCode)} / ${ppEsc(it.length)} mm: ${ppNum(it.pcs).toLocaleString()} PCS (${it.boxes} boxes)`).join('<br>')}<br><b>Dimensions:</b> ${c.outerL} × ${c.outerW} × ${packH} mm packing; ${c.overallH||packH+292} mm overall including 100 mm legs + 192 mm frame allowance.<br><b>Arrangement:</b> ${per} boxes/layer × ${layers} layers · ${c.rowMultiplier===3?'triple':c.rowMultiplier===2?'double':'single'} lengthwise row(s) · ${orientation==='width'?'box width vertical (rotated 90°)':'box height vertical (standard)'}.`;
+ const sel=document.getElementById('ppSmartPreviewCrate');if(sel)sel.value=String(i);
+}
+
+function ppSmartRowModeChanged(){
+ const r=ppSmartSelectedLine();if(!r){ppSmartDimensionChanged();return;}
+ const mode=Math.max(1,Math.min(2,Math.floor(ppNum(document.getElementById('ppSmartRowMode')?.value)||1))),len=ppNum(r.length),el=document.getElementById('ppOuterCrateL'),normal=Math.ceil(len+32),double=Math.ceil((len+32)*2),current=ppNum(el?.value);
+ if(el&&(!current||Math.abs(current-normal)<=50||Math.abs(current-double)<=50))el.value=Math.ceil((len+32)*mode);
+ ppSmartDimensionChanged();
+}
+const ppOldMasterInlineDim=window.ppMasterInlineDim;
+window.ppMasterInlineDim=function(index,field,value){
+ const r=ppCrateMasterRows[index];if(!r)return;
+ if(field==='rowMultiplier'){
+  const old=Math.max(1,Math.min(2,Math.floor(ppNum(r.rowMultiplier)||1))),next=Number(value)===2?2:1;
+  r.rowMultiplier=next;r.manualOuterL=Math.ceil((ppNum(r.length)+32)*next);r.manual=true;r.source='Manual / edited';r.calc=ppCrateCalc(r);ppRenderCrateMaster();ppPopulateCrateStandards();ppRefreshNextPlLines();ppSaveCrateMaster();return;
+ }
+ return ppOldMasterInlineDim.call(this,index,field,value);
+};
+
+/* AIS crate geometry correction (2026-10-10): use Master Data orientation/row settings,
+   calculate actual packing height from allocated box count, and keep overall height <= 1100 mm. */
+function ppCrateCalc(row){
+ const d=ppDims(row.boxSize); if(!d||!d.l||!d.w||!d.h)return {valid:false,reason:'Box Size missing'};
+ const width=ppNum(row.crateWidth); if(width<=0)return {valid:false,reason:'Crate Width missing'};
+ const innerW=width-2*PP_WOOD_THICKNESS, maxPack=PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH;
+ const rowMultiplier=Math.max(1,Math.min(2,Math.floor(ppNum(row.rowMultiplier)||1))), requested=['height','width'].includes(row.orientation)?row.orientation:'auto', candidates=[];
+ for(const orientation of ['height','width']){
+  if(requested!=='auto'&&requested!==orientation)continue;
+  const cross=orientation==='height'?d.w:d.h, vertical=orientation==='height'?d.h:d.w;
+  const across=Math.floor(innerW/cross); if(across<1)continue;
+  const perLayer=across*rowMultiplier, layers=Math.floor(maxPack/vertical); if(layers<1)continue;
+  const packingH=layers*vertical, overallH=packingH+PP_LEG_HEIGHT+2*PP_WOOD_WIDTH;
+  const outerL=ppNum(row.manualOuterL)||Math.ceil((ppNum(row.length)||d.l)+32)*rowMultiplier;
+  candidates.push({valid:overallH<=PP_MAX_OVERALL_HEIGHT,box:d,orientation,rowMultiplier,outerL,outerW:width,packingH,overallH,perLayer,layers,boxesPerCrate:perLayer*layers,maxCapacity:perLayer*layers,maxLayers:layers,vertical,cross});
+ }
+ if(!candidates.length)return {valid:false,reason:'Box orientation does not fit the crate width or height limit'};
+ candidates.sort((a,b)=>(a.valid===b.valid?0:a.valid?-1:1)||b.maxCapacity-a.maxCapacity||a.overallH-b.overallH);
+ const c=candidates[0];c.per=c.perLayer;c.manual=!!(row.manualOuterL);return c;
+}
+function ppSmartOrientationMetrics(items,manual={}){
+ const parsed=(items||[]).map(it=>({it,m:ppSmartMasterFor(it),d:ppDims(ppSmartMasterFor(it)?.boxSize)}));
+ if(!parsed.length||parsed.some(x=>!x.m||!x.d))return {valid:false,reason:'Box Size or Crate Width is missing. Complete Crate Master Data first.'};
+ const width=ppNum(manual.outerW)||Math.max(...parsed.map(x=>ppNum(x.m.crateWidth)));
+ if(width<=0)return {valid:false,reason:'Crate Width is missing in Crate Master Data.'};
+ const innerW=width-2*PP_WOOD_THICKNESS,maxPack=PP_MAX_OVERALL_HEIGHT-PP_LEG_HEIGHT-2*PP_WOOD_WIDTH;
+ const requested=['height','width'].includes(manual.orientation)?manual.orientation:'auto';
+ const rowMultiplier=Math.max(1,Math.min(2,Math.floor(ppNum(manual.rowMultiplier)||Math.max(...parsed.map(x=>ppNum(x.m.rowMultiplier)||1)))));
+ const boxes=parsed.reduce((sum,x)=>sum+Math.max(0,Math.floor(ppNum(x.it.boxes)||Math.ceil(ppNum(x.it.pcs)/Math.max(1,ppNum(x.it.pcsPerBox)||ppNum(x.m.pcsPerBox)||1)))),0);
+ if(boxes<=0)return {valid:false,reason:'Enter PCS to allocate before calculating crate height.'};
+ const candidates=[];
+ for(const orientation of ['height','width']){
+  if(requested!=='auto'&&requested!==orientation)continue;
+  const cross=Math.max(...parsed.map(x=>orientation==='height'?x.d.w:x.d.h));
+  const vertical=Math.max(...parsed.map(x=>orientation==='height'?x.d.h:x.d.w));
+  const across=Math.floor(innerW/cross);if(across<1)continue;
+  const perLayer=across*rowMultiplier,layers=Math.ceil(boxes/perLayer),packingH=layers*vertical,overallH=packingH+PP_LEG_HEIGHT+2*PP_WOOD_WIDTH;
+  const profileLength=Math.max(...parsed.map(x=>ppNum(x.it.length)||0));
+  const outerL=ppNum(manual.outerL)||Math.ceil((profileLength+32)*rowMultiplier);
+  candidates.push({valid:overallH<=PP_MAX_OVERALL_HEIGHT,orientation,rowMultiplier,width,innerW,perLayer,layers,boxes,packingH,overallH,maxCapacity:perLayer*Math.floor(maxPack/vertical),maxLayers:Math.floor(maxPack/vertical),maxAcross:cross,maxVertical:vertical,outerL,outerW:width});
+ }
+ if(!candidates.length)return {valid:false,reason:'Neither box orientation fits the crate width and maximum packing height.'};
+ candidates.sort((a,b)=>(a.valid===b.valid?0:a.valid?-1:1)||b.maxCapacity-a.maxCapacity||a.overallH-b.overallH);
+ const chosen=candidates[0];
+ if(!chosen.valid)return {...chosen,valid:false,reason:`This box quantity needs ${chosen.overallH} mm overall height (${chosen.packingH} mm packing + 292 mm legs/frame). Maximum is ${PP_MAX_OVERALL_HEIGHT} mm. Reduce PCS, choose the other box orientation, or use another crate.`};
+ return chosen;
+}
+function ppSmartCalcDims(items,manual={}){const c=ppSmartOrientationMetrics(items,manual);return c.valid?{...c,per:c.perLayer,packingH:c.packingH,overallH:c.overallH,perLayer:c.perLayer,layers:c.layers,boxes:c.boxes,orientation:c.orientation,rowMultiplier:c.rowMultiplier}:c;}
+function ppSmartDimensionChanged(){
+ const r=ppSmartSelectedLine(); if(!r){ppSmartUpdateAllocationPreview();return;}
+ const m=ppSmartMasterFor(r),pcs=Math.max(0,Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value))),pbox=ppSmartPcsBox(r);
+ const crate=ppSmartCrates.find(c=>c.id===ppSmartSelectedCrateId());
+ const current=crate?(crate.items||[]):[];
+ const same=current.find(it=>it.lineKey===ppSmartLineKey(r));
+ const newQty=pcs+(same?ppNum(same.pcs):0);
+ const item={lineKey:ppSmartLineKey(r),po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:newQty,pcsPerBox:pbox,boxes:newQty?Math.ceil(newQty/pbox):0,unitWeight:ppNum(r.unitWeight||m?.unitWeight)};
+ const items=same?current.map(it=>it===same?item:it):[...current,item];
+ const manual={outerL:ppNum(document.getElementById('ppOuterCrateL')?.value)||ppNum(crate?.outerL)||Math.ceil((ppNum(r.length)+32)*(ppNum(document.getElementById('ppSmartRowMode')?.value||m?.rowMultiplier)||1)),outerW:ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(crate?.outerW)||ppNum(m?.crateWidth),orientation:document.getElementById('ppBoxOrientation')?.value||m?.orientation||'auto',rowMultiplier:ppNum(document.getElementById('ppSmartRowMode')?.value)||ppNum(m?.rowMultiplier)||1};
+ const calc=pcs>0?ppSmartCalcDims(items,manual):null,hEl=document.getElementById('ppCrateH'),note=document.getElementById('ppOrientationFitNote');
+ if(hEl){hEl.readOnly=true;hEl.value=calc?.packingH||'';hEl.title='Automatically calculated from allocated box quantity, Master Data orientation and boxes per layer.';}
+ ppSmartUpdateAllocationPreview();
+ if(note&&pcs>0){const totalBoxes=items.reduce((s,x)=>s+ppNum(x.boxes),0);if(calc?.valid){note.dataset.fit='yes';note.innerHTML=`<b>Master Data calculation:</b> ${totalBoxes} boxes ÷ ${calc.perLayer} boxes/layer = ${calc.layers} layers. <b>Packing height ${calc.packingH} mm</b> + 292 mm legs/frame = <b>${calc.overallH} mm overall</b>.<br><b>Orientation:</b> ${calc.orientation==='height'?'Box width across crate; box height vertical':'Box height across crate; box width vertical (rotate 90°)'}. ${calc.rowMultiplier===3?'Triple lengthwise rows.':calc.rowMultiplier===2?'Double lengthwise rows.':'Single lengthwise row.'}`;}else if(calc){note.dataset.fit='no';note.innerHTML=`<b style="color:#b91c1c">Cannot fit:</b> ${ppEsc(calc.reason||'Review crate dimensions and box orientation.')}<br>Calculated required packing height: ${calc.packingH||'—'} mm.`;}else{note.innerHTML='Enter PCS to calculate boxes per layer and packing height.';}}
+}
+function ppOnNextPlLineChange(){
+ const sel=document.getElementById('ppNextPlLine');
+ if(!sel||sel.value===''){ppSmartClearSelectedLine();ppSmartUpdateAllocationPreview();return;}
+ const r=ppCrateNextRows[Number(sel.value)];if(!r){ppSmartClearSelectedLine();return;}
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??'';};
+ set('ppPlanPo',r.poNumber);set('ppPlanProfile',r.profile);set('ppPlanItemCode',r.itemCode);set('ppPlanLength',r.length);set('ppPlanQty',Math.floor(ppNum(r.planningQty)));
+ const m=ppSmartMasterFor(r),cap=ppSmartPcsBox(r);set('ppPlanPcsPerBox',cap);set('ppPlanBoxQty',Math.ceil(ppNum(r.planningQty)/cap));
+ const rowMode=document.getElementById('ppSmartRowMode');if(rowMode)rowMode.value=String(m?.rowMultiplier||1);
+ const orient=document.getElementById('ppBoxOrientation');if(orient)orient.value=m?.orientation||'auto';
+ set('ppOuterCrateL',m?.manualOuterL||Math.ceil((ppNum(r.length)+32)*(ppNum(rowMode?.value)||1)));set('ppOuterCrateW',m?.crateWidth||'');set('ppCrateH','');set('ppSmartAllocatePcs','');
+ const h=document.getElementById('ppCrateH');if(h){h.readOnly=true;h.title='Auto-calculated from Master Data and allocated boxes.';}
+ ppSmartUpdateAllocationPreview();ppSmartDimensionChanged();
+}
+function ppSmartAddCrateFromSelected(){
+ const r=ppSmartSelectedLine();if(!r){alert('Select a Next Planning PL line first.');return;}
+ const m=ppSmartMasterFor(r),box=ppDims(m?.boxSize);if(!m||!box||!ppNum(m.crateWidth)){alert('Complete Box Size and Crate Width in Crate Master Data first.');return;}
+ const requested=Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value));if(requested<1){alert('Enter PCS to allocate to this crate.');return;}
+ const balance=ppSmartLineBalance(r);if(requested>balance){alert(`Only ${balance.toLocaleString()} PCS remain for ${r.poNumber} / ${r.profile} / ${r.itemCode} / ${r.length} mm.`);return;}
+ const id=ppSmartSelectedCrateId();let crate=ppSmartCrates.find(c=>c.id===id);const isNew=!crate;if(!crate)crate={id,items:[],createdAt:Date.now(),manual:{}};
+ const key=ppSmartLineKey(r),existing=crate.items.find(it=>it.lineKey===key),pcsPerBox=ppSmartPcsBox(r),newPCS=requested+(existing?ppNum(existing.pcs):0);
+ const item={lineKey:key,po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:newPCS,pcsPerBox,boxes:Math.ceil(newPCS/pcsPerBox),unitWeight:ppNum(r.unitWeight||m.unitWeight)};
+ const items=existing?crate.items.map(it=>it===existing?item:it):[...crate.items,item];
+ const manual={...(crate.manual&&typeof crate.manual==='object'?crate.manual:{}),outerL:ppNum(document.getElementById('ppOuterCrateL')?.value)||ppNum(crate.outerL)||Math.ceil((ppNum(r.length)+32)*(ppNum(document.getElementById('ppSmartRowMode')?.value||m.rowMultiplier)||1)),outerW:ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(crate.outerW)||ppNum(m.crateWidth),orientation:document.getElementById('ppBoxOrientation')?.value||m.orientation||'auto',rowMultiplier:ppNum(document.getElementById('ppSmartRowMode')?.value)||ppNum(m.rowMultiplier)||1};
+ const calc=ppSmartCalcDims(items,manual);if(!calc.valid){alert(calc.reason||'This box quantity does not fit. Reduce PCS, change orientation, or use another crate.');return;}
+ if(isNew)ppSmartCrates.push(crate);crate.items=items;Object.assign(crate,{outerL:calc.outerL,outerW:calc.outerW,packingH:calc.packingH,overallH:calc.overallH,perLayer:calc.perLayer,layers:calc.layers,boxes:calc.boxes,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier,manual:{...manual,outerL:calc.outerL,outerW:calc.outerW,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier}});
+ ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();
+ const pcsInput=document.getElementById('ppSmartAllocatePcs');if(pcsInput)pcsInput.value='';ppSmartUpdateAllocationPreview();ppSmartShowPreview(ppSmartCrates.indexOf(crate));
+ if(typeof showToast==='function')showToast(`${requested} PCS added to ${id}. Save the crate list to sync to cloud.`,'success');
+}
+function ppRenderCrateMaster(){
+ const body=document.getElementById('ppCrateMasterBody');if(!body)return;const q=(document.getElementById('ppCrateMasterSearch')?.value||'').toLowerCase();
+ const rows=ppCrateMasterRows.filter(r=>[r.profile,r.itemCode,r.length,r.boxSize,r.crateWidth].join(' ').toLowerCase().includes(q));
+ const matched=ppCrateMasterRows.filter(r=>r.excelMatched).length,missing=ppCrateMasterRows.filter(r=>!r.boxSize||!r.crateWidth||!r.calc?.valid).length;
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('ppCrateMasterCount',ppCrateMasterRows.length);set('ppCrateMasterMatched',matched);set('ppCrateMasterMissing',missing);
+ body.innerHTML=rows.length?rows.map(r=>{const k=ppMasterKey(r.profile,r.itemCode,r.length),idx=ppCrateMasterRows.indexOf(r),c=ppCrateCalc(r),status=(!r.boxSize||!r.crateWidth||!c.valid)?'<span style="color:#b45309;font-weight:800">⚠ Manual data needed</span>':(r.excelMatched?'<span style="color:#047857;font-weight:800">✓ Excel matched</span>':'<span style="color:#1d4ed8;font-weight:800">✎ Manual / Catalog</span>');
+ const field=(name,val)=>`<input class="pp-inline-dim" aria-label="${name}" title="Edit ${name}" type="number" min="1" step="1" value="${ppEsc(val??'')}" onchange="ppUpdateCrateMasterField(${idx},'${name}',this.value)" style="width:88px;min-width:72px;padding:8px;border:1px solid #93c5fd;border-radius:8px;background:#f0f9ff;color:#12364d;font-weight:700">`;
+ return `<tr><td><b>${ppEsc(r.profile)}</b></td><td>${ppEsc(r.itemCode||'—')}</td><td>${ppEsc(r.length)}</td><td>${r.pcsPerBox||1}</td><td>${ppEsc(r.boxSize||'—')}</td><td>${field('crateWidth',r.crateWidth||'')}</td><td>${field('manualOuterL',r.manualOuterL||c.outerL||'')}</td><td><strong>${c.valid?c.packingH+' mm':'—'}</strong><small class="pp-cell-hint">Auto from orientation / layers</small></td><td><strong>${c.valid?c.overallH+' mm':'—'}</strong><small class="pp-cell-hint">Max 1100 mm</small></td><td><strong>${c.valid?c.perLayer:'—'}</strong><small class="pp-cell-hint">Boxes per layer</small></td><td><label class="pp-control-label"><i class="fa-solid fa-arrows-up-down-left-right"></i> Vertical box side</label><select class="pp-master-select" aria-label="Box orientation" title="Height vertical: box width across the crate; Width vertical (rotate): box height across the crate" onchange="ppMasterInlineDim(${idx},'orientation',this.value)"><option value="auto" ${(r.orientation||'auto')==='auto'?'selected':''}>✨ Auto best fit</option><option value="height" ${r.orientation==='height'?'selected':''}>↕ Height vertical</option><option value="width" ${r.orientation==='width'?'selected':''}>↻ Width vertical (rotate)</option></select><button class="btn btn-sm pp-preview-btn" onclick="ppMasterPreview(${idx})"><i class="fa-solid fa-cubes-stacked"></i> Preview</button></td><td><label class="pp-control-label"><i class="fa-solid fa-layer-group"></i> Boxes across length</label><select class="pp-master-select" aria-label="Lengthwise rows" title="Double row doubles crate length and boxes per layer" onchange="ppMasterInlineDim(${idx},'rowMultiplier',this.value)"><option value="1" ${(ppNum(r.rowMultiplier)||1)===1?'selected':''}>1 row · Single</option><option value="2" ${ppNum(r.rowMultiplier)===2?'selected':''}>2 rows · Double</option></select><small class="pp-cell-hint">${(ppNum(r.rowMultiplier)||1)===2?'Double crate length':'Single crate length'}</small></td><td><strong>${c.valid?c.boxesPerCrate:'—'}</strong></td><td>${status}</td><td><button class="btn btn-sm" onclick="ppEditCrateMaster('${encodeURIComponent(k)}')"><i class="fa-solid fa-pen-to-square"></i> Edit Box / PCS</button></td></tr>`;
+ }).join(''):'<tr><td colspan="14">No matching Master Catalog records.</td></tr>';
+}
+
+/* Final follow-up: existing crate dimensions take precedence when adding another profile. */
+const ppSmartDimensionChangedMasterAware = ppSmartDimensionChanged;
+ppSmartDimensionChanged = function(){
+ const r=ppSmartSelectedLine();if(!r){ppSmartUpdateAllocationPreview();return;}
+ const m=ppSmartMasterFor(r),pcs=Math.max(0,Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value))),pbox=ppSmartPcsBox(r),crate=ppSmartCrates.find(c=>c.id===ppSmartSelectedCrateId()),current=crate?(crate.items||[]):[],same=current.find(it=>it.lineKey===ppSmartLineKey(r)),newQty=pcs+(same?ppNum(same.pcs):0);
+ const item={lineKey:ppSmartLineKey(r),po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:newQty,pcsPerBox:pbox,boxes:newQty?Math.ceil(newQty/pbox):0,unitWeight:ppNum(r.unitWeight||m?.unitWeight)};
+ const items=same?current.map(it=>it===same?item:it):[...current,item];
+ const rowMode=Math.max(1,Math.min(2,Math.floor(ppNum(document.getElementById('ppSmartRowMode')?.value)||ppNum(m?.rowMultiplier)||1)));
+ const manual={outerL:ppNum(crate?.outerL)||ppNum(document.getElementById('ppOuterCrateL')?.value)||Math.ceil((ppNum(r.length)+32)*rowMode),outerW:ppNum(crate?.outerW)||ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(m?.crateWidth),orientation:crate?.orientation||document.getElementById('ppBoxOrientation')?.value||m?.orientation||'auto',rowMultiplier:ppNum(crate?.rowMultiplier)||rowMode};
+ const calc=pcs>0?ppSmartCalcDims(items,manual):null,hEl=document.getElementById('ppCrateH'),note=document.getElementById('ppOrientationFitNote');
+ if(hEl){hEl.readOnly=true;hEl.value=calc?.packingH||'';hEl.title='Auto-calculated: boxes needed ÷ boxes per layer × vertical box dimension.';}
+ ppSmartUpdateAllocationPreview();
+ if(note&&pcs>0){const totalBoxes=items.reduce((s,x)=>s+ppNum(x.boxes),0);if(calc?.valid){note.dataset.fit='yes';note.innerHTML=`<b>Master Data calculation:</b> ${totalBoxes} boxes ÷ ${calc.perLayer} boxes/layer = ${calc.layers} layers. <b>Packing height ${calc.packingH} mm</b> + 292 mm legs/frame = <b>${calc.overallH} mm overall</b>.<br><b>Orientation:</b> ${calc.orientation==='height'?'Box width across crate; box height vertical':'Box height across crate; box width vertical (rotate 90°)'}. ${calc.rowMultiplier===3?'Triple lengthwise rows.':calc.rowMultiplier===2?'Double lengthwise rows.':'Single lengthwise row.'}`;}else if(calc){note.dataset.fit='no';note.innerHTML=`<b style="color:#b91c1c">Cannot fit:</b> ${ppEsc(calc.reason||'Review crate dimensions and box orientation.')}<br>Calculated required packing height: ${calc.packingH||'—'} mm.`;}else note.innerHTML='Enter PCS to calculate boxes per layer and packing height.';}
+};
+const ppSmartAddCrateFromSelectedMasterAware=ppSmartAddCrateFromSelected;
+ppSmartAddCrateFromSelected=function(){
+ const r=ppSmartSelectedLine();if(!r){alert('Select a Next Planning PL line first.');return;}const m=ppSmartMasterFor(r),box=ppDims(m?.boxSize);if(!m||!box||!ppNum(m.crateWidth)){alert('Complete Box Size and Crate Width in Crate Master Data first.');return;}
+ const requested=Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value));if(requested<1){alert('Enter PCS to allocate to this crate.');return;}const balance=ppSmartLineBalance(r);if(requested>balance){alert(`Only ${balance.toLocaleString()} PCS remain for ${r.poNumber} / ${r.profile} / ${r.itemCode} / ${r.length} mm.`);return;}
+ const id=ppSmartSelectedCrateId();let crate=ppSmartCrates.find(c=>c.id===id);const isNew=!crate;if(!crate)crate={id,items:[],createdAt:Date.now(),manual:{}};
+ const key=ppSmartLineKey(r),existing=crate.items.find(it=>it.lineKey===key),pcsPerBox=ppSmartPcsBox(r),newPCS=requested+(existing?ppNum(existing.pcs):0),item={lineKey:key,po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:newPCS,pcsPerBox,boxes:Math.ceil(newPCS/pcsPerBox),unitWeight:ppNum(r.unitWeight||m.unitWeight)};
+ const items=existing?crate.items.map(it=>it===existing?item:it):[...crate.items,item],rowMode=Math.max(1,Math.min(2,Math.floor(ppNum(document.getElementById('ppSmartRowMode')?.value)||ppNum(m.rowMultiplier)||1)));
+ const manual={...(crate.manual&&typeof crate.manual==='object'?crate.manual:{}),outerL:ppNum(crate.outerL)||ppNum(document.getElementById('ppOuterCrateL')?.value)||Math.ceil((ppNum(r.length)+32)*rowMode),outerW:ppNum(crate.outerW)||ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(m.crateWidth),orientation:crate.orientation||document.getElementById('ppBoxOrientation')?.value||m.orientation||'auto',rowMultiplier:ppNum(crate.rowMultiplier)||rowMode};
+ const calc=ppSmartCalcDims(items,manual);if(!calc.valid){alert(calc.reason||'This box quantity does not fit. Reduce PCS, change orientation, or use another crate.');return;}
+ if(isNew)ppSmartCrates.push(crate);crate.items=items;Object.assign(crate,{outerL:calc.outerL,outerW:calc.outerW,packingH:calc.packingH,overallH:calc.overallH,perLayer:calc.perLayer,layers:calc.layers,boxes:calc.boxes,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier,manual:{...manual,outerL:calc.outerL,outerW:calc.outerW,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier}});
+ ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();const input=document.getElementById('ppSmartAllocatePcs');if(input)input.value='';ppSmartUpdateAllocationPreview();ppSmartShowPreview(ppSmartCrates.indexOf(crate));if(typeof showToast==='function')showToast(`${requested} PCS added to ${id}.`,'success');
+};
+function ppMasterPreview(index){const r=ppCrateMasterRows[index];if(!r)return;const c=ppCrateCalc(r),d=ppDims(r.boxSize);if(!d||!c.valid){alert('Please set valid box size, crate width and orientation first.');return;}const rowMultiplier=Math.max(1,Math.min(2,Math.floor(ppNum(r.rowMultiplier)||1))),boxesPerLayer=c.perLayer,layers=c.layers,packingH=c.packingH,outerL=ppNum(r.manualOuterL)||Math.ceil((ppNum(r.length)+32)*rowMultiplier);const temp={id:'MASTER PREVIEW',items:[{profile:r.profile,itemCode:r.itemCode,length:r.length,pcsPerBox:r.pcsPerBox,pcs:boxesPerLayer*layers*r.pcsPerBox,boxes:boxesPerLayer*layers,lineKey:'master-preview'}],outerL,outerW:ppNum(r.crateWidth),packingH,overallH:packingH+292,perLayer:boxesPerLayer,layers,boxes:boxesPerLayer*layers,orientation:r.orientation||c.orientation||'auto',rowMultiplier};const old=ppSmartCrates;ppSmartCrates=[temp];ppSmartShowPreview(0);ppSmartCrates=old;ppSmartRefreshPreviewOptions();const tab=document.querySelector('#packingPlannerTab .pp-subtab[onclick*="ppContainerSubTab"]');if(tab)ppSwitchSubtab('ppContainerSubTab',tab);}
+function ppEditCrateMaster(enc){const k=decodeURIComponent(enc),r=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===k);if(!r)return;const box=prompt(`Box Size L × W × H (mm) — ${r.profile} / ${r.itemCode} / ${r.length}`,r.boxSize||'');if(box===null)return;const parsed=ppDims(box);if(!parsed){alert('Enter box dimensions as Length × Width × Height, for example 1739 x 265 x 125.');return;}const pcs=prompt('PCS per Box — value from Master Catalog',String(r.pcsPerBox||1));if(pcs===null)return;const cap=Math.floor(ppNum(pcs));if(cap<1){alert('PCS per Box must be at least 1.');return;}r.boxSize=box.trim();r.pcsPerBox=cap;r.manual=true;r.source='Manual / edited';r.calc=ppCrateCalc(r);ppRenderCrateMaster();ppPopulateCrateStandards();ppRefreshNextPlLines();ppSaveCrateMaster();}
+/* AIS Planner follow-up: only selected Next PL rows; support 1/2/3 lengthwise rows. */
+function ppGetPlanningRows(){
+ try { const rows=typeof nextPlGetRows==='function'?nextPlGetRows():[]; return rows.map(r=>{const key=String(r.rowKey??'');const q=typeof nextPlSelection!=='undefined'?Math.max(0,ppNum(nextPlSelection[key])):Math.max(0,ppNum(r.selectedQty));return {...r,selectedQty:q,planningQty:q};}).filter(r=>r.poNumber&&r.profile&&r.length&&r.planningQty>0&&!r.excluded); }
+ catch(e){console.warn('Next PL rows unavailable',e);return [];}
+}
+function ppRefreshNextPlLines(){
+ const sel=document.getElementById('ppNextPlLine');if(!sel)return;const prev=sel.value!==''?ppCrateNextRows[Number(sel.value)]:null;const key=prev?ppSmartLineKey(prev):'';ppCrateNextRows=ppGetPlanningRows();
+ sel.innerHTML='<option value="">Select a selected Next Planning PL line</option>'+ppCrateNextRows.map((r,i)=>`<option value="${i}">${ppEsc(r.poNumber)} · ${ppEsc(r.profile)} · ${ppEsc(r.itemCode)} · ${ppEsc(r.length)} mm · ${Math.floor(ppNum(r.planningQty)).toLocaleString()} PCS</option>`).join('');
+ const i=key?ppCrateNextRows.findIndex(r=>ppSmartLineKey(r)===key):-1;sel.value=i>=0?String(i):'';if(sel.value)ppOnNextPlLineChange();else ppSmartClearSelectedLine();
+}
+function ppOnNextPlLineChange(){
+ const sel=document.getElementById('ppNextPlLine');if(!sel||sel.value===''){ppSmartClearSelectedLine();ppSmartUpdateAllocationPreview();return;}const r=ppCrateNextRows[Number(sel.value)];if(!r||ppNum(r.planningQty)<=0){ppSmartClearSelectedLine();return;}
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??'';};set('ppPlanPo',r.poNumber);set('ppPlanProfile',r.profile);set('ppPlanItemCode',r.itemCode);set('ppPlanLength',r.length);set('ppPlanQty',Math.floor(ppNum(r.planningQty)));
+ const m=ppSmartMasterFor(r),cap=ppSmartPcsBox(r);set('ppPlanPcsPerBox',cap);set('ppPlanBoxQty',Math.ceil(ppNum(r.planningQty)/cap));const row=document.getElementById('ppSmartRowMode');if(row)row.value=String(Math.max(1,Math.min(3,Math.floor(ppNum(m?.rowMultiplier)||1))));const ori=document.getElementById('ppBoxOrientation');if(ori)ori.value=m?.orientation||'auto';set('ppOuterCrateL',m?.manualOuterL||Math.ceil((ppNum(r.length)+32)*(ppNum(row?.value)||1)));set('ppOuterCrateW',m?.crateWidth||'');set('ppCrateH','');set('ppSmartAllocatePcs','');ppSmartUpdateAllocationPreview();ppSmartDimensionChanged();
+}
+function ppCrateCalc(row){
+ const d=ppDims(row.boxSize);if(!d||!d.l||!d.w||!d.h)return {valid:false,reason:'Box Size missing'};const width=ppNum(row.crateWidth);if(width<=0)return {valid:false,reason:'Crate Width missing'};
+ const maxPack=808,rows=Math.max(1,Math.min(3,Math.floor(ppNum(row.rowMultiplier)||1))),requested=['height','width'].includes(row.orientation)?row.orientation:'auto',c=[];
+ // AIS packing rule: use the full crate width for box fit; do not subtract timber width here.
+ // Height-vertical: box W across crate, box H is vertical. Width-vertical: box H across crate, box W is vertical.
+ for(const orientation of ['height','width']){if(requested!=='auto'&&requested!==orientation)continue;const acrossDim=orientation==='height'?d.w:d.h,vertical=orientation==='height'?d.h:d.w,across=Math.floor(width/acrossDim);if(across<1||vertical<1)continue;const perLayer=across*rows,layers=Math.floor(maxPack/vertical),packingH=layers*vertical,overallH=packingH+292,outerL=ppNum(row.manualOuterL)||Math.ceil((ppNum(row.length)||d.l)+32)*rows;c.push({valid:overallH<=1100,box:d,orientation,rowMultiplier:rows,outerL,outerW:width,packingH,overallH,perLayer,layers,boxesPerCrate:perLayer*layers,maxCapacity:perLayer*layers,vertical,cross:acrossDim,boxesAcross:across});}
+ if(!c.length)return {valid:false,reason:'Box orientation does not fit crate width/height'};c.sort((a,b)=>(a.valid===b.valid?0:a.valid?-1:1)||b.maxCapacity-a.maxCapacity);return {...c[0],per:c[0].perLayer};
+}
+function ppSmartOrientationMetrics(items,manual={}){
+ const parsed=(items||[]).map(it=>({it,m:ppSmartMasterFor(it),d:ppDims(ppSmartMasterFor(it)?.boxSize)}));if(!parsed.length||parsed.some(x=>!x.m||!x.d))return {valid:false,reason:'Box Size or Crate Width is missing. Complete Crate Master Data first.'};
+ const width=ppNum(manual.outerW)||Math.max(...parsed.map(x=>ppNum(x.m.crateWidth)));if(width<=0)return {valid:false,reason:'Crate Width missing'};const maxPack=808,requested=['height','width'].includes(manual.orientation)?manual.orientation:'auto';const masterRows=Math.max(...parsed.map(x=>Math.min(3,ppNum(x.m.rowMultiplier)||1)));const rows=Math.max(1,Math.min(3,Math.floor(ppNum(manual.rowMultiplier)||masterRows)));
+ const boxes=parsed.reduce((s,x)=>{const cap=Math.max(1,ppNum(x.it.pcsPerBox)||ppNum(x.m.pcsPerBox)||1);const n=ppNum(x.it.boxes)||Math.ceil(ppNum(x.it.pcs)/cap);return s+Math.max(0,Math.floor(n));},0);if(boxes<=0)return {valid:false,reason:'Enter PCS to calculate crate height'};const c=[];
+ for(const orientation of ['height','width']){if(requested!=='auto'&&requested!==orientation)continue;const acrossDim=Math.max(...parsed.map(x=>orientation==='height'?x.d.w:x.d.h)),vertical=Math.max(...parsed.map(x=>orientation==='height'?x.d.h:x.d.w)),across=Math.floor(width/acrossDim);if(across<1||vertical<1)continue;const perLayer=across*rows,layers=Math.ceil(boxes/perLayer),packingH=layers*vertical,overallH=packingH+292,maxLayers=Math.floor(maxPack/vertical),length=Math.max(...parsed.map(x=>ppNum(x.it.length)||0)),outerL=ppNum(manual.outerL)||Math.ceil(length+32)*rows;c.push({valid:overallH<=1100,orientation,rowMultiplier:rows,width,perLayer,layers,boxes,packingH,overallH,maxCapacity:perLayer*maxLayers,maxLayers,maxAcross:across,maxVertical:vertical,outerL,outerW:width,boxesAcross:across});}
+ if(!c.length)return {valid:false,reason:'Neither box orientation fits the crate width'};c.sort((a,b)=>(a.valid===b.valid?0:a.valid?-1:1)||b.maxCapacity-a.maxCapacity||a.overallH-b.overallH);const best=c[0];return best.valid?best:{...best,valid:false,reason:`Needs ${best.overallH} mm overall height; maximum is 1100 mm. Reduce PCS, change orientation or use another crate.`};
+}
+function ppSmartCalcDims(items,manual={}){const c=ppSmartOrientationMetrics(items,manual);return c.valid?{...c,per:c.perLayer,packingH:c.packingH,overallH:c.overallH,perLayer:c.perLayer,layers:c.layers,boxes:c.boxes,orientation:c.orientation,rowMultiplier:c.rowMultiplier}:c;}
+function ppSmartRowModeChanged(){const r=ppSmartSelectedLine(),mode=Math.max(1,Math.min(3,Math.floor(ppNum(document.getElementById('ppSmartRowMode')?.value)||1))),el=document.getElementById('ppOuterCrateL');if(r&&el){const base=Math.ceil(ppNum(r.length)+32),cur=ppNum(el.value);if(!cur||[1,2,3].some(n=>Math.abs(cur-base*n)<=50))el.value=base*mode;}ppSmartDimensionChanged();}
+function ppSmartDimensionChanged(){
+ const r=ppSmartSelectedLine();if(!r){ppSmartUpdateAllocationPreview();return;}const m=ppSmartMasterFor(r),pcs=Math.max(0,Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value))),pbox=ppSmartPcsBox(r),crate=ppSmartCrates.find(c=>c.id===ppSmartSelectedCrateId()),current=crate?.items||[],same=current.find(it=>it.lineKey===ppSmartLineKey(r)),qty=pcs+(same?ppNum(same.pcs):0),item={lineKey:ppSmartLineKey(r),po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:qty,pcsPerBox:pbox,boxes:qty?Math.ceil(qty/pbox):0,unitWeight:ppNum(r.unitWeight||m?.unitWeight)},items=same?current.map(it=>it===same?item:it):[...current,item];
+ const rows=Math.max(1,Math.min(3,Math.floor(ppNum(document.getElementById('ppSmartRowMode')?.value)||ppNum(m?.rowMultiplier)||1))),manual={outerL:ppNum(document.getElementById('ppOuterCrateL')?.value)||ppNum(crate?.outerL)||Math.ceil((ppNum(r.length)+32)*rows),outerW:ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(crate?.outerW)||ppNum(m?.crateWidth),orientation:document.getElementById('ppBoxOrientation')?.value||m?.orientation||'auto',rowMultiplier:rows},calc=pcs>0?ppSmartCalcDims(items,manual):null;
+ const h=document.getElementById('ppCrateH'),b=document.getElementById('ppSmartAllocateBoxes'),note=document.getElementById('ppOrientationFitNote');if(h){h.readOnly=true;h.value=calc?.packingH||'';}if(b)b.value=pcs?Math.ceil(pcs/pbox):'';ppSmartUpdateAllocationPreview();if(!note)return;
+ if(pcs<=0)note.innerHTML=`<b>Selected PO:</b> ${ppEsc(r.poNumber)} · Profile ${ppEsc(r.profile)} · ${ppEsc(r.itemCode)} · ${ppEsc(r.length)} mm. Next PL quantity: ${Math.floor(ppNum(r.planningQty)).toLocaleString()} PCS. Enter PCS for this crate.`;
+ else if(calc?.valid){const across=Math.floor(manual.outerW/(calc.orientation==='height'?ppDims(m?.boxSize)?.w:ppDims(m?.boxSize)?.h));note.innerHTML=`<b>PO ${ppEsc(r.poNumber)}</b> · Next PL ${Math.floor(ppNum(r.planningQty)).toLocaleString()} PCS · allocated ${Math.floor(ppNum(r.planningQty))-ppSmartLineBalance(r)} PCS · balance ${ppSmartLineBalance(r)} PCS.<br><b>Calculation:</b> ${items.reduce((s,x)=>s+ppNum(x.boxes),0)} boxes ÷ (${across} boxes across × ${rows} lengthwise row(s)) = ${calc.layers} layers. Packing height = ${calc.packingH} mm; overall = ${calc.overallH} mm.`;}
+ else note.innerHTML=`<b style="color:#b91c1c">Cannot fit:</b> ${ppEsc(calc?.reason||'Check dimensions and orientation')}`;
+}
+function ppSmartAddCrateFromSelected(){
+ const r=ppSmartSelectedLine();if(!r){alert('Select a selected Next PL line first.');return;}const m=ppSmartMasterFor(r),box=ppDims(m?.boxSize);if(!m||!box||!ppNum(m.crateWidth)){alert('Complete Box Size and Crate Width in Crate Master Data first.');return;}const requested=Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value));if(requested<1){alert('Enter PCS to allocate.');return;}const balance=ppSmartLineBalance(r);if(requested>balance){alert(`Only ${balance} PCS remain for ${r.poNumber} / ${r.profile} / ${r.itemCode} / ${r.length} mm.`);return;}
+ const id=ppSmartSelectedCrateId();let crate=ppSmartCrates.find(c=>c.id===id);const isNew=!crate;if(!crate)crate={id,items:[],createdAt:Date.now(),manual:{}};const key=ppSmartLineKey(r),old=crate.items.find(x=>x.lineKey===key),pbox=ppSmartPcsBox(r),qty=requested+(old?ppNum(old.pcs):0),it={lineKey:key,po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:qty,pcsPerBox:pbox,boxes:Math.ceil(qty/pbox),unitWeight:ppNum(r.unitWeight||m.unitWeight)},items=old?crate.items.map(x=>x===old?it:x):[...crate.items,it],rows=Math.max(1,Math.min(3,Math.floor(ppNum(document.getElementById('ppSmartRowMode')?.value)||ppNum(m.rowMultiplier)||1))),manual={...(crate.manual||{}),outerL:ppNum(crate.outerL)||ppNum(document.getElementById('ppOuterCrateL')?.value)||Math.ceil((ppNum(r.length)+32)*rows),outerW:ppNum(crate.outerW)||ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(m.crateWidth),orientation:document.getElementById('ppBoxOrientation')?.value||m.orientation||'auto',rowMultiplier:rows},calc=ppSmartCalcDims(items,manual);if(!calc.valid){alert(calc.reason||'Does not fit; reduce PCS or use another crate.');return;}if(isNew)ppSmartCrates.push(crate);crate.items=items;Object.assign(crate,{outerL:calc.outerL,outerW:calc.outerW,packingH:calc.packingH,overallH:calc.overallH,perLayer:calc.perLayer,layers:calc.layers,boxes:calc.boxes,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier,manual:{...manual,outerL:calc.outerL,outerW:calc.outerW,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier}});ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();const inp=document.getElementById('ppSmartAllocatePcs');if(inp)inp.value='';ppSmartShowPreview(ppSmartCrates.indexOf(crate));if(typeof showToast==='function')showToast(`${requested} PCS added to ${id}.`,'success');
+}
+function ppMasterInlineDim(index,field,value){const r=ppCrateMasterRows[index];if(!r)return;if(field==='orientation')r.orientation=['auto','height','width'].includes(value)?value:'auto';else if(field==='rowMultiplier'){r.rowMultiplier=Math.max(1,Math.min(3,Math.floor(ppNum(value)||1)));r.manualOuterL=Math.ceil((ppNum(r.length)+32)*r.rowMultiplier);}else{const n=ppNum(value);if(n<1){alert('Enter a dimension greater than zero.');ppRenderCrateMaster();return;}if(field==='manualPackingH'&&n>808){alert('Packing height cannot exceed 808 mm.');ppRenderCrateMaster();return;}r[field]=n;}r.manual=true;r.source='Manual / edited';r.calc=ppCrateCalc(r);ppRenderCrateMaster();ppPopulateCrateStandards();ppRefreshNextPlLines();ppSaveCrateMaster();}
+function ppRenderCrateMaster(){
+ const body=document.getElementById('ppCrateMasterBody');if(!body)return;const q=(document.getElementById('ppCrateMasterSearch')?.value||'').toLowerCase(),rows=ppCrateMasterRows.filter(r=>[r.profile,r.itemCode,r.length,r.boxSize,r.crateWidth].join(' ').toLowerCase().includes(q)),matched=ppCrateMasterRows.filter(r=>r.excelMatched).length,missing=ppCrateMasterRows.filter(r=>!r.boxSize||!r.crateWidth||!ppCrateCalc(r).valid).length,set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('ppCrateMasterCount',ppCrateMasterRows.length);set('ppCrateMasterMatched',matched);set('ppCrateMasterMissing',missing);const dim=(idx,field,val)=>`<input type="number" min="1" step="1" value="${ppEsc(val??'')}" aria-label="${field}" title="Edit ${field}" style="width:84px;max-width:100%;padding:7px;border:1px solid #93c5fd;border-radius:7px" onchange="ppMasterInlineDim(${idx},'${field}',this.value)">`;
+ body.innerHTML=rows.length?rows.map(r=>{const idx=ppCrateMasterRows.indexOf(r),c=ppCrateCalc(r),status=(!r.boxSize||!r.crateWidth||!c.valid)?'<b style="color:#b45309">⚠ Manual data needed</b>':r.excelMatched?'<b style="color:#047857">✓ Excel matched</b>':'<b style="color:#1d4ed8">✎ Catalog / manual</b>';return `<tr><td><b>${ppEsc(r.profile)}</b></td><td>${ppEsc(r.itemCode||'—')}</td><td>${ppEsc(r.length)}</td><td>${ppNum(r.pcsPerBox)||1}</td><td>${ppEsc(r.boxSize||'—')}</td><td>${dim(idx,'crateWidth',r.crateWidth||c.outerW||'')}</td><td>${dim(idx,'manualOuterL',r.manualOuterL||c.outerL||Math.ceil(ppNum(r.length)+32))}</td><td><strong>${c.valid?c.packingH+' mm':'—'}</strong></td><td><strong>${c.valid?c.overallH+' mm':'—'}</strong></td><td><strong>${c.valid?(c.boxesAcross||Math.floor(ppNum(r.crateWidth)/(c.orientation==='height'?ppDims(r.boxSize)?.w:ppDims(r.boxSize)?.h))):'—'}</strong><small class="pp-cell-hint">Crate width ÷ box side</small></td><td><label class="pp-control-label"><i class="fa-solid fa-arrows-up-down-left-right"></i> Vertical box side</label><select class="pp-master-select" aria-label="Box orientation" onchange="ppMasterInlineDim(${idx},'orientation',this.value)"><option value="auto" ${(r.orientation||'auto')==='auto'?'selected':''}>✨ Auto best fit</option><option value="height" ${r.orientation==='height'?'selected':''}>↕ Height vertical</option><option value="width" ${r.orientation==='width'?'selected':''}>↻ Width vertical (rotate)</option></select><button class="btn btn-sm pp-preview-btn" onclick="ppMasterPreview(${idx})"><i class="fa-solid fa-eye"></i> Preview</button></td><td class="pp-master-rows"><label class="pp-control-label"><i class="fa-solid fa-layer-group"></i> Lengthwise rows</label><div class="pp-row-choice" role="group" aria-label="Choose number of lengthwise rows"> <button type="button" class="pp-row-choice-btn ${(Math.max(1,Math.min(3,Math.floor(ppNum(r.rowMultiplier)||1)))===1?'is-active':'')}" aria-pressed="${Math.max(1,Math.min(3,Math.floor(ppNum(r.rowMultiplier)||1)))===1}" title="Single row — 1 row along crate length" onclick="ppMasterInlineDim(${idx},'rowMultiplier',1)"><i class="fa-solid fa-grip-lines"></i><b>1</b><span>Single</span></button><button type="button" class="pp-row-choice-btn ${(Math.max(1,Math.min(3,Math.floor(ppNum(r.rowMultiplier)||1)))===2?'is-active':'')}" aria-pressed="${Math.max(1,Math.min(3,Math.floor(ppNum(r.rowMultiplier)||1)))===2}" title="Double rows — 2 rows along crate length" onclick="ppMasterInlineDim(${idx},'rowMultiplier',2)"><i class="fa-solid fa-layer-group"></i><b>2</b><span>Double</span></button><button type="button" class="pp-row-choice-btn ${(Math.max(1,Math.min(3,Math.floor(ppNum(r.rowMultiplier)||1)))===3?'is-active':'')}" aria-pressed="${Math.max(1,Math.min(3,Math.floor(ppNum(r.rowMultiplier)||1)))===3}" title="Triple rows — 3 rows along crate length" onclick="ppMasterInlineDim(${idx},'rowMultiplier',3)"><i class="fa-solid fa-boxes-stacked"></i><b>3</b><span>Triple</span></button></div><small class="pp-cell-hint">Selected: ${Math.max(1,Math.min(3,Math.floor(ppNum(r.rowMultiplier)||1)))} row(s)</small></td><td><strong>${c.valid?c.boxesPerCrate:'—'}</strong></td><td>${status}</td><td><button class="btn btn-sm" onclick="ppEditCrateMaster('${encodeURIComponent(ppMasterKey(r.profile,r.itemCode,r.length))}')"><i class="fa-solid fa-pen"></i> Edit</button></td></tr>`;}).join(''):'<tr><td colspan="15">No matching Master Catalog records.</td></tr>';
+}
+function ppMasterPreview(index){const r=ppCrateMasterRows[index];if(!r)return;const c=ppCrateCalc(r);if(!c.valid){alert('Please set valid box size, crate width and orientation first.');return;}const rows=Math.max(1,Math.min(3,Math.floor(ppNum(r.rowMultiplier)||1))),temp={id:'MASTER PREVIEW',items:[{profile:r.profile,itemCode:r.itemCode,length:r.length,pcsPerBox:r.pcsPerBox,pcs:c.boxesPerCrate*r.pcsPerBox,boxes:c.boxesPerCrate,lineKey:'master-preview'}],outerL:ppNum(r.manualOuterL)||Math.ceil((ppNum(r.length)+32)*rows),outerW:ppNum(r.crateWidth),packingH:c.packingH,overallH:c.overallH,perLayer:c.perLayer,layers:c.layers,boxes:c.boxesPerCrate,orientation:c.orientation,rowMultiplier:rows};const old=ppSmartCrates;ppSmartCrates=[temp];ppSmartShowPreview(0);ppSmartCrates=old;ppSmartRefreshPreviewOptions();const tab=document.querySelector('#packingPlannerTab .pp-subtab[onclick*="ppContainerSubTab"]');if(tab)ppSwitchSubtab('ppContainerSubTab',tab);}
+
+
+/* Final Saved Crate List usability pass: human-readable crate IDs, multi-crate allocation,
+   extra height allowance, editable PCS/height, completion balance and print export. */
+function ppRomanLower(v){const map={I:'i',II:'ii',III:'iii',IV:'iv',V:'v',VI:'vi',VII:'vii',VIII:'viii',IX:'ix',X:'x',XI:'xi',XII:'xii',XIII:'xiii',XIV:'xiv',XV:'xv',XVI:'xvi',XVII:'xvii',XVIII:'xviii',XIX:'xix',XX:'xx'};return map[String(v||'I').toUpperCase()]||String(v||'i').toLowerCase();}
+function ppDisplayCrateId(id){const m=String(id||'').match(/^C-0*(\d+)-([IVXLCDM]+)$/i);return m?`${Number(m[1])}-${ppRomanLower(m[2])}`:String(id||'—').replace(/^C-0*(\d+)-/i,'$1-').toLowerCase();}
+function ppRomanAt(n){const vals=[[1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],[100,'C'],[90,'XC'],[50,'L'],[40,'XL'],[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']];let out='';for(const [v,s] of vals){while(n>=v){out+=s;n-=v;}}return out||'I';}
+function ppSmartEffectiveHeight(c){return Math.max(0,ppNum(c?.packingH))+Math.max(0,ppNum(c?.extraHeight));}
+ppSmartAddCrateFromSelected = function(){
+ const r=ppSmartSelectedLine();
+ if(!r){alert('Select a Next Planning PL line first.');return;}
+ const m=ppSmartMasterFor(r),box=ppDims(m?.boxSize);
+ if(!m||!box||!ppNum(m.crateWidth)){alert('Complete Box Size and Crate Width in Crate Master Data first.');return;}
+ // UI field is TOTAL PCS across all requested crates; distribute the total evenly.
+ const totalPcs=Math.floor(ppNum(document.getElementById('ppSmartAllocatePcs')?.value));
+ if(totalPcs<1){alert('Enter the total PCS to allocate across the crates.');return;}
+ const count=Math.max(1,Math.min(60,Math.floor(ppNum(document.getElementById('ppSmartCrateCountInput')?.value)||1)));
+ if(count>totalPcs){alert(`You entered ${totalPcs} total PCS for ${count} crates. Each crate must receive at least 1 PCS. Reduce the crate count or increase total PCS.`);return;}
+ const balance=ppSmartLineBalance(r);
+ if(totalPcs>balance){alert(`Cannot allocate ${totalPcs.toLocaleString()} PCS. Only ${balance.toLocaleString()} PCS remain for ${r.poNumber} / ${r.profile} / ${r.itemCode} / ${r.length} mm.`);return;}
+ const extra=Math.max(0,Math.floor(ppNum(document.getElementById('ppSmartExtraHeight')?.value)||0));
+ const baseId=ppSmartSelectedCrateId(),match=String(baseId).match(/^C-(\d+)-([IVXLCDM]+)$/i),baseNo=match?Number(match[1]):1,baseRoman=match?match[2].toUpperCase():(document.getElementById('ppSmartRoman')?.value||'I');
+ const romanValues={I:1,II:2,III:3,IV:4,V:5,VI:6,VII:7,VIII:8,IX:9,X:10,XI:11,XII:12,XIII:13,XIV:14,XV:15,XVI:16,XVII:17,XVIII:18,XIX:19,XX:20};
+ let searchFrom=romanValues[baseRoman]||1;
+ const key=ppSmartLineKey(r),pbox=Math.max(1,ppSmartPcsBox(r));
+ const rows=Math.max(1,Math.min(3,Math.floor(ppNum(document.getElementById('ppSmartRowMode')?.value)||ppNum(m.rowMultiplier)||1)));
+ const manualBase={outerL:ppNum(document.getElementById('ppOuterCrateL')?.value)||ppNum(m.manualOuterL)||Math.ceil((ppNum(r.length)+32)*rows),outerW:ppNum(document.getElementById('ppOuterCrateW')?.value)||ppNum(m.crateWidth),orientation:document.getElementById('ppBoxOrientation')?.value||m.orientation||'auto',rowMultiplier:rows};
+ const candidates=JSON.parse(JSON.stringify(ppSmartCrates));
+ const usedIds=new Set(candidates.map(c=>String(c.id)));
+ let created=0,assigned=0;
+ const baseQty=Math.floor(totalPcs/count),remainder=totalPcs%count;
+ for(let n=0;n<count;n++){
+   const qty=baseQty+(n<remainder?1:0);
+   let suffixN=searchFrom,id,guard=0;
+   do {
+     id=`C-${String(baseNo).padStart(2,'0')}-${ppRomanAt(suffixN++)}`;
+     if(++guard>1000){alert('Could not find enough unused crate numbers. Choose another crate number.');return;}
+   } while(usedIds.has(id));
+   usedIds.add(id);
+   const crate={id,items:[],createdAt:Date.now()+n,manual:{}};
+   const it={lineKey:key,po:r.poNumber,profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:qty,pcsPerBox:pbox,boxes:Math.ceil(qty/pbox),unitWeight:ppNum(r.unitWeight||m.unitWeight)};
+   const manual={...manualBase,extraHeight:extra};
+   const calc=ppSmartCalcDims([it],manual);
+   if(!calc.valid){alert(`${ppDisplayCrateId(id)} cannot fit ${qty} PCS: ${calc.reason||'reduce PCS or use another crate.'}`);return;}
+   const overall=calc.packingH+extra+292;
+   if(overall>1100){alert(`${ppDisplayCrateId(id)} would be ${overall} mm overall. Maximum is 1100 mm. Reduce PCS or extra height.`);return;}
+   crate.items=[it];
+   Object.assign(crate,{outerL:calc.outerL,outerW:calc.outerW,packingH:calc.packingH,extraHeight:extra,overallH:overall,perLayer:calc.perLayer,layers:calc.layers,boxes:calc.boxes,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier,manual:{...manual,outerL:calc.outerL,outerW:calc.outerW,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier}});
+   candidates.push(crate);created++;assigned+=qty;
+ }
+ if(assigned!==totalPcs){alert('Allocation check failed. No crates were saved. Please try again.');return;}
+ ppSmartCrates=candidates;
+ ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();
+ const inp=document.getElementById('ppSmartAllocatePcs');if(inp)inp.value='';
+ const ex=document.getElementById('ppSmartExtraHeight');if(ex)ex.value='0';
+ // Keep the requested crate count visible after a successful allocation.
+ ppSmartUpdateAllocationPreview();
+ if(created&&typeof showToast==='function')showToast(`${created} new crates saved with ${assigned} total PCS (${baseQty}–${baseQty+(remainder?1:0)} PCS per crate).`,'success');
+};
+function ppSmartEditCrate(i){const c=ppSmartCrates[i];if(!c)return;const pcsOriginal=JSON.parse(JSON.stringify(c.items||[]));
+ const h=prompt(`Extra packing height to add (mm). Calculated base is ${Math.round(ppNum(c.packingH))} mm; overall limit 1100 mm.`,String(ppNum(c.extraHeight)||0));if(h===null)return;const extra=Math.max(0,Math.floor(ppNum(h)||0));if(ppNum(c.packingH)+extra+292>1100){alert(`Maximum extra height is ${Math.max(0,1100-292-ppNum(c.packingH))} mm.`);return;}
+ c.extraHeight=extra;c.manual={...(c.manual&&typeof c.manual==='object'?c.manual:{}),extraHeight:extra};c.overallH=ppNum(c.packingH)+extra+292;ppSmartPersist();ppSmartRenderCrateList();ppSmartRefreshPreviewOptions();ppSmartShowPreview(i);
+}
+function ppSmartEditPcs(i){const c=ppSmartCrates[i];if(!c)return;const original=JSON.parse(JSON.stringify(c));
+ for(const it of c.items||[]){const r=ppCrateNextRows.find(x=>ppSmartLineKey(x)===it.lineKey),alloc=ppSmartGetAllocations(),max=r?Math.max(0,Math.floor(ppNum(r.planningQty)-(alloc[it.lineKey]||0)+ppNum(it.pcs))):ppNum(it.pcs);const raw=prompt(`${it.po} / ${it.profile} / ${it.itemCode} / ${it.length} mm — PCS (maximum ${max})`,String(it.pcs));if(raw===null)return;const qty=Math.floor(ppNum(raw));if(qty<0||qty>max){alert(`Enter PCS from 0 to ${max}.`);return;}it.pcs=qty;it.boxes=Math.ceil(qty/Math.max(1,ppNum(it.pcsPerBox)));}
+ c.items=(c.items||[]).filter(it=>ppNum(it.pcs)>0);const calc=ppSmartCalcDims(c.items,{...(c.manual&&typeof c.manual==='object'?c.manual:{}),outerL:c.outerL,outerW:c.outerW,orientation:c.orientation||'auto',rowMultiplier:c.rowMultiplier||1});if(c.items.length&&!calc.valid){Object.assign(c,original);alert(calc.reason||'Edited PCS do not fit.');return;}if(calc.valid){const extra=Math.max(0,ppNum(c.extraHeight));if(calc.packingH+extra+292>1100){Object.assign(c,original);alert('Edited PCS plus extra height would exceed the 1100 mm overall limit.');return;}Object.assign(c,calc,{extraHeight:extra,packingH:calc.packingH,overallH:calc.packingH+extra+292,manual:{...(c.manual||{}),outerL:calc.outerL,outerW:calc.outerW,orientation:calc.orientation,rowMultiplier:calc.rowMultiplier,extraHeight:extra}});}ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();
+}
+function ppSmartCopyCrate(i){const src=ppSmartCrates[i];if(!src)return;const count=1,used=new Set(ppSmartCrates.map(c=>c.id));let n=1,id;do{id=`C-${String(n).padStart(2,'0')}-I`;n++;}while(used.has(id)&&n<=61);if(used.has(id)){alert('No unused crate number available (1–60).');return;}const copy=JSON.parse(JSON.stringify(src));copy.id=id;copy.items=[];copy.createdAt=Date.now();ppSmartCrates.push(copy);ppSmartPersist();ppSmartRenderCrateList();ppSmartRefreshPreviewOptions();}
+function ppSmartRenderCrateList(){
+ const body=document.getElementById('ppCratePlanBody');if(!body)return;
+ body.innerHTML=ppSmartCrates.length?ppSmartCrates.map((c,i)=>{const items=c.items||[],pcs=items.reduce((s,x)=>s+ppNum(x.pcs),0),boxes=items.reduce((s,x)=>s+ppNum(x.boxes),0),weight=items.reduce((s,x)=>s+ppNum(x.pcs)*ppNum(x.unitWeight),0),h=ppSmartEffectiveHeight(c);
+ return `<tr><td><b class="pp-crate-id">${ppEsc(ppDisplayCrateId(c.id))}</b></td><td>${ppEsc([...new Set(items.map(x=>x.po))].join(', ')||'—')}</td><td>${ppEsc([...new Set(items.map(x=>x.profile))].join(' / ')||'—')}</td><td>${ppEsc([...new Set(items.map(x=>x.itemCode))].join(' / ')||'—')}</td><td>${ppEsc([...new Set(items.map(x=>x.length))].join(' / ')||'—')}</td><td><strong>${pcs.toLocaleString()}</strong></td><td>${items.map(x=>x.pcsPerBox).join(' / ')||'—'}</td><td><strong>${boxes.toLocaleString()}</strong></td><td>${c.outerW||'—'}</td><td>${c.outerL||'—'}</td><td><button class="btn btn-sm pp-dimension-edit" title="Edit additional height" onclick="ppSmartEditCrate(${i})">${h||'—'} <i class="fa-solid fa-pen"></i>${ppNum(c.extraHeight)>0?` <small>(+${ppNum(c.extraHeight)})</small>`:''}</button></td><td>${weight.toFixed(1)}</td><td><button class="btn btn-accent btn-sm" title="Open crate arrangement preview" onclick="ppSmartShowPreview(${i})"><i class="fa-solid fa-cubes-stacked"></i> 3D</button></td><td><div class="pp-row-actions"><button class="btn btn-sm" title="Add another profile to this crate" onclick="ppSmartAddProfileToCrate(${i})"><i class="fa-solid fa-plus"></i></button><button class="btn btn-sm" title="Edit PCS quantities" onclick="ppSmartEditPcs(${i})"><i class="fa-solid fa-cubes"></i> PCS</button><button class="btn btn-sm" title="Copy crate design" onclick="ppSmartCopyCrate(${i})"><i class="fa-solid fa-copy"></i></button><button class="btn btn-sm" title="Remove crate and return its PCS" onclick="ppSmartRemoveCrate(${i})"><i class="fa-solid fa-trash"></i></button></div></td></tr>`;}).join(''):'<tr><td colspan="14">No crates yet. Select a Next PL line and allocate PCS.</td></tr>';
+ const pcs=ppSmartCrates.reduce((s,c)=>s+(c.items||[]).reduce((a,x)=>a+ppNum(x.pcs),0),0),weight=ppSmartCrates.reduce((s,c)=>s+(c.items||[]).reduce((a,x)=>a+ppNum(x.pcs)*ppNum(x.unitWeight),0),0),set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('ppSmartCrateCount',ppSmartCrates.length);set('ppSmartAllocatedPcs',pcs.toLocaleString());set('ppSmartTotalWeight',weight.toLocaleString(undefined,{maximumFractionDigits:1})+' kg');ppSmartRefreshPreviewOptions();
+}
+function ppSmartCompleteCrateList(){ppSmartPersist();ppSmartSaveNow();const alloc=ppSmartGetAllocations(),lines=(ppCrateNextRows||[]).filter(r=>ppNum(r.planningQty)>0).map(r=>({r,remaining:Math.max(0,Math.floor(ppNum(r.planningQty)-(alloc[ppSmartLineKey(r)]||0)))})).filter(x=>x.remaining>0);const host=document.getElementById('ppSmartCompletionSummary');if(!host)return;host.style.display='block';if(!lines.length){host.innerHTML='<b style="color:#047857"><i class="fa-solid fa-circle-check"></i> Crate list complete.</b> All positive-quantity Next PL lines have been allocated.';return;}host.innerHTML='<b><i class="fa-solid fa-list-check"></i> Next PL PCS not yet allocated to the crate list</b><div class="table-container" style="margin-top:8px"><table class="pp-table"><thead><tr><th>PO</th><th>Profile</th><th>Item Code</th><th>Length (mm)</th><th>Next PL PCS</th><th>Allocated PCS</th><th>Remaining PCS</th></tr></thead><tbody>'+lines.map(({r,remaining})=>{const total=Math.floor(ppNum(r.planningQty)),allocated=total-remaining;return `<tr><td>${ppEsc(r.poNumber)}</td><td>${ppEsc(r.profile)}</td><td>${ppEsc(r.itemCode)}</td><td>${ppEsc(r.length)}</td><td>${total.toLocaleString()}</td><td>${allocated.toLocaleString()}</td><td><b>${remaining.toLocaleString()}</b></td></tr>`;}).join('')+'</tbody></table></div><small>These quantities remain in Next PL and have not been assigned to a saved crate.</small>';host.scrollIntoView({behavior:'smooth',block:'nearest'});}
+function ppSmartExportPdf(){const rows=ppSmartCrates.map(c=>{const items=c.items||[];return `<tr><td>${ppEsc(ppDisplayCrateId(c.id))}</td><td>${ppEsc([...new Set(items.map(x=>x.po))].join(', '))}</td><td>${ppEsc([...new Set(items.map(x=>x.profile))].join(' / '))}</td><td>${ppEsc([...new Set(items.map(x=>x.itemCode))].join(' / '))}</td><td>${ppEsc([...new Set(items.map(x=>x.length))].join(' / '))}</td><td>${items.reduce((s,x)=>s+ppNum(x.pcs),0)}</td><td>${items.reduce((s,x)=>s+ppNum(x.boxes),0)}</td><td>${c.outerW||''}</td><td>${c.outerL||''}</td><td>${ppSmartEffectiveHeight(c)}</td><td>${items.reduce((s,x)=>s+ppNum(x.pcs)*ppNum(x.unitWeight),0).toFixed(1)}</td></tr>`;}).join('');const w=window.open('','_blank');if(!w){alert('Please allow pop-ups to print the crate list as PDF.');return;}w.document.write(`<!doctype html><html><head><title>AIS Next PL Crate List</title><style>body{font:12px Arial,sans-serif;color:#12364d;padding:18px}h1{font-size:20px}p{color:#52677b}table{border-collapse:collapse;width:100%}th,td{border:1px solid #9db7c8;padding:6px;text-align:left}th{background:#075b63;color:#fff}tr:nth-child(even){background:#f1f6f8}@page{size:landscape;margin:10mm}</style></head><body><h1>AIS Next Planning PL — Saved Crate List</h1><p>Generated ${new Date().toLocaleString()} · ${ppSmartCrates.length} crates · ${ppSmartCrates.reduce((s,c)=>s+(c.items||[]).reduce((a,it)=>a+ppNum(it.pcs),0),0).toLocaleString()} PCS</p><table><thead><tr><th>Crate No.</th><th>PO</th><th>Profile(s)</th><th>Item Code(s)</th><th>Length(s) mm</th><th>PCS Qty</th><th>Box Qty</th><th>Width mm</th><th>Length mm</th><th>Height mm</th><th>Weight kg</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print();<\/script></body></html>`);w.document.close();}
+(function ppCrateListCompactCss(){if(document.getElementById('pp-crate-list-final-css'))return;const st=document.createElement('style');st.id='pp-crate-list-final-css';st.textContent=`.pp-saved-crate-wrap{overflow-x:auto!important}.pp-saved-crate-table{width:100%;min-width:1180px;table-layout:auto;font-size:12px}.pp-saved-crate-table th,.pp-saved-crate-table td{padding:7px 8px;vertical-align:middle;white-space:nowrap}.pp-saved-crate-table th{line-height:1.2}.pp-saved-crate-table th i{margin-right:3px}.pp-saved-crate-table .pp-row-actions{display:flex;gap:4px;flex-wrap:wrap;max-width:175px}.pp-saved-crate-table .btn-sm{padding:5px 7px;font-size:11px}.pp-crate-id{font-size:13px;color:#075b63}.pp-saved-crate-table td:nth-child(3),.pp-saved-crate-table td:nth-child(4){white-space:normal;min-width:100px;max-width:170px}.pp-saved-crate-table td:nth-child(11){min-width:95px}`;document.head.appendChild(st);})();
+
+/* Final display refinements for crate IDs, preview height and Excel export. */
+ppSmartRefreshPreviewOptions=function(){const s=document.getElementById('ppSmartPreviewCrate');if(!s)return;const old=s.value;s.innerHTML='<option value="">Select a crate</option>'+ppSmartCrates.map((c,i)=>`<option value="${i}">${ppEsc(ppDisplayCrateId(c.id))} — ${ppEsc([...new Set((c.items||[]).map(x=>x.profile+' / '+x.length+'mm'))].join(', '))}</option>`).join('');if(old!==''&&Number(old)<ppSmartCrates.length)s.value=old;};
+const ppSmartShowPreviewWithExtraHeight=ppSmartShowPreview;
+ppSmartShowPreview=function(i){const c=ppSmartCrates[i];if(!c)return;const original=ppNum(c.packingH),extra=Math.max(0,ppNum(c.extraHeight));try{c.packingH=original+extra;ppSmartShowPreviewWithExtraHeight(i);}finally{c.packingH=original;}};
+ppSmartExport=function(){const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');let body='';ppSmartCrates.forEach(c=>{const items=c.items||[];if(!items.length){body+=`<tr><td>${esc(ppDisplayCrateId(c.id))}</td><td colspan="11">Empty crate</td></tr>`;return;}items.forEach(it=>body+=`<tr><td>${esc(ppDisplayCrateId(c.id))}</td><td>${esc(it.po)}</td><td>${esc(it.profile)}</td><td>${esc(it.itemCode)}</td><td>${esc(it.length)}</td><td>${esc(it.pcs)}</td><td>${esc(it.pcsPerBox)}</td><td>${esc(it.boxes)}</td><td>${esc(c.outerW)}</td><td>${esc(c.outerL)}</td><td>${esc(ppSmartEffectiveHeight(c))}</td><td>${esc((ppNum(it.pcs)*ppNum(it.unitWeight)).toFixed(1))}</td>`);});const html=`<html><head><meta charset="utf-8"></head><body><table border="1"><thead><tr><th>Crate No.</th><th>PO</th><th>Profile</th><th>Item Code</th><th>Length (mm)</th><th>PCS Qty</th><th>PCS/Box</th><th>Box Qty</th><th>Width (mm)</th><th>Length (mm)</th><th>Height (mm)</th><th>Weight (kg)</th></tr></thead><tbody>${body}</tbody></table></body></html>`;const blob=new Blob(['\ufeff',html],{type:'application/vnd.ms-excel;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='AIS_Next_PL_Crate_List.xls';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+
+
+/* AIS Container Plan: real dimensional top/front/back/left/right and isometric views.
+   Scoped to the Container Loading Planner; preserves Crate List and Master Data behavior. */
+let ppContSelectedId = '';
+function ppContDims(c){
+ const rot=!!c?.containerLayout?.rot;
+ return {L:Math.max(1,ppNum(rot?c.outerW:c.outerL)||1),W:Math.max(1,ppNum(rot?c.outerL:c.outerW)||1),H:Math.max(1,ppNum(c.overallH)||((ppNum(c.packingH)||1)+292)),rot};
+}
+function ppContPcs(c){return (c.items||[]).reduce((s,it)=>s+ppNum(it.pcs),0);}
+function ppContWeight(c){return (c.items||[]).reduce((s,it)=>s+ppNum(it.pcs)*ppNum(it.unitWeight),0);}
+function ppContLayout(c){if(!c.containerLayout||typeof c.containerLayout!=='object')c.containerLayout={x:0,y:0,z:0,zMm:0,baseId:'',rot:false,placed:false};if(!Number.isFinite(Number(c.containerLayout.zMm)))c.containerLayout.zMm=(Number(c.containerLayout.z)||0)*(ppNum(c.overallH)||((ppNum(c.packingH)||1)+292));return c.containerLayout;}
+function ppContGetSelected(){return ppSmartCrates.find(c=>c.id===ppContSelectedId)||null;}
+function ppContSyncSelected(){
+ const sel=document.getElementById('ppContSelectedCrate'); if(!sel)return;
+ const placed=ppSmartCrates.filter(c=>ppContLayout(c).placed);
+ const selectable=ppSmartCrates;
+ const old=ppContSelectedId && selectable.some(c=>c.id===ppContSelectedId)?ppContSelectedId:(placed[0]?.id||selectable[0]?.id||'');
+ ppContSelectedId=old;
+ sel.innerHTML='<option value="">Select a crate</option>'+selectable.map(c=>`<option value="${ppEsc(c.id)}">${ppEsc(ppDisplayCrateId(c.id))}${ppContLayout(c).placed?'':' · not placed'}</option>`).join('');sel.value=old;
+ const c=ppContGetSelected(),meta=document.getElementById('ppContSelectedMeta');
+ if(!c){if(meta)meta.textContent='Select a crate in the drawing or from the list.';['ppContX','ppContY'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});const z=document.getElementById('ppContZ');if(z)z.value='0';return;}
+ const p=ppContLayout(c),d=ppContDims(c);if(meta)meta.innerHTML=`<b>${ppEsc(ppDisplayCrateId(c.id))}</b><br>Crate dimensions: ${d.L} × ${d.W} × ${d.H} mm<br>Profile PCS: ${ppContPcs(c).toLocaleString()}<br>Estimated profile weight: ${ppContWeight(c).toLocaleString(undefined,{maximumFractionDigits:1})} kg<br>Position: X ${p.x} · Y ${p.y} · Elevation ${Math.round(p.zMm||0)} mm · Tier ${p.z+1}${p.baseId?` · on ${ppEsc(ppDisplayCrateId(p.baseId))}`:''}<br>Rotation: ${p.rot?'90°':'Original'}`;
+ const x=document.getElementById('ppContX'),y=document.getElementById('ppContY'),z=document.getElementById('ppContZ');if(x)x.value=p.x;if(y)y.value=p.y;if(z)z.value=String(p.z);
+ const stack=document.getElementById('ppContStackOn');if(stack){const keep=stack.value;stack.innerHTML='<option value="">Floor / manual tier</option>'+ppSmartCrates.filter(q=>q.id!==c.id&&ppContLayout(q).placed).map(q=>`<option value="${ppEsc(q.id)}">Place on ${ppEsc(q.id)}</option>`).join('');if([...stack.options].some(o=>o.value===keep))stack.value=keep;}
+}
+// Container layout undo: placement-only snapshot; crate/master records remain untouched.
+let ppContUndoSnapshot = null;
+function ppContTakeSnapshot(){
+ ppContUndoSnapshot=JSON.stringify(ppSmartCrates.map(c=>({id:c.id,layout:JSON.parse(JSON.stringify(ppContLayout(c)))})));
+ const b=document.getElementById('ppContUndoBtn');if(b)b.disabled=!ppContUndoSnapshot;
+}
+function ppContUndoLayout(){
+ if(!ppContUndoSnapshot){if(typeof showToast==='function')showToast('No container layout change to undo.','info');return;}
+ try{const snap=JSON.parse(ppContUndoSnapshot);snap.forEach(x=>{const c=ppSmartCrates.find(q=>q.id===x.id);if(c)c.containerLayout=x.layout;});ppContUndoSnapshot=null;const b=document.getElementById('ppContUndoBtn');if(b)b.disabled=true;ppSmartPersist();ppContSyncSelected();ppSmartRenderContainer();if(typeof showToast==='function')showToast('Previous container layout restored.','success');}catch(e){console.error(e);}
+}
+function ppContSelectCrate(){ppContSelectedId=document.getElementById('ppContSelectedCrate')?.value||'';ppContSyncSelected();ppSmartRenderContainer();}
+function ppContApplyPosition(){
+ const c=ppContGetSelected();if(!c)return;ppContTakeSnapshot();const p=ppContLayout(c),L=ppNum(document.getElementById('ppContLen')?.value)||12032,W=ppNum(document.getElementById('ppContWid')?.value)||2352,H=ppNum(document.getElementById('ppContHei')?.value)||2393,d=ppContDims(c),x=Math.max(0,ppNum(document.getElementById('ppContX')?.value)),y=Math.max(0,ppNum(document.getElementById('ppContY')?.value)),z=Math.max(0,Math.floor(ppNum(document.getElementById('ppContZ')?.value)));
+ if(x+d.L>L||y+d.W>W||(z+1)*d.H>H){alert('This position is outside the container dimensions. Check X, Y, tier and crate dimensions.');ppContSyncSelected();return;}
+ if(z>0&&!document.getElementById('ppContStackConfirmed')?.checked){alert('Confirm stacking strength and stability before placing crates above the floor.');const ze=document.getElementById('ppContZ');if(ze)ze.value='0';return;}
+ p.x=x;p.y=y;p.z=z;p.zMm=z===0?0:z*(d.H);p.baseId='';p.placed=true;
+ const clash=ppSmartCrates.find(q=>q!==c&&ppContLayout(q).placed&&ppContBoxesOverlap(c,q));if(clash){p.placed=false;if(typeof showToast==='function')showToast(`Position overlaps crate ${ppDisplayCrateId(clash.id)}. Choose a free position.`, 'warning');else alert(`This position overlaps crate ${ppDisplayCrateId(clash.id)}. Choose another X/Y position.`);ppContSyncSelected();ppSmartRenderContainer();return;}
+ ppContSyncSelected();ppSmartPersist();ppSmartRenderContainer();
+}
+function ppContBoxesOverlap(a,b){const pa=ppContLayout(a),pb=ppContLayout(b),da=ppContDims(a),db=ppContDims(b);const az=ppNum(pa.zMm),bz=ppNum(pb.zMm),ax2=pa.x+da.L,ay2=pa.y+da.W,az2=az+da.H,bx2=pb.x+db.L,by2=pb.y+db.W,bz2=bz+db.H;return pa.x<bx2&&ax2>pb.x&&pa.y<by2&&ay2>pb.y&&az<bz2&&az2>bz;}
+function ppContRotateSelected(){const c=ppContGetSelected();if(!c)return;ppContTakeSnapshot();const p=ppContLayout(c);p.rot=!p.rot;const L=ppNum(document.getElementById('ppContLen')?.value)||12032,W=ppNum(document.getElementById('ppContWid')?.value)||2352,d=ppContDims(c);if(p.x+d.L>L||p.y+d.W>W){p.rot=!p.rot;alert('Rotated crate would exceed the container boundary.');}else{const clash=ppSmartCrates.find(q=>q!==c&&ppContLayout(q).placed&&ppContBoxesOverlap(c,q));if(clash){p.rot=!p.rot;alert(`Rotation overlaps crate ${clash.id}.`);}}ppContSyncSelected();ppSmartPersist();ppSmartRenderContainer();}
+function ppContRemoveSelected(){const c=ppContGetSelected();if(!c)return;ppContTakeSnapshot();ppContLayout(c).placed=false;ppContSelectedId='';ppSmartPersist();ppContSyncSelected();ppSmartRenderContainer();}
+function ppContStackOnSelected(){
+ const c=ppContGetSelected(),id=document.getElementById('ppContStackOn')?.value;
+ if(!c)return;
+ const L=ppNum(document.getElementById('ppContLen')?.value)||12032,W=ppNum(document.getElementById('ppContWid')?.value)||2352,H=ppNum(document.getElementById('ppContHei')?.value)||2393,d=ppContDims(c);
+ const p=ppContLayout(c),x=Math.max(0,Math.floor(ppNum(document.getElementById('ppContX')?.value))),y=Math.max(0,Math.floor(ppNum(document.getElementById('ppContY')?.value))),tier=Math.max(0,Math.floor(ppNum(document.getElementById('ppContZ')?.value)));
+ if(id){
+  const base=ppSmartCrates.find(q=>q.id===id);if(!base||base===c){if(typeof showToast==='function')showToast('Select a different supporting crate.','warning');return;}
+  if(!ppContLayout(base).placed){if(typeof showToast==='function')showToast('The supporting crate must be placed first.','warning');return;}
+  if(!document.getElementById('ppContStackConfirmed')?.checked){if(typeof showToast==='function')showToast('Tick the stacking strength and stability confirmation first.','warning');return;}
+  const bp=ppContLayout(base),bd=ppContDims(base),zMm=ppNum(bp.zMm)+bd.H;
+  if(d.L>bd.L||d.W>bd.W){if(typeof showToast==='function')showToast('This crate footprint is larger than the selected base. Rotate it or choose a suitable base crate.','warning');return;}
+  if(bp.x+d.L>L||bp.y+d.W>W||zMm+d.H>H){if(typeof showToast==='function')showToast('This crate will exceed the container boundary or height.','warning');return;}
+  ppContTakeSnapshot();Object.assign(p,{x:bp.x,y:bp.y,z:bp.z+1,zMm,baseId:base.id,placed:true});
+ }else{
+  if(tier>0&&!document.getElementById('ppContStackConfirmed')?.checked){if(typeof showToast==='function')showToast('Tick the stacking strength and stability confirmation first.','warning');return;}
+  const zMm=tier===0?0:tier*d.H;
+  if(x+d.L>L||y+d.W>W||zMm+d.H>H){if(typeof showToast==='function')showToast('This position exceeds the container boundary. Adjust X, Y or tier.','warning');return;}
+  ppContTakeSnapshot();Object.assign(p,{x,y,z:tier,zMm,baseId:'',placed:true});
+ }
+ const clash=ppSmartCrates.find(q=>q!==c&&ppContLayout(q).placed&&ppContBoxesOverlap(c,q));
+ if(clash){if(ppContUndoSnapshot){try{JSON.parse(ppContUndoSnapshot).forEach(a=>{const q=ppSmartCrates.find(v=>v.id===a.id);if(q)q.containerLayout=a.layout;});}catch(e){}}if(typeof showToast==='function')showToast(`Cannot apply: overlaps ${ppDisplayCrateId(clash.id)}. Choose another position or supporting crate.`,'warning');ppContSyncSelected();ppSmartRenderContainer();return;}
+ ppSmartPersist();ppContSyncSelected();ppSmartRenderContainer();if(typeof showToast==='function')showToast(id?`${ppDisplayCrateId(c.id)} placed on ${ppDisplayCrateId(id)} and saved.`:'Crate location applied and saved.','success');
+}
+function ppSmartResetContainerLayout(){if(!confirm('Reset all container positions? Crate List and Master Data will remain unchanged.'))return;ppSmartCrates.forEach(c=>{c.containerLayout={x:0,y:0,z:0,rot:false,placed:false};});ppContSelectedId='';ppSmartPersist();ppContSyncSelected();ppSmartRenderContainer();}
+function ppSmartSaveContainerLayout(){ppSmartPersist();if(typeof showToast==='function')showToast('Container layout saved with the crate list.','success');else alert('Container layout saved locally with the crate list.');}
+function ppSmartAutoArrange(){
+ const L=ppNum(document.getElementById('ppContLen')?.value)||12032,W=ppNum(document.getElementById('ppContWid')?.value)||2352,H=ppNum(document.getElementById('ppContHei')?.value)||2393,payload=ppNum(document.getElementById('ppContPayload')?.value)||17000,allowStack=!!document.getElementById('ppContStackConfirmed')?.checked,maxTier=Math.max(1,Math.floor(ppNum(document.getElementById('ppContTiers')?.value)||1));
+ if(!ppSmartCrates.length){if(typeof showToast==='function')showToast('Add crates in the Crate List tab first.','warning');return;}
+ if(allowStack&&maxTier<2){if(typeof showToast==='function')showToast('To stack crates: change Maximum stack tiers to 2 or 3, then tick “Stacking strength and stability confirmed”.','warning');return;}
+ ppContTakeSnapshot();
+ const romanOrder={I:1,II:2,III:3,IV:4,V:5,VI:6,VII:7,VIII:8,IX:9,X:10};
+ const key=c=>{const m=String(c.id||'').match(/^(?:C-)?0*(\d+)-([IVXLCDM]+)$/i);return m?{n:+m[1],r:romanOrder[m[2].toUpperCase()]||99}:{n:999,r:999};};
+ const ordered=[...ppSmartCrates].sort((a,b)=>{const ka=key(a),kb=key(b);return ka.n-kb.n||ka.r-kb.r||String(a.id).localeCompare(String(b.id));});
+ ordered.forEach(c=>{c.containerLayout={x:0,y:0,z:0,zMm:0,rot:false,placed:false,baseId:''};});
+ let placedWeight=0;const placed=[];let floorX=0,floorY=0,rowDepth=0;
+ const collisionAt=(c,x,y,zMm,rot)=>{const old=JSON.parse(JSON.stringify(ppContLayout(c)));Object.assign(ppContLayout(c),{x,y,zMm,rot,placed:true});const bad=ppSmartCrates.some(q=>q!==c&&ppContLayout(q).placed&&ppContBoxesOverlap(c,q));Object.assign(ppContLayout(c),old);return bad;};
+ const putFloor=(c)=>{const p=ppContLayout(c),d=ppContDims(c),wt=ppContWeight(c);if(placedWeight+wt>payload)return false;const opts=[{L:d.L,W:d.W,rot:false},{L:d.W,W:d.L,rot:true}].filter((o,i,a)=>a.findIndex(q=>q.L===o.L&&q.W===o.W)===i);let pick=null;
+  for(const o of opts){let xx=floorX,yy=floorY,rd=rowDepth;if(xx+o.L>L){xx=0;yy+=rd;rd=0;}if(yy+o.W<=W&&xx+o.L<=L){pick={...o,x:xx,y:yy,rowDepth:Math.max(rd,o.W)};break;}}
+  if(!pick)return false;Object.assign(p,{x:pick.x,y:pick.y,rot:pick.rot,z:0,zMm:0,baseId:'',placed:true});floorX=pick.x+pick.L;floorY=pick.y;rowDepth=Math.max(pick.rowDepth,pick.W);placedWeight+=wt;placed.push(c);return true;};
+ const stackOn=(c,base)=>{if(!allowStack||maxTier<2||!base||!ppContLayout(base).placed)return false;const p=ppContLayout(c),bp=ppContLayout(base),d=ppContDims(c),bd=ppContDims(base),z=ppNum(bp.zMm)+bd.H,tier=bp.z+1,wt=ppContWeight(c);if(tier>=maxTier||d.L>bd.L||d.W>bd.W||z+d.H>H||placedWeight+wt>payload)return false;
+  Object.assign(p,{x:bp.x,y:bp.y,rot:bp.rot,z,zMm:z,baseId:base.id,placed:true});if(ppSmartCrates.some(q=>q!==c&&ppContLayout(q).placed&&ppContBoxesOverlap(c,q))){Object.assign(p,{x:0,y:0,z:0,zMm:0,rot:false,baseId:'',placed:false});return false;}placedWeight+=wt;placed.push(c);return true;};
+ // Group Roman-suffixed crate IDs by main crate number. For each group, place i and ii on the floor,
+ // then put iii directly above ii and iv directly above i (when stacking is enabled and dimensions allow).
+ const groups=new Map();ordered.forEach(c=>{const k=key(c);if(k.n===999)return;if(!groups.has(k.n))groups.set(k.n,[]);groups.get(k.n).push(c);});
+ const handled=new Set();
+ for(const list of groups.values()){
+  list.sort((a,b)=>key(a).r-key(b).r);
+  const baseA=list[0],baseB=list[1];
+  if(baseA){putFloor(baseA);handled.add(baseA.id);}
+  if(baseB){putFloor(baseB);handled.add(baseB.id);}
+  if(allowStack&&maxTier>1){if(list[2]&&baseB&&ppContLayout(baseB).placed&&stackOn(list[2],baseB))handled.add(list[2].id);if(list[3]&&baseA&&ppContLayout(baseA).placed&&stackOn(list[3],baseA))handled.add(list[3].id);}
+ }
+ // Remaining crates are packed into the remaining floor area; do not reset already chosen coordinates.
+ for(const c of ordered){if(handled.has(c.id))continue;putFloor(c);handled.add(c.id);}
+ ppContSelectedId=ordered.find(c=>ppContLayout(c).placed)?.id||'';
+ // Persist only on this explicit Auto Correct action.
+ ppSmartPersist();ppContSyncSelected();ppSmartRenderContainer();
+ const finalPlaced=ordered.filter(c=>ppContLayout(c).placed),unplaced=ordered.length-finalPlaced.length,stacked=finalPlaced.filter(c=>ppContLayout(c).baseId).length;
+ if(typeof showToast==='function')showToast(`Auto-correction saved: ${finalPlaced.length}/${ordered.length} crates placed${stacked?`, ${stacked} stacked on their assigned base crate`:''}.${unplaced?` ${unplaced} crate(s) need manual review.`:''}`,unplaced?'warning':'success');
+ else if(unplaced)alert(`${finalPlaced.length} of ${ordered.length} crates arranged. ${unplaced} crate(s) need manual review.`);
+}
+function ppContExport(kind){
+ const placed=ppSmartCrates.filter(c=>ppContLayout(c).placed),rows=[['Crate No','Profiles','PCS','Estimated profile weight kg','Width mm','Length mm','Height mm','X mm','Y mm','Elevation mm','Tier','Rotation']];
+ placed.forEach(c=>{const p=ppContLayout(c),d=ppContDims(c);rows.push([ppDisplayCrateId(c.id),[...new Set((c.items||[]).map(it=>it.profile))].join(' / '),ppContPcs(c),ppContWeight(c).toFixed(1),d.W,d.L,d.H,p.x,p.y,Math.round(ppNum(p.zMm)),p.z+1,p.rot?'90°':'Original']);});
+ if(kind==='print'||kind==='pdf'){
+  const L=ppNum(document.getElementById('ppContLen')?.value)||12032,W=ppNum(document.getElementById('ppContWid')?.value)||2352,H=ppNum(document.getElementById('ppContHei')?.value)||2393,colors=['#b8d8d2','#c6d9e8','#ead7b6','#cdd4f0','#d8c6e8','#c9dfb2','#f0c8b8'];
+  const viewSvg=(view)=>{const VW=1000,VH=430,pad=45,end=['front','back'].includes(view),axis=end?W:L,scale=Math.min((VW-2*pad)/axis,(VH-2*pad)/H),cw=axis*scale,ch=H*scale,ox=(VW-cw)/2,floor=VH-pad,top=floor-ch;let body='';placed.forEach((c,i)=>{const p=ppContLayout(c),d=ppContDims(c),x=end?(view==='front'?p.y:W-p.y-d.W):(view==='left'?p.x:L-p.x-d.L),xx=ox+x*scale,ww=(end?d.W:d.L)*scale,yy=floor-(ppNum(p.zMm)+d.H)*scale,hh=d.H*scale;body+=`<rect x="${xx}" y="${yy}" width="${Math.max(1,ww)}" height="${Math.max(1,hh)}" fill="${colors[i%colors.length]}" stroke="#254e60" stroke-width="2"/><text x="${xx+4}" y="${yy+16}" font-size="${Math.max(9,Math.min(14,ww/5))}" fill="#12364d" font-weight="700">${ppEsc(ppDisplayCrateId(c.id))}</text><text x="${xx+4}" y="${yy+30}" font-size="${Math.max(8,Math.min(11,ww/6))}" fill="#12364d">${ppContPcs(c)} PCS</text>`;});return `<svg viewBox="0 0 ${VW} ${VH}" style="width:100%;height:auto;border:1px solid #cbd5e1;background:#f1f7fa"><rect x="${ox}" y="${top}" width="${cw}" height="${ch}" fill="#eaf2f6" stroke="#24556b" stroke-width="8"/>${body}<text x="20" y="25" font-size="16" font-weight="800" fill="#164e63">${view.toUpperCase()} VIEW · ${axis} × ${H} mm</text></svg>`;};
+  const w=window.open('','_blank');if(!w){if(typeof showToast==='function')showToast('Allow pop-ups to export the container plan.','warning');return;}
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>AIS Container Plan — Four Side Views</title><style>body{font:12px Arial;color:#12364d;margin:14mm}h1{color:#075b63}h2{margin:14px 0 5px;page-break-after:avoid}.views{display:grid;grid-template-columns:1fr 1fr;gap:12px}.view{break-inside:avoid}table{border-collapse:collapse;width:100%;font-size:10px;margin-top:12px}th,td{border:1px solid #9db7c8;padding:5px;text-align:left}th{background:#075b63;color:#fff}.swatch{display:inline-block;width:12px;height:12px;border:1px solid #35586b;margin-right:4px}@page{size:landscape;margin:8mm}@media print{body{margin:0}.views{gap:7px}}</style></head><body><h1>AIS Container Loading Plan</h1><p>Container: ${ppEsc(document.getElementById('ppSmartContainerType')?.value||'40 ft Standard')} · Internal dimensions ${L} × ${W} × ${H} mm · Crates placed ${placed.length}/${ppSmartCrates.length} · Total PCS ${placed.reduce((a,c)=>a+ppContPcs(c),0).toLocaleString()} · Estimated profile weight ${placed.reduce((a,c)=>a+ppContWeight(c),0).toFixed(1)} kg</p><div class="views">${['front','back','left','right'].map(v=>`<section class="view"><h2>${v.toUpperCase()} SIDE</h2>${viewSvg(v)}</section>`).join('')}</div><h2>Crate position details</h2><table><thead><tr>${rows[0].map(x=>`<th>${ppEsc(x)}</th>`).join('')}<th>Colour</th></tr></thead><tbody>${rows.slice(1).map((r,i)=>`<tr>${r.map(x=>`<td>${ppEsc(x)}</td>`).join('')}<td><span class="swatch" style="background:${colors[i%colors.length]}"></span>${ppEsc(ppDisplayCrateId(placed[i]?.id||''))}</td></tr>`).join('')}</tbody></table><p>Planning schematic only. Confirm actual dimensions, door clearance, payload, load restraint and stacking strength before loading.</p><script>window.onload=()=>window.print()<\/script></body></html>`);w.document.close();return;
+ }
+ const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n'),blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='AIS_Container_Loading_Plan.csv';a.click();URL.revokeObjectURL(url);
+}
+function ppSmartRenderContainer(){
+ const host=document.getElementById('ppContainerVisual');if(!host)return;
+ const L=Math.max(1,ppNum(document.getElementById('ppContLen')?.value)||12032),W=Math.max(1,ppNum(document.getElementById('ppContWid')?.value)||2352),H=Math.max(1,ppNum(document.getElementById('ppContHei')?.value)||2393),payload=Math.max(1,ppNum(document.getElementById('ppContPayload')?.value)||17000),view=document.getElementById('ppContView')?.value||'top';
+ const placed=ppSmartCrates.filter(c=>ppContLayout(c).placed),totalPcs=placed.reduce((s,c)=>s+ppContPcs(c),0),totalWeight=placed.reduce((s,c)=>s+ppContWeight(c),0),floorArea=placed.reduce((s,c)=>{const d=ppContDims(c);return s+d.L*d.W;},0),usedPct=Math.min(100,floorArea/(L*W)*100),remaining=payload-totalWeight;
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('ppContPlaced',`${placed.length} / ${ppSmartCrates.length}`);set('ppContPcs',totalPcs.toLocaleString());set('ppContWeight',`${totalWeight.toLocaleString(undefined,{maximumFractionDigits:1})} kg`);set('ppContArea',`${usedPct.toFixed(1)}%`);set('ppContRemaining',`${remaining.toLocaleString(undefined,{maximumFractionDigits:1})} kg`);
+ if(!ppSmartCrates.length){host.innerHTML='<div class="pp-empty">Generate crate records first to preview the container layout.</div>';ppContSyncSelected();return;}
+ const colors=['#b8d8d2','#c6d9e8','#ead7b6','#cdd4f0','#d8c6e8','#c9dfb2','#f0c8b8'];let svg='',Wv=900,Hv=500,shapes='';
+ const txt=(c,x,y,fs=12)=>`<text x="${x}" y="${y}" font-size="${fs}" font-weight="700" fill="#12364d">${ppEsc(ppDisplayCrateId(c.id))}</text>`;
+ const dims=c=>{const p=ppContLayout(c),d=ppContDims(c);return {...d,x:ppNum(p.x),y:ppNum(p.y),z:ppNum(p.z),p};};
+ if(view==='top'){
+  const pad=42,sx=(Wv-2*pad)/L,sy=(Hv-2*pad)/W,scale=Math.min(sx,sy);const cw=L*scale,ch=W*scale,ox=(Wv-cw)/2,oy=(Hv-ch)/2;
+  shapes=placed.map((c,i)=>{const d=dims(c);const x=ox+d.x*scale,y=oy+d.y*scale,w=d.L*scale,h=d.W*scale;return `<g onclick="ppContPickById('${encodeURIComponent(c.id)}')" style="cursor:pointer"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${colors[i%colors.length]}" stroke="${c.id===ppContSelectedId?'#ef4444':'#35586b'}" stroke-width="${c.id===ppContSelectedId?4:1.8}"/><text x="${x+5}" y="${y+15}" font-size="${Math.max(8,Math.min(13,w/5))}" fill="#12364d">${ppEsc(ppDisplayCrateId(c.id))}</text><text x="${x+5}" y="${y+29}" font-size="${Math.max(7,Math.min(10,w/6))}" fill="#12364d">${ppContPcs(c)} PCS</text></g>`;}).join('');svg=`<svg data-mm-scale="${scale}" data-layout-view="top" viewBox="0 0 ${Wv} ${Hv}" role="img" aria-label="Container top view"><rect x="${(Wv-L*scale)/2}" y="${(Hv-W*scale)/2}" width="${L*scale}" height="${W*scale}" fill="#edf4f7" stroke="#24556b" stroke-width="8"/>${shapes}<text x="22" y="24" font-size="14" font-weight="800" fill="#164e63">TOP VIEW · X = ${L} mm · Y = ${W} mm</text></svg>`;
+ }else if(['front','back','left','right'].includes(view)){
+  const end=['front','back'].includes(view),axisLen=end?W:L,pad=48;
+  // Keep the full container envelope visible; floor is anchored near the bottom.
+  const scale=Math.min((Wv-2*pad)/axisLen,(Hv-2*pad)/H),cw=axisLen*scale,ch=H*scale,ox=(Wv-cw)/2,floorY=Hv-pad,topY=floorY-ch;
+  shapes=placed.map((c,i)=>{const d=dims(c),xpos=end?(view==='front'?d.y:W-d.y-d.W):(view==='left'?d.x:L-d.x-d.L),xx=ox+xpos*scale,hh=d.H*scale,baseY=floorY-ppNum(d.p.zMm)*scale,yy=baseY-hh,ww=(end?d.W:d.L)*scale;
+   return `<g onclick="ppContPickById('${encodeURIComponent(c.id)}')" style="cursor:pointer"><rect x="${xx}" y="${yy}" width="${Math.max(1,ww)}" height="${Math.max(1,hh)}" fill="${colors[i%colors.length]}" stroke="${c.id===ppContSelectedId?'#ef4444':'#35586b'}" stroke-width="${c.id===ppContSelectedId?4:1.6}"/><text x="${xx+4}" y="${yy+Math.min(15,Math.max(9,hh/3))}" font-size="${Math.max(7,Math.min(13,ww/5))}" fill="#12364d">${ppEsc(ppDisplayCrateId(c.id))}</text><text x="${xx+4}" y="${yy+Math.min(28,Math.max(16,hh*.65))}" font-size="${Math.max(6,Math.min(10,ww/6))}" fill="#12364d">${ppContPcs(c)} PCS</text></g>`;
+  }).join('');
+  svg=`<svg data-mm-scale="${scale}" data-layout-view="${view}" viewBox="0 0 ${Wv} ${Hv}" role="img" aria-label="Container ${view} side view"><rect x="${ox}" y="${topY}" width="${cw}" height="${ch}" fill="#edf4f7" stroke="#24556b" stroke-width="8"/>${shapes}<text x="22" y="24" font-size="14" font-weight="800" fill="#164e63">${view.toUpperCase()} SIDE VIEW · ${axisLen} × ${H} mm</text><text x="22" y="${Hv-12}" font-size="11" fill="#164e63">${end?'Looking from container '+view+' end (width × height)':'Looking along container '+view+' side (length × height)'}</text></svg>`;
+ }else{
+  const sx=Math.min(0.052,650/Math.max(1,L+W)),sy=Math.min(0.028,135/Math.max(1,L+W)),sz=Math.min(0.055,300/Math.max(1,H)),ox=180,oy=365;const P=(x,y,z)=>[ox+(x-y)*sx,oy+(x+y)*sy-z*sz];const poly=(pts,fill,stroke='#35586b',sw=1.5)=>`<polygon points="${pts.map(p=>p.join(',')).join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+  const A=P(0,0,0),B=P(L,0,0),C=P(L,W,0),D=P(0,W,0),A2=P(0,0,H),B2=P(L,0,H),C2=P(L,W,H),D2=P(0,W,H);
+  svg=`<svg data-mm-scale="${sx}" data-layout-view="3d" viewBox="0 0 900 520" role="img" aria-label="3D isometric container view">${poly([A,D,C,B],'#edf4f7','#24556b',4)}${poly([A,A2,D2,D],'#f8fafc','#24556b',3)}${poly([A,A2,B2,B],'#e2edf3','#24556b',3)}${poly([A2,B2,C2,D2],'none','#8ba5b3',1.5)}`;
+  placed.forEach((c,i)=>{const d=dims(c),x=d.x,y=d.y,z=ppNum(d.p.zMm),pts=[P(x,y,z),P(x+d.L,y,z),P(x+d.L,y+d.W,z),P(x,y+d.W,z)],top=pts.map(p=>[p[0],p[1]-d.H*sz]),front=[pts[0],pts[1],top[1],top[0]],side=[pts[1],pts[2],top[2],top[1]],fill=colors[i%colors.length],stroke=c.id===ppContSelectedId?'#ef4444':'#35586b';svg+=`<g onclick="ppContPickById('${encodeURIComponent(c.id)}')" style="cursor:pointer">${poly(front,fill,stroke,c.id===ppContSelectedId?3:1.5)}${poly(side,'#9eb6c5',stroke,c.id===ppContSelectedId?3:1.5)}${poly(top,'#e7eff4',stroke,c.id===ppContSelectedId?3:1.5)}<text x="${(top[0][0]+top[1][0]+top[2][0]+top[3][0])/4-15}" y="${(top[0][1]+top[1][1]+top[2][1]+top[3][1])/4}" font-size="11" font-weight="700" fill="#12364d">${ppEsc(ppDisplayCrateId(c.id))}</text></g>`;});svg+=`<text x="22" y="24" font-size="14" font-weight="800" fill="#164e63">3D ISOMETRIC VIEW · ${L} × ${W} × ${H} mm</text></svg>`;
+ }
+ host.innerHTML=svg;
+ // Direct drag placement: drag crates in the drawing to adjust their physical position.
+ const svgEl=host.querySelector('svg');
+ if(svgEl){svgEl.style.touchAction='none';svgEl.querySelectorAll('g[onclick*=ppContPickById]').forEach(g=>{g.style.cursor='grab';g.setAttribute('data-draggable-crate','1');});
+  if(!host.dataset.dragBound){host.dataset.dragBound='1';let drag=null;
+   host.addEventListener('pointerdown',ev=>{const g=ev.target.closest('g[data-draggable-crate]');if(!g)return;const m=g.getAttribute('onclick')||'',hit=m.match(/ppContPickById\('([^']+)'\)/);if(!hit)return;const id=decodeURIComponent(hit[1]);const c=ppSmartCrates.find(q=>q.id===id);if(!c)return;ppContTakeSnapshot();ppContSelectedId=id;drag={id,startX:ev.clientX,startY:ev.clientY,view:document.getElementById('ppContView')?.value||'top',x:ppNum(ppContLayout(c).x),y:ppNum(ppContLayout(c).y),z:ppNum(ppContLayout(c).z),zMm:ppNum(ppContLayout(c).zMm)};svgEl.setPointerCapture?.(ev.pointerId);ev.preventDefault();});
+   host.addEventListener('pointerup',ev=>{if(!drag)return;const c=ppSmartCrates.find(q=>q.id===drag.id);if(!c){drag=null;return;}const L=ppNum(document.getElementById('ppContLen')?.value)||12032,W=ppNum(document.getElementById('ppContWid')?.value)||2352,H=ppNum(document.getElementById('ppContHei')?.value)||2393,d=ppContDims(c),rect=host.querySelector('svg')?.getBoundingClientRect();if(!rect){drag=null;return;}const svgNow=host.querySelector('svg'),viewBox=svgNow?.viewBox?.baseVal,scaleX=rect.width/Math.max(1,viewBox?.width||900),scaleY=rect.height/Math.max(1,viewBox?.height||500),mmScale=Math.max(.0001,ppNum(svgNow?.dataset?.mmScale)||.05),dx=((ev.clientX-drag.startX)/Math.max(.001,scaleX))/mmScale,dy=((ev.clientY-drag.startY)/Math.max(.001,scaleY))/mmScale,p=ppContLayout(c);if(drag.view==='top'){p.x=Math.round(Math.max(0,Math.min(L-d.L,drag.x+dx)));p.y=Math.round(Math.max(0,Math.min(W-d.W,drag.y+dy)));}else if(['front','back'].includes(drag.view)){p.y=Math.round(Math.max(0,Math.min(W-d.W,drag.y+dx)));p.zMm=Math.max(0,Math.round(drag.zMm-dy));p.z=Math.round(p.zMm/Math.max(1,d.H));}else if(['left','right'].includes(drag.view)){p.x=Math.round(Math.max(0,Math.min(L-d.L,drag.x+dx)));p.zMm=Math.max(0,Math.round(drag.zMm-dy));p.z=Math.round(p.zMm/Math.max(1,d.H));}else{p.x=Math.round(Math.max(0,Math.min(L-d.L,drag.x+dx)));p.y=Math.round(Math.max(0,Math.min(W-d.W,drag.y+dy)));}p.placed=true;const bad=p.x+d.L>L||p.y+d.W>W||p.zMm+d.H>H||ppSmartCrates.some(q=>q!==c&&ppContLayout(q).placed&&ppContBoxesOverlap(c,q));if(bad){p.x=drag.x;p.y=drag.y;p.z=drag.z;p.zMm=drag.zMm;p.placed=true;if(typeof showToast==='function')showToast('Move not applied: choose a free position inside the container.','warning');}else{p.baseId='';p.placed=true;if(typeof showToast==='function')showToast('Position adjusted in preview. Click Auto Arrange / Correct to validate and save the layout.','info');}drag=null;ppContSyncSelected();ppSmartRenderContainer();});
+  }
+ }
+ const cap=document.getElementById('ppContainerCapacity');if(cap)cap.innerHTML=`Placed <b>${placed.length}/${ppSmartCrates.length}</b> crates · <b>${totalPcs.toLocaleString()}</b> PCS · estimated profile weight <b>${totalWeight.toLocaleString(undefined,{maximumFractionDigits:1})} kg</b> · floor footprint <b>${usedPct.toFixed(1)}%</b>. Payload remaining: <b>${remaining.toLocaleString(undefined,{maximumFractionDigits:1})} kg</b>. Dimensions are schematic; profile weight excludes crate timber, dunnage and restraints.`;
+ const val=document.getElementById('ppContainerValidation');if(val){const out=ppSmartCrates.filter(c=>{const p=ppContLayout(c),d=ppContDims(c);return p.placed&&(p.x+d.L>L||p.y+d.W>W||ppNum(p.zMm)+d.H>H);}).length;const over=totalWeight>payload;val.innerHTML=`<b>Dimensions check:</b> ${out?'One or more crates exceed the container envelope.':`${placed.length} placed crates shown in ${view} view.`} ${over?'<b style="color:#b91c1c">Payload limit exceeded.</b>':'Weight estimate is within the entered payload limit.'} Stacking strength must be confirmed separately.`;}
+ const body=document.getElementById('ppContainerPlacedBody');if(body)body.innerHTML=ppSmartCrates.map(c=>{const p=ppContLayout(c),d=ppContDims(c);return `<tr><td>${ppEsc(ppDisplayCrateId(c.id))}</td><td>${ppEsc([...new Set((c.items||[]).map(it=>it.profile))].join(' / '))}</td><td>${ppContPcs(c).toLocaleString()}</td><td>${ppContWeight(c).toFixed(1)}</td><td>${d.W}</td><td>${d.L}</td><td>${d.H}</td><td>${p.x}</td><td>${p.y}</td><td>${p.z+1}</td><td>${p.rot?'90°':'Original'}</td><td>${p.placed?'<b style="color:#047857">Placed</b>':'<span style="color:#b45309">Not placed</span>'}</td></tr>`;}).join('')||'<tr><td colspan="12">No crates available.</td></tr>';
+ ppContSyncSelected();
+}
+function ppContPickById(enc){const id=decodeURIComponent(enc);if(!ppSmartCrates.some(c=>c.id===id))return;ppContSelectedId=id;ppContSyncSelected();ppSmartRenderContainer();}
+
