@@ -2610,3 +2610,127 @@ body.dark-mode #dashboardTab .pending-po-metric.still{background:#2a1c26;border-
   #ppCrateMasterSubTab .pp-master-compact-wrap{overflow-x:auto!important;}
   #ppCrateMasterSubTab table.pp-master-compact{min-width:1250px!important;width:max-content!important;table-layout:auto!important;}
 }
+
+
+/* AIS Tracker V2.1 — Crate Plan 3D focused refinement */
+#ppContainerSubTab .pp-container-planner{border:1px solid #d8e6ee;border-radius:18px;box-shadow:0 12px 32px rgba(15,39,66,.08);}
+#ppContainerSubTab .pp-section-head{align-items:flex-start;gap:14px;}
+#ppContainerSubTab .pp-section-head h3{letter-spacing:-.02em;}
+#ppContainerSubTab .pp-container-controls-secondary{align-items:flex-end;}
+#ppContainerSubTab .pp-location-hint{grid-column:1/-1;margin:0;padding:10px 12px;border-left:4px solid #159b70;background:#eefaf5;border-radius:8px;color:#245b4b;}
+#ppContainerSubTab .pp-position-controls input,#ppContainerSubTab .pp-position-controls select{min-height:42px;border-radius:10px;}
+#ppContainerSubTab .pp-container-visual{min-height:360px;overflow:hidden;border-radius:14px;background:linear-gradient(180deg,#f7fbfd,#eaf3f7);}
+#ppContainerSubTab .pp-container-visual svg{display:block;width:100%;height:auto;max-height:620px;}
+#ppContainerSubTab .pp-container-selected-meta{line-height:1.75;border-radius:12px;background:#f5f9fb;padding:12px;border:1px solid #dbe7ed;}
+#ppContainerSubTab .pp-container-table{font-size:12px;}
+#ppContainerSubTab .pp-container-table th{white-space:nowrap;}
+#ppContainerSubTab .pp-container-exports{display:flex;flex-wrap:wrap;gap:8px;}
+#ppContainerSubTab .pp-container-stats>div{border-radius:12px;border:1px solid #dce8ee;padding:12px;background:linear-gradient(180deg,#fff,#f7fafc);}
+#ppContainerSubTab .pp-stack-confirm-wrap{border:1px solid #f0d59b;border-radius:12px;background:#fffaf0;padding:12px;}
+@media(max-width:760px){#ppContainerSubTab .pp-container-layout-grid{grid-template-columns:minmax(0,1fr)!important;}#ppContainerSubTab .pp-container-visual{min-height:240px;}#ppContainerSubTab .pp-container-controls{grid-template-columns:repeat(2,minmax(0,1fr));}#ppContainerSubTab .pp-location-hint{grid-column:1/-1;}}
+
+/* AIS Crate Plan 3D: cargo tare + loading envelope refinement */
+.pp-tare-weight-field{margin:12px 0;padding:12px;border:1px solid #b9d9df;border-radius:12px;background:linear-gradient(135deg,#f4fbfc,#fff)}
+.pp-tare-input-row{display:flex;gap:8px;align-items:center}
+.pp-tare-input-row input{min-width:0;flex:1}
+.pp-tare-weight-field small{display:block;margin-top:6px;color:#476879;line-height:1.45}
+#ppContainerVisual svg{display:block;width:100%;height:auto;min-height:340px;max-height:620px}
+.pp-container-visual{overflow:hidden;background:linear-gradient(180deg,#f6fafc,#eaf3f8)}
+\n\n/* AIS Tracker V2.3 — multi-PO crate builder, isolated from legacy data structures */
+#ppLegacyAllocationCard{display:none!important}
+.pp-new-crate-builder{border:1px solid #c8def5!important;background:linear-gradient(180deg,#fff 0%,#f8fbff 100%)}
+.pp-new-builder-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:14px;align-items:start}
+.pp-new-panel{border:1px solid #d5e5f5;border-radius:13px;padding:14px;background:#fff;min-width:0}
+.pp-new-panel h4{margin:0 0 13px;color:#123c66;font-size:15px;display:flex;align-items:center;gap:8px}
+.pp-step{display:inline-flex;width:26px;height:26px;border-radius:50%;background:#1675e8;color:white;align-items:center;justify-content:center;font-weight:800}
+.pp-new-three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.pp-new-crate-select{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}
+.pp-new-create-box{padding:12px;margin:8px 0 12px;background:#f0f8ff;border:1px dashed #90bce8;border-radius:10px}
+.pp-new-hint{font-size:12px;line-height:1.5;color:#17645f;background:#edfbf8;border:1px solid #9be9dc;border-radius:9px;padding:10px;margin:8px 0 12px}
+.pp-new-po-table-wrap{max-height:330px;overflow:auto;border:1px solid #e2eaf2;border-radius:9px}
+.pp-new-po-table{min-width:730px;font-size:12px}
+.pp-new-po-table td,.pp-new-po-table th{padding:8px 7px;vertical-align:middle}
+.pp-new-po-table input[type=number]{width:84px;min-width:72px;padding:7px;border:1px solid #cbd8e7;border-radius:7px}
+.pp-new-po-table input[type=checkbox]{width:16px;height:16px;accent-color:#079669}
+.pp-new-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}
+.pp-new-totals>div{background:#eef7ff;border:1px solid #c7e0ff;border-radius:9px;padding:10px;min-width:0}
+.pp-new-totals small{display:block;color:#50657c;font-size:11px;font-weight:700}
+.pp-new-totals strong{display:block;color:#075985;font-size:20px;margin-top:3px;overflow-wrap:anywhere}
+.pp-new-primary{width:100%;justify-content:center;min-height:44px;font-weight:800}
+.pp-new-crate-details{border:1px solid #d6e4f0;background:#f6fafc;border-radius:10px;padding:12px;margin:12px 0}
+.pp-new-dim-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}
+.pp-new-dim-grid>div{padding:8px;background:white;border:1px solid #e0eaf2;border-radius:8px}
+.pp-new-dim-grid small{display:block;font-size:10px;color:#64748b;font-weight:700}
+.pp-new-dim-grid b{font-size:14px;color:#0c4268}
+.pp-new-current-items{max-height:240px;overflow:auto;margin:10px 0}
+.pp-new-current-items table{min-width:650px;font-size:11px}
+.pp-new-current-items td,.pp-new-current-items th{padding:7px}
+.pp-new-tools{margin-top:12px}
+.pp-new-row-max{padding:5px 7px!important;font-size:11px!important}
+@media(max-width:1050px){.pp-new-builder-grid{grid-template-columns:1fr}.pp-new-three{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.pp-new-three{grid-template-columns:1fr}.pp-new-totals{grid-template-columns:1fr}.pp-new-dim-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.pp-new-crate-select{grid-template-columns:1fr}}
+
+/* V2.4: selected crate loading-view controls */
+.pp-new-view-controls .btn{min-width:82px;border:1px solid #c8d9ec;background:#fff;color:#123c66;font-weight:750}
+.pp-new-view-controls .btn.btn-accent{background:#0759bf;color:#fff;border-color:#0759bf}
+.pp-new-3dpreview svg{display:block;margin:4px auto 8px;overflow:visible}
+.pp-new-3dpreview{min-height:210px}
+@media(max-width:560px){.pp-new-view-controls .btn{flex:1;min-width:0}.pp-new-3dpreview{min-height:180px}}
+
+
+/* V2.5: the modern multi-PO builder replaces the duplicate legacy allocation form. */
+#ppLegacyAllocationCard{display:none !important}
+.pp-new-create-box{display:block;background:#f3f8ff;border:1px dashed #93c5fd;border-radius:12px;padding:12px;margin:10px 0}
+.pp-new-create-box .pp-new-three{margin-bottom:8px}
+.pp-new-create-box input[readonly]{background:#eaf5f8;color:#075985;font-weight:800}
+#ppNewGeneratedIds{margin:6px 0 10px}
+
+
+/* AIS Tracker V2.7 — compact 2D crate detail, layer and height cards */
+.pp-new-crate-details{padding:10px!important;margin:8px 0!important;background:#f6fafc!important;border:1px solid #d6e4f0!important;border-radius:12px!important}
+.pp-new-summary-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:2px 1px 8px;border-bottom:1px solid #dce8f0}
+.pp-new-summary-head b{display:block;color:#123c66;font-size:15px;font-weight:850}
+.pp-new-summary-head small{display:block;color:#64748b;font-size:11px;margin-top:3px}
+.pp-new-validity{display:inline-flex;align-items:center;border-radius:20px;padding:5px 9px;font-size:10px;font-weight:900;white-space:nowrap}
+.pp-new-validity.ok{background:#e1f8ec;color:#047857}.pp-new-validity.bad{background:#fee2e2;color:#b91c1c}
+.pp-new-draft-banner{margin:8px 0;padding:7px 9px;border:1px solid #93c5fd;border-radius:8px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:750}
+.pp-new-view-controls{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0!important}
+.pp-new-view-controls .btn{min-width:78px!important;padding:7px 10px!important;border:1px solid #c8d9ec!important;background:#fff!important;color:#123c66!important;font-size:11px!important;font-weight:800!important}
+.pp-new-view-controls .btn.btn-accent{background:#087d78!important;color:#fff!important;border-color:#087d78!important}
+.pp-new-2d-stage{background:linear-gradient(180deg,#fafdff,#f0f7fa);border:1px solid #dbe7ee;border-radius:10px;padding:4px 7px 6px;min-width:0}
+.pp-new-2d-stage svg{display:block;width:100%;height:auto;max-height:218px;margin:0 auto}
+.pp-new-2d-caption{font-size:10px;line-height:1.35;color:#637789;padding:0 5px 3px}
+.pp-new-dim-grid-v27{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:6px!important;margin-top:8px!important}
+.pp-new-dim-grid-v27>div{padding:7px!important;min-width:0;overflow-wrap:anywhere}
+.pp-new-dim-grid-v27 small{font-size:9.5px!important;line-height:1.25;min-height:13px}
+.pp-new-dim-grid-v27 b{font-size:12px!important;line-height:1.3;display:block;margin-top:3px}
+.pp-new-fit-note{margin-top:8px;padding:8px 9px;border-radius:8px;font-size:10.5px;line-height:1.45;font-weight:600}
+.pp-new-fit-note.ok{background:#edfbf7;border:1px solid #a6ead9;color:#17645f}
+.pp-new-fit-note.bad{background:#fff1f2;border:1px solid #fecdd3;color:#9f1239}
+.pp-new-pending-label{font-size:10px;font-weight:800;color:#1d4ed8}
+#ppNewCrateProfiles{max-height:230px!important}
+#ppNewCrateProfiles table{min-width:770px!important;font-size:11px!important}
+@media(max-width:560px){.pp-new-dim-grid-v27{grid-template-columns:repeat(2,minmax(0,1fr))!important}.pp-new-2d-stage svg{max-height:200px}}
+
+/* AIS Tracker V2.9 — clearer pending-quantity math and invalid-height feedback */
+.pp-new-draft-banner{line-height:1.55;white-space:normal}
+.pp-new-draft-banner-invalid{border-color:#fda4af!important;background:#fff1f2!important;color:#9f1239!important}
+
+
+/* V2.10 Full Crate Details report table */
+.pp-full-detail-card{border:1px solid #c9e1ef!important;background:rgba(255,255,255,.98)!important}
+.pp-full-detail-head{align-items:flex-start!important}
+.pp-full-detail-wrap{overflow:auto!important;border:1px solid #c7dce8!important;border-radius:10px!important}
+.pp-full-detail-table{min-width:1220px!important;width:100%!important;font-size:12px!important}
+.pp-full-detail-table th,.pp-full-detail-table td{padding:9px 10px!important;white-space:nowrap!important;vertical-align:middle!important}
+.pp-full-detail-table thead th{position:sticky;top:0;z-index:2}
+.pp-full-detail-table tbody tr:nth-child(even){background:#f2f8fb!important}
+.pp-full-detail-table tbody tr:hover td{background:#e7f8f2!important}
+.pp-full-detail-table td:first-child{font-weight:900;color:#075b63}
+.pp-full-detail-table td:nth-child(9),.pp-full-detail-table td:last-child{font-weight:800;color:#075985}
+.pp-full-detail-table tfoot td{background:#e7f3f9!important;color:#0c3d5e!important;font-weight:900;border-top:2px solid #98c5d9!important}
+.pp-full-detail-summary{margin-top:10px;padding:10px 12px;border-radius:9px;background:#eef8fc;border:1px solid #c8e5f1;color:#30566d;font-size:12px;font-weight:700}
+@media(max-width:800px){.pp-full-detail-head{flex-direction:column!important}.pp-full-detail-table{min-width:1100px!important}}
+
+/* V2.12: batch creation preview and compact container view shortcuts */
+.pp-v212-batch-summary{margin:10px 0 12px;padding:11px 13px;border:1px solid #99e9d8;border-radius:10px;background:#effcf8;color:#145a60;font-size:12px;line-height:1.55}.pp-v212-batch-summary.warning{border-color:#f5c16c;background:#fff8e8;color:#8b4b08}.pp-v212-batch-summary small{display:block;margin-top:5px;color:inherit}.pp-v212-batch-lines{margin-top:5px;padding-top:5px;border-top:1px solid #c9e7e2}.pp-view-shortcuts{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:10px 0;padding:10px 12px;border:1px solid #c9dfe9;border-radius:10px;background:#f3f9fc;color:#244b60;font-size:12px}.pp-view-shortcuts button{border:1px solid #b6d1df;border-radius:7px;padding:6px 11px;background:#fff;color:#123c55;font-weight:700;cursor:pointer}.pp-view-shortcuts button:hover{background:#e4f5f1}.pp-view-shortcuts span{flex:1 1 320px}
