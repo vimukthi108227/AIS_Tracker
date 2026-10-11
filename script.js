@@ -7004,14 +7004,9 @@ function ppSmartRenderContainer(){
   placed.forEach((c,i)=>{const d=dims(c),x=d.x,y=d.y,z=ppNum(d.p.zMm),pts=[P(x,y,z),P(x+d.L,y,z),P(x+d.L,y+d.W,z),P(x,y+d.W,z)],top=pts.map(p=>[p[0],p[1]-d.H*sz]),front=[pts[0],pts[1],top[1],top[0]],side=[pts[1],pts[2],top[2],top[1]],fill=colors[i%colors.length],stroke=c.id===ppContSelectedId?'#ef4444':'#35586b';svg+=`<g onclick="ppContPickById('${encodeURIComponent(c.id)}')" style="cursor:pointer">${poly(front,fill,stroke,c.id===ppContSelectedId?3:1.5)}${poly(side,'#9eb6c5',stroke,c.id===ppContSelectedId?3:1.5)}${poly(top,'#e7eff4',stroke,c.id===ppContSelectedId?3:1.5)}<text x="${(top[0][0]+top[1][0]+top[2][0]+top[3][0])/4-15}" y="${(top[0][1]+top[1][1]+top[2][1]+top[3][1])/4}" font-size="11" font-weight="700" fill="#12364d">${ppEsc(ppDisplayCrateId(c.id))}</text></g>`;});svg+=`<text x="22" y="24" font-size="14" font-weight="800" fill="#164e63">3D ISOMETRIC VIEW · ${L} × ${W} × ${H} mm</text></svg>`;
  }
  host.innerHTML=svg;
- // Direct drag placement: drag crates in the drawing to adjust their physical position.
+ // Draggable crate groups are bound by the final, single interaction handler at the end of this file.
  const svgEl=host.querySelector('svg');
- if(svgEl){svgEl.style.touchAction='none';svgEl.querySelectorAll('g[onclick*=ppContPickById]').forEach(g=>{g.style.cursor='grab';g.setAttribute('data-draggable-crate','1');});
-  if(!host.dataset.dragBound){host.dataset.dragBound='1';let drag=null;
-   host.addEventListener('pointerdown',ev=>{const g=ev.target.closest('g[data-draggable-crate]');if(!g)return;const m=g.getAttribute('onclick')||'',hit=m.match(/ppContPickById\('([^']+)'\)/);if(!hit)return;const id=decodeURIComponent(hit[1]);const c=ppSmartCrates.find(q=>q.id===id);if(!c)return;const activeView=document.getElementById('ppContView')?.value||'top';if(activeView!=='top'||ppNum(ppContLayout(c).zMm)>0||ppContLayout(c).baseId){if(typeof showToast==='function')showToast('Direct drag is enabled for floor crates in Top view only. Use the location controls to change stacked crates.','info');return;}ppContTakeSnapshot();ppContSelectedId=id;drag={id,startX:ev.clientX,startY:ev.clientY,view:activeView,x:ppNum(ppContLayout(c).x),y:ppNum(ppContLayout(c).y),z:ppNum(ppContLayout(c).z),zMm:ppNum(ppContLayout(c).zMm)};svgEl.setPointerCapture?.(ev.pointerId);ev.preventDefault();});
-   host.addEventListener('pointerup',ev=>{if(!drag)return;const c=ppSmartCrates.find(q=>q.id===drag.id);if(!c){drag=null;return;}const L=ppNum(document.getElementById('ppContLen')?.value)||12032,W=ppNum(document.getElementById('ppContWid')?.value)||2352,H=ppNum(document.getElementById('ppContHei')?.value)||2393,d=ppContDims(c),rect=host.querySelector('svg')?.getBoundingClientRect();if(!rect){drag=null;return;}const svgNow=host.querySelector('svg'),viewBox=svgNow?.viewBox?.baseVal,scaleX=rect.width/Math.max(1,viewBox?.width||900),scaleY=rect.height/Math.max(1,viewBox?.height||500),mmScale=Math.max(.0001,ppNum(svgNow?.dataset?.mmScale)||.05),dx=((ev.clientX-drag.startX)/Math.max(.001,scaleX))/mmScale,dy=((ev.clientY-drag.startY)/Math.max(.001,scaleY))/mmScale,p=ppContLayout(c);if(drag.view==='top'){p.x=Math.round(Math.max(0,Math.min(L-d.L,drag.x+dx)));p.y=Math.round(Math.max(0,Math.min(W-d.W,drag.y+dy)));}else if(['front','back'].includes(drag.view)){p.y=Math.round(Math.max(0,Math.min(W-d.W,drag.y+dx)));p.zMm=Math.max(0,Math.round(drag.zMm-dy));p.z=Math.round(p.zMm/Math.max(1,d.H));}else if(['left','right'].includes(drag.view)){p.x=Math.round(Math.max(0,Math.min(L-d.L,drag.x+dx)));p.zMm=Math.max(0,Math.round(drag.zMm-dy));p.z=Math.round(p.zMm/Math.max(1,d.H));}else{p.x=Math.round(Math.max(0,Math.min(L-d.L,drag.x+dx)));p.y=Math.round(Math.max(0,Math.min(W-d.W,drag.y+dy)));}p.placed=true;const bad=p.x+d.L>L||p.y+d.W>W||p.zMm+d.H>H||ppSmartCrates.some(q=>q!==c&&ppContLayout(q).placed&&ppContBoxesOverlap(c,q));if(bad){p.x=drag.x;p.y=drag.y;p.z=drag.z;p.zMm=drag.zMm;p.placed=true;if(typeof showToast==='function')showToast('Move not applied: choose a free position inside the container.','warning');}else{p.baseId='';p.z=0;p.zMm=0;p.placed=true;ppSmartPersist();if(typeof showToast==='function')showToast('Floor-crate position adjusted and saved.','success');}drag=null;ppContSyncSelected();ppSmartRenderContainer();});
-  }
- }
+ if(svgEl){svgEl.style.touchAction='none';svgEl.querySelectorAll('g[onclick*=ppContPickById]').forEach(g=>{g.style.cursor='grab';g.setAttribute('data-draggable-crate','1');g.setAttribute('tabindex','0');g.setAttribute('role','button');g.setAttribute('aria-label','Select and drag crate '+((g.getAttribute('onclick')||'').match(/ppContPickById\('([^']+)'\)/)||[])[1]);});}
  const cap=document.getElementById('ppContainerCapacity');if(cap)cap.innerHTML=`Placed <b>${placed.length}/${ppSmartCrates.length}</b> crates · <b>${totalPcs.toLocaleString()}</b> PCS · estimated cargo weight <b>${totalWeight.toLocaleString(undefined,{maximumFractionDigits:1})} kg</b> · floor footprint <b>${usedPct.toFixed(1)}%</b>. Payload remaining: <b>${remaining.toLocaleString(undefined,{maximumFractionDigits:1})} kg</b>. Dimensions are schematic; cargo estimate includes entered crate tare, but excludes missing tare, dunnage and restraints.`;
  const val=document.getElementById('ppContainerValidation');if(val){const out=ppSmartCrates.filter(c=>{const p=ppContLayout(c),d=ppContDims(c);return p.placed&&(p.x+d.L>L||p.y+d.W>W||ppNum(p.zMm)+d.H>H);}).length;const over=totalWeight>payload,missingTare=placed.filter(c=>c.tareWeightKg===undefined||c.tareWeightKg===null||c.tareWeightKg==='').length;val.innerHTML=`<b>Dimensions check:</b> ${out?'One or more crates exceed the container envelope.':`${placed.length} placed crates shown in ${view} view.`} ${over?'<b style="color:#b91c1c">18,000 kg cargo limit exceeded.</b>':'Cargo estimate is within the entered limit.'} ${missingTare?`<b style="color:#b45309">${missingTare} placed crate(s) missing tare weight; total cargo weight is incomplete.</b>`:''} Stacking strength must be confirmed separately.`;}
  const body=document.getElementById('ppContainerPlacedBody');if(body)body.innerHTML=ppSmartCrates.map(c=>{const p=ppContLayout(c),d=ppContDims(c);return `<tr><td>${ppEsc(ppDisplayCrateId(c.id))}</td><td>${ppEsc([...new Set((c.items||[]).map(it=>it.profile))].join(' / '))}</td><td>${ppContPcs(c).toLocaleString()}</td><td>${ppContCargoWeight(c).toFixed(1)}</td><td>${d.W}</td><td>${d.L}</td><td>${d.H}</td><td>${p.x}</td><td>${p.y}</td><td>${p.z+1}</td><td>${p.rot?'90°':'Original'}</td><td>${p.placed?'<b style="color:#047857">Placed</b>':'<span style="color:#b45309">Not placed</span>'}</td></tr>`;}).join('')||'<tr><td colspan="12">No crates available.</td></tr>';
@@ -7053,7 +7048,11 @@ function ppNewProfileChanged(refresh=true){
 }
 function ppNewItemChanged(refresh=true){
  const p=document.getElementById('ppNewProfile')?.value||'',i=document.getElementById('ppNewItemCode')?.value||'',len=document.getElementById('ppNewLength');if(!len)return;
- const rows=(ppCrateNextRows||[]).filter(r=>String(r.profile)===p&&String(r.itemCode)===i);const old=len.value,values=[...new Set(rows.map(r=>String(r.length??'')).filter(Boolean))].sort((a,b)=>Number(a)-Number(b));len.innerHTML='<option value="">Select length</option>'+values.map(v=>`<option value="${ppNewEsc(v)}">${ppNewEsc(v)}</option>`).join('');len.disabled=!(p&&i);if(values.includes(old))len.value=old;
+ const rows=(ppCrateNextRows||[]).filter(r=>String(r.profile)===p&&String(r.itemCode)===i);const old=len.value,values=[...new Set(rows.map(r=>String(r.length??'')).filter(Boolean))].sort((a,b)=>Number(a)-Number(b));len.innerHTML='<option value="">Select length</option>'+values.map(v=>`<option value="${ppNewEsc(v)}">${ppNewEsc(v)}</option>`).join('');len.disabled=!(p&&i);
+ // Auto-select a valid length as soon as Profile + Item Code are selected.
+ // Preserve the current length only when it is also valid for this exact pair;
+ // otherwise choose the first available length while keeping the dropdown editable.
+ if(values.includes(old))len.value=old;else if(values.length)len.value=values[0];else len.value='';
  ppNewLengthChanged(refresh);
 }
 function ppNewLengthChanged(refresh=true){ppNewRenderPoRows();ppNewUpdateTotals();if(refresh)ppNewRenderSelectedCrate();}
@@ -7866,7 +7865,7 @@ async function ppContExport(kind){
  if(kind==='print'){ppContOpenColourPrintV212(headers,rows);return;}
  if(kind==='pdf'){
   if(!window.jspdf?.jsPDF||typeof window.html2canvas!=='function'){if(typeof showToast==='function')showToast('PDF engine is unavailable. Opening the colour print report instead.','warning');ppContOpenColourPrintV212(headers,rows);return;}
-  const doc=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4'}),views=[['top','TOP VIEW'],['left','SIDE VIEW (LEFT)'],['front','FRONT VIEW'],['back','BACK VIEW']];
+  const doc=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4'}),views=[['top','TOP VIEW'],['left','SIDE VIEW (LEFT)'],['right','SIDE VIEW (RIGHT)'],['front','FRONT VIEW'],['back','BACK VIEW']];
   const totalPcs=placed.reduce((s,c)=>s+ppContPcs(c),0),weight=placed.reduce((s,c)=>s+ppContCargoWeight(c),0),L=ppNum(document.getElementById('ppContLen')?.value)||12032,W=ppNum(document.getElementById('ppContWid')?.value)||2352,H=ppNum(document.getElementById('ppContHei')?.value)||2393;
   for(let i=0;i<views.length;i++){
    const [view,label]=views[i],stage=document.createElement('div');stage.style.cssText='position:fixed;left:-20000px;top:0;width:1240px;box-sizing:border-box;padding:28px;background:#ffffff;color:#12364d;font-family:Arial,sans-serif;';stage.innerHTML=`<h1 style="font-size:30px;margin:0 0 10px;color:#075b63">ALUMEX AIS TRACKER — CONTAINER LOADING PLAN</h1><h2 style="font-size:22px;margin:0 0 12px">${label}</h2><p style="font-size:15px;margin:0 0 14px">Container ${ppContEscV212(document.getElementById('ppSmartContainerType')?.selectedOptions?.[0]?.textContent||'40 ft Standard')} · Internal dimensions ${L} × ${W} × ${H} mm · Placed crates ${placed.length}/${ppSmartCrates.length} · ${totalPcs.toLocaleString()} PCS · Estimated profile + entered tare weight ${weight.toFixed(1)} kg</p><div style="border:1px solid #cbdde6;border-radius:10px;padding:12px;background:#f7fbfd">${ppContBuildViewSvgV212(view)}</div><p style="font-size:13px;margin-top:12px;color:#52677b">Colour-coded dimensional schematic. Verify actual container/door dimensions, payload, dunnage, load securing and stack strength before loading.</p>`;
@@ -7877,12 +7876,12 @@ async function ppContExport(kind){
   doc.addPage('a4','landscape');doc.setFont('helvetica','bold');doc.setFontSize(17);doc.setTextColor(7,91,99);doc.text('Crate Position Details',10,14);doc.setFont('helvetica','normal');doc.setFontSize(8);
   if(typeof doc.autoTable==='function')doc.autoTable({head:[headers],body:rows,startY:20,theme:'grid',styles:{font:'helvetica',fontSize:7,cellPadding:2,overflow:'linebreak'},headStyles:{fillColor:[7,91,99],textColor:[255,255,255]},alternateRowStyles:{fillColor:[239,246,249]},margin:{left:8,right:8,bottom:8}});
   else{let y=22;doc.setFontSize(7);headers.forEach((h,i)=>doc.text(String(h).slice(0,16),10+(i*23),y));y+=8;rows.forEach(r=>{r.forEach((v,i)=>doc.text(String(v??'').slice(0,16),10+(i*23),y));y+=6;if(y>195){doc.addPage('a4','landscape');y=15;}});}
-  doc.save('AIS_Container_Loading_Plan_Colour.pdf');if(typeof showToast==='function')showToast('Colour container plan PDF downloaded with Top, Side, Front and Back views.','success');return;
+  doc.save('AIS_Container_Loading_Plan_Colour.pdf');if(typeof showToast==='function')showToast('Colour container plan PDF downloaded with Top, Left Side, Right Side, Front and Back views.','success');return;
  }
 }
 function ppContOpenColourPrintV212(headers,rows){
  const w=window.open('','_blank');if(!w){if(typeof showToast==='function')showToast('Allow pop-ups to print or save the colour container plan as PDF.','warning');return;}
- const esc=ppContEscV212,placed=ppSmartCrates.filter(c=>ppContLayout(c).placed),views=[['top','TOP VIEW'],['left','SIDE VIEW (LEFT)'],['front','FRONT VIEW'],['back','BACK VIEW']],L=ppNum(document.getElementById('ppContLen')?.value)||12032,W=ppNum(document.getElementById('ppContWid')?.value)||2352,H=ppNum(document.getElementById('ppContHei')?.value)||2393;
+ const esc=ppContEscV212,placed=ppSmartCrates.filter(c=>ppContLayout(c).placed),views=[['top','TOP VIEW'],['left','SIDE VIEW (LEFT)'],['right','SIDE VIEW (RIGHT)'],['front','FRONT VIEW'],['back','BACK VIEW']],L=ppNum(document.getElementById('ppContLen')?.value)||12032,W=ppNum(document.getElementById('ppContWid')?.value)||2352,H=ppNum(document.getElementById('ppContHei')?.value)||2393;
  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>AIS Colour Container Plan</title><style>*{box-sizing:border-box}body{font:12px Arial;color:#12364d;margin:10mm}h1{color:#075b63;margin:0 0 7px}h2{margin:8px 0}.sheet{page-break-after:always;break-after:page}.drawing svg{display:block;width:100%;height:auto;border:1px solid #cbdde6;background:#fff}table{border-collapse:collapse;width:100%;font-size:9px}th,td{border:1px solid #9db7c8;padding:5px;text-align:left}th{background:#075b63!important;color:#fff!important}tr:nth-child(even){background:#eff6f9!important}*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}@page{size:A4 landscape;margin:8mm}</style></head><body><section class="sheet"><h1>ALUMEX AIS TRACKER — CONTAINER LOADING PLAN</h1><p>Container ${esc(document.getElementById('ppSmartContainerType')?.selectedOptions?.[0]?.textContent||'40 ft Standard')} · ${L} × ${W} × ${H} mm · ${placed.length}/${ppSmartCrates.length} crates placed · ${placed.reduce((s,c)=>s+ppContPcs(c),0).toLocaleString()} PCS · ${placed.reduce((s,c)=>s+ppContCargoWeight(c),0).toFixed(1)} kg estimated cargo weight</p><h2>TOP VIEW</h2><div class="drawing">${ppContBuildViewSvgV212('top')}</div></section>${views.slice(1).map(([v,label])=>`<section class="sheet"><h1>ALUMEX AIS TRACKER — CONTAINER LOADING PLAN</h1><h2>${label}</h2><div class="drawing">${ppContBuildViewSvgV212(v)}</div></section>`).join('')}<section class="sheet"><h1>Crate Position Details</h1><table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(v=>`<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></section><script>window.onload=()=>window.print();<\/script></body></html>`);w.document.close();
 }
 
@@ -8092,4 +8091,73 @@ ppSmartAutoArrange=function(){
 (function ppV213StyleAndRefresh(){
  const st=document.createElement('style');st.id='pp-v213-style';st.textContent='.pp-v213-height-preview{margin-top:8px;padding:10px 12px;border:1px solid #b9e4d9;border-radius:9px;background:#effcf8;color:#145c59;font-size:12px;line-height:1.55}.pp-v213-height-preview b{color:#075b63}.pp-v212-batch-summary.warning .pp-v213-height-preview{border-color:#f0b4b4;background:#fff5f5;color:#9f1239}';document.head.appendChild(st);
  document.addEventListener('DOMContentLoaded',()=>{try{ppV212UpdateBatchSummary();if(typeof ppSmartRenderContainer==='function')ppSmartRenderContainer();}catch(e){console.warn('V2.13 initialization:',e);}});
+})();
+
+
+/* AIS Tracker V2.15 — simplified drag-and-drop container arrangement.
+   One delegated pointer handler avoids competing legacy handlers. Existing crate and PO records are untouched. */
+ppContBindMoveInteractionsV213=function(host){
+ if(!host||host.dataset.ppV215DragBound==='1')return;
+ host.dataset.ppV215DragBound='1';
+ let drag=null,ignoreClickUntil=0;
+ const getPoint=(svg,ev)=>{try{const pt=svg.createSVGPoint();pt.x=ev.clientX;pt.y=ev.clientY;const q=pt.matrixTransform(svg.getScreenCTM().inverse());return{x:q.x,y:q.y};}catch(e){const r=svg.getBoundingClientRect(),vb=svg.viewBox.baseVal;return{x:(ev.clientX-r.left)/r.width*vb.width,y:(ev.clientY-r.top)/r.height*vb.height};}};
+ const setHint=(text)=>{const hint=document.querySelector('.pp-container-selected .pp-location-hint');if(hint)hint.innerHTML='<i class="fa-solid fa-circle-info"></i> '+text;};
+ host.addEventListener('pointerdown',ev=>{
+  const g=ev.target.closest('g[data-draggable-crate]');
+  const svg=ev.target.closest('svg[data-layout-view="top"]');
+  if(!g||!svg||ev.button!==0)return;
+  const hit=(g.getAttribute('onclick')||'').match(/ppContPickById\('([^']+)'\)/);if(!hit)return;
+  const id=decodeURIComponent(hit[1]),c=ppSmartCrates.find(q=>q.id===id);if(!c)return;
+  const lp=ppContLayout(c);
+  if(ppNum(lp.zMm)>0||lp.baseId){ppContSelectedId=id;ppContSyncSelected();if(typeof showToast==='function')showToast('This crate is stacked. Select a floor crate to drag, or use Stack on Supporting Crate.','info');return;}
+  ppContSelectedId=id;ppContSyncSelected();
+  const pt=getPoint(svg,ev);
+  drag={id,g,svg,pointerId:ev.pointerId,startClientX:ev.clientX,startClientY:ev.clientY,startPoint:pt,startX:ppNum(lp.x),startY:ppNum(lp.y),moved:false,scale:Math.max(.0001,ppNum(svg.dataset.mmScale)||.05)};
+  try{svg.setPointerCapture(ev.pointerId);}catch(e){}
+  setHint('<b>Moving '+ppContEscV212(ppDisplayCrateId(id))+'…</b> Drag to the desired location and release. The crate will snap to the nearest valid free position. Press Esc to cancel.');
+  ev.preventDefault();
+ },true);
+ host.addEventListener('pointermove',ev=>{
+  if(!drag)return;
+  const pt=getPoint(drag.svg,ev),dx=pt.x-drag.startPoint.x,dy=pt.y-drag.startPoint.y;
+  if(Math.abs(ev.clientX-drag.startClientX)+Math.abs(ev.clientY-drag.startClientY)>4)drag.moved=true;
+  if(drag.moved){drag.g.setAttribute('transform',`translate(${dx} ${dy})`);drag.g.style.opacity='.82';drag.g.style.filter='drop-shadow(0 4px 5px rgba(0,0,0,.22))';setHint('<b>Drop to place.</b> The preview follows your pointer; it will snap to the nearest valid gap and will not overlap another crate.');}
+ },true);
+ const finish=(ev,cancel=false)=>{
+  if(!drag)return;const d=drag;drag=null;
+  try{d.g.removeAttribute('transform');d.g.style.opacity='';d.g.style.filter='';}catch(e){}
+  if(cancel){ppContSelectedId=d.id;ppContSyncSelected();ppSmartRenderContainer();setHint('Drag cancelled. Select a crate and drag it to move, or use <b>Auto Arrange</b>.');return;}
+  if(!d.moved){ppContPickById(encodeURIComponent(d.id));setHint('<b>Drag &amp; drop:</b> grab any floor crate in Top View, move it, and release. Use Auto Arrange to pack all crates into a compact layout.');return;}
+  ignoreClickUntil=Date.now()+450;
+  const svg=d.svg,pt=getPoint(svg,ev),dx=(pt.x-d.startPoint.x)/d.scale,dy=(pt.y-d.startPoint.y)/d.scale;
+  ppContSelectedId=d.id;ppContSyncSelected();
+  const ok=ppContMoveSelectedNearV212(Math.round(d.startX+dx),Math.round(d.startY+dy));
+  setHint(ok?'<b>Move complete.</b> Crate snapped to a valid position. Continue dragging other crates, or use <b>Auto Arrange</b>.':'<b>Move not applied.</b> There is no valid free position near that location. Try another spot or use <b>Auto Arrange</b>.');
+ };
+ host.addEventListener('pointerup',ev=>finish(ev,false),true);
+ host.addEventListener('pointercancel',ev=>finish(ev,true),true);
+ host.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&drag){ev.preventDefault();finish(ev,true);}},true);
+ host.addEventListener('click',ev=>{if(Date.now()<ignoreClickUntil){ev.preventDefault();ev.stopImmediatePropagation();}},true);
+};
+
+/* Friendly controls and clear instructions for first-time users. */
+(function ppV215FriendlyArrangement(){
+ const st=document.createElement('style');st.id='pp-v215-drag-style';st.textContent=`
+ #ppV215Guide{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:10px 0 12px;padding:12px 14px;border:1px solid #a8e6d7;border-radius:12px;background:linear-gradient(110deg,#effcf8,#f4f9ff);color:#164e63;font-size:13px;line-height:1.55}
+ #ppV215Guide .guide-title{font-weight:800;color:#075b63;display:flex;align-items:center;gap:7px}
+ #ppV215Guide .guide-step{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;background:#fff;border:1px solid #d2e4ec;font-weight:700}
+ #ppV215Guide .guide-note{flex:1 1 260px;color:#4b6576}
+ #ppContainerVisual svg g[data-draggable-crate]{cursor:grab!important;touch-action:none;transition:filter .12s ease}
+ #ppContainerVisual svg g[data-draggable-crate]:hover{filter:drop-shadow(0 2px 3px rgba(7,91,99,.25))}
+ #ppContainerVisual svg g[data-draggable-crate]:active{cursor:grabbing!important}
+ `;document.head.appendChild(st);
+ const install=()=>{
+  const visual=document.getElementById('ppContainerVisual');if(visual&&!document.getElementById('ppV215Guide')){
+   const guide=document.createElement('div');guide.id='ppV215Guide';guide.innerHTML='<span class="guide-title"><i class="fa-solid fa-hand-pointer"></i> Easy Container Arrangement</span><span class="guide-step">1. Click and hold a crate</span><i class="fa-solid fa-arrow-right" aria-hidden="true"></i><span class="guide-step">2. Drag it to the new spot</span><i class="fa-solid fa-arrow-right" aria-hidden="true"></i><span class="guide-step">3. Release to snap in place</span><span class="guide-note">Use <b>Top View</b> for moving floor crates. <b>Auto Arrange</b> packs crates compactly; Undo Layout restores the previous arrangement.</span>';
+   visual.parentNode.insertBefore(guide,visual);
+  }
+  const quick=document.getElementById('ppV212QuickViews');if(quick){const span=quick.querySelector('span');if(span)span.textContent='Easy mode: in Top View, click and hold a floor crate, drag it, then release. It snaps to the nearest valid free space. Use Auto Arrange for a compact layout.';}
+  const hint=document.querySelector('.pp-container-selected .pp-location-hint');if(hint)hint.innerHTML='<i class="fa-solid fa-circle-info"></i> <b>Easy move:</b> choose <b>Top View</b>, then click and hold a floor crate, drag it to the desired place, and release. It snaps to a valid gap automatically. To pack all crates, use <b>Auto Arrange · Validate &amp; Save</b>. Use the supporting-crate controls for stacking.';
+ };
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install,{once:true});else install();
 })();
