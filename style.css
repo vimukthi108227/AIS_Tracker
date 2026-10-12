@@ -2734,3 +2734,8 @@ body.dark-mode #dashboardTab .pending-po-metric.still{background:#2a1c26;border-
 
 /* V2.12: batch creation preview and compact container view shortcuts */
 .pp-v212-batch-summary{margin:10px 0 12px;padding:11px 13px;border:1px solid #99e9d8;border-radius:10px;background:#effcf8;color:#145a60;font-size:12px;line-height:1.55}.pp-v212-batch-summary.warning{border-color:#f5c16c;background:#fff8e8;color:#8b4b08}.pp-v212-batch-summary small{display:block;margin-top:5px;color:inherit}.pp-v212-batch-lines{margin-top:5px;padding-top:5px;border-top:1px solid #c9e7e2}.pp-view-shortcuts{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:10px 0;padding:10px 12px;border:1px solid #c9dfe9;border-radius:10px;background:#f3f9fc;color:#244b60;font-size:12px}.pp-view-shortcuts button{border:1px solid #b6d1df;border-radius:7px;padding:6px 11px;background:#fff;color:#123c55;font-weight:700;cursor:pointer}.pp-view-shortcuts button:hover{background:#e4f5f1}.pp-view-shortcuts span{flex:1 1 320px}
+
+/* AIS Tracker V2.17 — tier-level view control */
+#packingPlannerTab #ppContTierView{border-color:#99c9d8;background:#f4fbff;font-weight:700}
+#packingPlannerTab #ppV217TierNote{margin-top:8px;border-color:#9bded2;background:#effcf8;color:#165b5b}
+#packingPlannerTab #ppContainerVisual g[style*="display: none"]{pointer-events:none}

@@ -6993,7 +6993,9 @@ function ppSmartRenderContainer(){
   const end=['front','back'].includes(view),axisLen=end?W:L,pad=48;
   // Keep the full container envelope visible; floor is anchored near the bottom.
   const scale=Math.min((Wv-2*pad)/axisLen,(Hv-2*pad)/H),cw=axisLen*scale,ch=H*scale,ox=(Wv-cw)/2,floorY=Hv-pad,topY=floorY-ch;
-  shapes=placed.map((c,i)=>{const d=dims(c),xpos=end?(view==='front'?d.y:W-d.y-d.W):(view==='left'?d.x:L-d.x-d.L),xx=ox+xpos*scale,hh=d.H*scale,baseY=floorY-ppNum(d.p.zMm)*scale,yy=baseY-hh,ww=(end?d.W:d.L)*scale;
+  // Left looks from Y=0; right looks from Y=container width. Draw far crates first.
+  const sideOrder=[...placed].sort((a,b)=>view==='left'?(ppNum(ppContLayout(b).y)-ppNum(ppContLayout(a).y)):(view==='right'?(ppNum(ppContLayout(a).y)-ppNum(ppContLayout(b).y)):0));
+  shapes=sideOrder.map((c,i)=>{const d=dims(c),xpos=end?(view==='front'?d.y:W-d.y-d.W):(view==='left'?d.x:L-d.x-d.L),xx=ox+xpos*scale,hh=d.H*scale,baseY=floorY-ppNum(d.p.zMm)*scale,yy=baseY-hh,ww=(end?d.W:d.L)*scale;
    return `<g onclick="ppContPickById('${encodeURIComponent(c.id)}')" style="cursor:pointer"><rect x="${xx}" y="${yy}" width="${Math.max(1,ww)}" height="${Math.max(1,hh)}" fill="${colors[i%colors.length]}" stroke="${c.id===ppContSelectedId?'#ef4444':'#35586b'}" stroke-width="${c.id===ppContSelectedId?4:1.6}"/><text x="${xx+4}" y="${yy+Math.min(15,Math.max(9,hh/3))}" font-size="${Math.max(7,Math.min(13,ww/5))}" fill="#12364d">${ppEsc(ppDisplayCrateId(c.id))}</text><text x="${xx+4}" y="${yy+Math.min(28,Math.max(16,hh*.65))}" font-size="${Math.max(6,Math.min(10,ww/6))}" fill="#12364d">${ppContPcs(c)} PCS</text></g>`;
   }).join('');
   svg=`<svg data-mm-scale="${scale}" data-layout-view="${view}" viewBox="0 0 ${Wv} ${Hv}" role="img" aria-label="Container ${view} side view"><rect x="${ox}" y="${topY}" width="${cw}" height="${ch}" fill="#edf4f7" stroke="#24556b" stroke-width="8"/>${shapes}<text x="22" y="24" font-size="14" font-weight="800" fill="#164e63">${view.toUpperCase()} SIDE VIEW · ${axisLen} × ${H} mm</text><text x="22" y="${Hv-12}" font-size="11" fill="#164e63">${end?'Looking from container '+view+' end (width × height)':'Looking along container '+view+' side (length × height)'}</text></svg>`;
@@ -7853,7 +7855,9 @@ function ppContBuildViewSvgV212(view){
  }else{
   const end=['front','back'].includes(view),axis=end?W:L,scale=Math.min((VW-2*pad)/axis,(VH-2*pad)/H),cw=axis*scale,ch=H*scale,ox=(VW-cw)/2,floor=VH-pad,top=floor-ch;
   s+=`<rect x="${ox}" y="${top}" width="${cw}" height="${ch}" fill="#eaf2f6" stroke="#184f68" stroke-width="9"/>`;
-  placed.forEach((c,i)=>{const p=ppContLayout(c),d=ppContDims(c),xpos=end?(view==='front'?p.y:W-p.y-d.W):(view==='left'?p.x:L-p.x-d.L),xx=ox+xpos*scale,ww=(end?d.W:d.L)*scale,hh=d.H*scale,yy=floor-(ppNum(p.zMm)+d.H)*scale;s+=`<rect x="${xx}" y="${yy}" width="${Math.max(1,ww)}" height="${Math.max(1,hh)}" fill="${colors[i%colors.length]}" stroke="#173f53" stroke-width="2.5"/><text x="${xx+5}" y="${yy+Math.min(20,Math.max(9,hh/3))}" font-size="${Math.max(8,Math.min(16,ww/5))}" font-weight="700" fill="#143649">${ppContEscV212(ppDisplayCrateId(c.id))}</text><text x="${xx+5}" y="${yy+Math.min(36,Math.max(18,hh*.7))}" font-size="${Math.max(7,Math.min(12,ww/6))}" fill="#143649">${ppContPcs(c)} PCS</text>`;});
+  // Side views draw far-side crates first so near crates cover them realistically.
+  const sideOrder=[...placed].sort((a,b)=>view==='left'?(ppNum(ppContLayout(b).y)-ppNum(ppContLayout(a).y)):(view==='right'?(ppNum(ppContLayout(a).y)-ppNum(ppContLayout(b).y)):0));
+  sideOrder.forEach((c,i)=>{const p=ppContLayout(c),d=ppContDims(c),xpos=end?(view==='front'?p.y:W-p.y-d.W):(view==='left'?p.x:L-p.x-d.L),xx=ox+xpos*scale,ww=(end?d.W:d.L)*scale,hh=d.H*scale,yy=floor-(ppNum(p.zMm)+d.H)*scale;s+=`<rect x="${xx}" y="${yy}" width="${Math.max(1,ww)}" height="${Math.max(1,hh)}" fill="${colors[i%colors.length]}" stroke="#173f53" stroke-width="2.5"/><text x="${xx+5}" y="${yy+Math.min(20,Math.max(9,hh/3))}" font-size="${Math.max(8,Math.min(16,ww/5))}" font-weight="700" fill="#143649">${ppContEscV212(ppDisplayCrateId(c.id))}</text><text x="${xx+5}" y="${yy+Math.min(36,Math.max(18,hh*.7))}" font-size="${Math.max(7,Math.min(12,ww/6))}" fill="#143649">${ppContPcs(c)} PCS</text>`;});
   s+=`<text x="20" y="26" font-size="18" font-weight="800" fill="#164e63">${view.toUpperCase()} VIEW · ${axis} × ${H} mm</text><text x="20" y="${VH-12}" font-size="12" fill="#164e63">Crates shown to scale for layout planning. Confirm physical dimensions and restraint.</text>`;
  }
  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VW} ${VH}" width="${VW}" height="${VH}">${s}</svg>`;
@@ -8161,3 +8165,194 @@ ppContBindMoveInteractionsV213=function(host){
  };
  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install,{once:true});else install();
 })();
+
+
+/* AIS Tracker V2.17 — 865 mm leg positions + tier-by-tier container viewing.
+   Additive UI/rendering changes only. Existing crate records, Supabase tables and IDs are preserved. */
+function ppLegPositions865(lengthMm, woodAllowanceMm=20){
+  const L=Math.max(0,Number(lengthMm)||0), inset=Math.max(0,Number(woodAllowanceMm)||0), spacing=865;
+  if(L<=inset) return [Math.max(0,L/2)];
+  const out=[];
+  for(let x=inset; x<L && out.length<3; x+=spacing) out.push(x);
+  if(out.length===1 && L>spacing+inset) out.push(inset+spacing);
+  return out;
+}
+const ppV217OriginalDrawCrate2D=ppNewDrawCrate2D;
+ppNewDrawCrate2D=function(c,metric,view){
+  let out=ppV217OriginalDrawCrate2D.apply(this,arguments);
+  if(view!=='side') return out;
+  const length=Math.max(1,Number(metric?.length)||Number(c?.outerL)||1);
+  const positions=ppLegPositions865(length,20);
+  // Current side elevation uses a 366 px body inside a 460 px SVG viewBox.
+  const x=47,w=366,baseY=156,legPx=14,legW=18,scale=w/length;
+  const legs=positions.map(mm=>{
+    const px=x+Math.max(0,Math.min(w-legW,mm*scale-legW/2));
+    return `<rect x="${px.toFixed(2)}" y="${baseY}" width="${legW}" height="${legPx}" fill="#a87842" stroke="#81562f"/>`;
+  }).join('');
+  // Replace the legacy fixed three-leg row; all crate dimensions and packing drawings stay as before.
+  out=out.replace(/(?:<rect x="[^\"]+" y="156" width="18" height="14" fill="#a87842" stroke="#81562f"\/>){1,3}/,legs);
+  out=out.replace('Side elevation · crate length '+Math.round(length)+' mm','Side elevation · crate length '+Math.round(length)+' mm · legs every 865 mm');
+  out=out.replace('Side 2D shows long box lengths aligned along the crate length; each layer is stacked vertically.','Side 2D shows long box lengths aligned along the crate length; timber legs start at the end timber allowance and repeat every 865 mm (maximum 3 shown). Each layer is stacked vertically.');
+  return out;
+};
+
+// Leg alignment is checked before placing a crate on a supporting crate.
+function ppV217LegsAlign(upper,base){
+  const upD=ppContDims(upper),baseD=ppContDims(base),upP=ppContLayout(upper),baseP=ppContLayout(base);
+  const upperLen=upP.rot?upD.W:upD.L, baseLen=baseP.rot?baseD.W:baseD.L;
+  const upLegs=ppLegPositions865(upperLen,20),baseLegs=ppLegPositions865(baseLen,20);
+  // Length axes must be aligned and each upper leg must sit over a corresponding lower support leg.
+  const sameAxis=!!upP.rot===!!baseP.rot;
+  if(!sameAxis) return {ok:false,reason:'Leg alignment requires the upper and supporting crate length directions to match. Rotate one crate so the leg rows align.'};
+  const offset=Math.abs((Number(upP.x)||0)-(Number(baseP.x)||0));
+  if(offset>30) return {ok:false,reason:'Move the upper crate so its leg row aligns with the supporting crate.'};
+  const unmatched=upLegs.filter(a=>!baseLegs.some(b=>Math.abs(a-b)<=60));
+  if(unmatched.length) return {ok:false,reason:'The upper crate legs do not align with the supporting crate leg positions (865 mm spacing). Adjust the crate length/rotation or choose a better supporting crate.'};
+  return {ok:true};
+}
+const ppV217BaseStack=ppContStackOnSelected;
+ppContStackOnSelected=function(){
+  const c=ppContGetSelected(),id=document.getElementById('ppContStackOn')?.value;
+  if(c&&id){const base=ppSmartCrates.find(q=>q.id===id);if(base&&base!==c){const check=ppV217LegsAlign(c,base);if(!check.ok){if(typeof showToast==='function')showToast(check.reason,'warning');else alert(check.reason);return;}}}
+  return ppV217BaseStack.apply(this,arguments);
+};
+
+// Separate visual filters for Floor / Tier 2 / Tier 3. Filtering is visual-only; no data is changed.
+const ppV217BaseContainerRender=ppSmartRenderContainer;
+ppSmartRenderContainer=function(){
+  const result=ppV217BaseContainerRender.apply(this,arguments);
+  try{
+    const host=document.getElementById('ppContainerVisual'),filter=document.getElementById('ppContTierView');
+    if(!host||!filter||filter.value==='all') return result;
+    const target=Number(filter.value);
+    host.querySelectorAll('g[onclick*="ppContPickById"]').forEach(g=>{
+      const match=(g.getAttribute('onclick')||'').match(/ppContPickById\('([^']+)'\)/);
+      if(!match)return;
+      const id=decodeURIComponent(match[1]);
+      const c=ppSmartCrates.find(q=>q.id===id);
+      g.style.display=(c&&ppContLayout(c).placed&&Number(ppContLayout(c).z)===target)?'':'none';
+    });
+    const labels=['Floor only','Tier 2 only','Tier 3 only'];
+    let note=document.getElementById('ppV217TierNote');
+    if(!note){note=document.createElement('div');note.id='ppV217TierNote';note.className='pp-note';host.insertAdjacentElement('afterend',note);}
+    const count=ppSmartCrates.filter(c=>ppContLayout(c).placed&&Number(ppContLayout(c).z)===target).length;
+    note.innerHTML='<b>'+labels[target]+'</b> · '+count+' crate(s) at this level. Saved positions and other tiers are unchanged.';
+  }catch(e){console.warn('Tier view filter:',e);}
+  return result;
+};
+
+
+/* AIS Tracker V2.18 — practical crate leg positions, width zones and loading instructions.
+   Additive rendering/reporting only; no database schema changes or record migration. */
+ppLegPositions865=function(lengthMm, woodAllowanceMm=20){
+ const L=Math.max(0,Number(lengthMm)||0),inset=Math.min(Math.max(0,Number(woodAllowanceMm)||0),L/2),spacing=865;
+ if(L<=0)return [0];
+ // Short crates need a support at both ends even when 865 mm spacing is impossible.
+ if(L<=spacing+2*inset) return L-2*inset>=80?[inset,L-inset]:[L/2];
+ const out=[inset];
+ for(let x=inset+spacing;x<L-inset && out.length<3;x+=spacing) out.push(x);
+ // If the crate is long enough for a third regular support, include it; otherwise retain two.
+ if(out.length===1 && L-inset-inset>=spacing) out.push(L-inset);
+ return out;
+};
+function ppV218ZoneFor(c){
+ const W=Math.max(1,ppNum(document.getElementById('ppContWid')?.value)||2352),p=ppContLayout(c),d=ppContDims(c),center=(ppNum(p.y)+(ppNum(d.W)/2));
+ return center<W/3?'A':center<(2*W/3)?'B':'C';
+}
+function ppV218SupportChain(c){
+ const out=[],seen=new Set();let cur=c;
+ while(cur&&ppContLayout(cur).baseId&&!seen.has(cur.id)){
+  seen.add(cur.id);const id=ppContLayout(cur).baseId,base=ppSmartCrates.find(q=>q.id===id);if(!base)break;out.push(ppDisplayCrateId(base.id));cur=base;
+ }
+ return out;
+}
+function ppV218Location(c){
+ const p=ppContLayout(c),zone=ppV218ZoneFor(c),tier=Math.max(1,Math.floor(ppNum(p.z))+1),support=p.baseId?ppDisplayCrateId(p.baseId):'';
+ return {zone,tier,support,label:`Zone ${zone} · ${tier===1?'Floor':'Tier '+tier}`+(support?` · on ${support}`:'')};
+}
+// Override the stacking guard so a short crate's end legs can sit on end supports.
+ppV217LegsAlign=function(upper,base){
+ const upP=ppContLayout(upper),baseP=ppContLayout(base),upD=ppContDims(upper),baseD=ppContDims(base);
+ if(!!upP.rot!==!!baseP.rot)return {ok:false,reason:'Leg alignment requires the upper and supporting crate length directions to match. Rotate one crate so the leg rows align.'};
+ if(Math.abs((Number(upP.x)||0)-(Number(baseP.x)||0))>30)return {ok:false,reason:'Move the upper crate so its leg row aligns with the supporting crate.'};
+ const ul=upP.rot?upD.W:upD.L,bl=baseP.rot?baseD.W:baseD.L,upLegs=ppLegPositions865(ul,20),baseLegs=ppLegPositions865(bl,20);
+ const unmatched=upLegs.filter(a=>!baseLegs.some(b=>Math.abs(a-b)<=60));
+ if(unmatched.length)return {ok:false,reason:'The upper crate legs do not align with the supporting crate legs. Align both ends/support rows before stacking.'};
+ return {ok:true};
+};
+// Add location and support relationship to the live table after the existing renderer updates it.
+const ppV218BaseRenderContainer=ppSmartRenderContainer;
+ppSmartRenderContainer=function(){
+ const result=ppV218BaseRenderContainer.apply(this,arguments);
+ try{
+  const table=document.querySelector('#packingPlannerTab .pp-container-table');
+  if(table){const head=table.querySelector('thead tr');if(head&&!head.querySelector('[data-v218-location]')){const th=document.createElement('th');th.dataset.v218Location='1';th.textContent='Container location';head.insertBefore(th,head.children[9]||null);const sh=document.createElement('th');sh.dataset.v218Support='1';sh.textContent='Supported by';head.insertBefore(sh,head.children[10]||null);const eh=document.createElement('th');eh.dataset.v218Elevation='1';eh.textContent='Elevation Z (mm)';head.insertBefore(eh,head.children[10]||null);}
+   const body=document.getElementById('ppContainerPlacedBody');if(body){body.innerHTML=ppSmartCrates.map(c=>{const p=ppContLayout(c),d=ppContDims(c),loc=ppV218Location(c);return `<tr><td>${ppEsc(ppDisplayCrateId(c.id))}</td><td>${ppEsc([...new Set((c.items||[]).map(it=>it.profile))].join(' / '))}</td><td>${ppContPcs(c).toLocaleString()}</td><td>${ppContCargoWeight(c).toFixed(1)}</td><td>${d.W}</td><td>${d.L}</td><td>${d.H}</td><td>${p.x}</td><td>${p.y}</td><td><b>${loc.zone}</b> · ${loc.tier===1?'Floor':'Tier '+loc.tier}</td><td>${loc.support?ppEsc(loc.support):'—'}</td><td>${Math.round(ppNum(p.zMm))}</td><td>${p.z+1}</td><td>${p.rot?'90°':'Original'}</td><td>${p.placed?'<b style="color:#047857">Placed</b>':'<span style="color:#b45309">Not placed</span>'}</td></tr>`;}).join('')||'<tr><td colspan="15">No crates available.</td></tr>';}
+  }
+  const meta=document.getElementById('ppContSelectedMeta'),c=ppContGetSelected();if(meta&&c){const loc=ppV218Location(c);const oldExtra=meta.querySelector('[data-v218-extra]');if(oldExtra)oldExtra.remove();const div=document.createElement('div');div.dataset.v218Extra='1';div.innerHTML=`<br><b>Practical loading location:</b> Zone ${loc.zone} · ${loc.tier===1?'Floor':'Tier '+loc.tier}${loc.support?` · stacked on ${ppEsc(loc.support)}`:''}<br><b>Position guide:</b> X ${Math.round(ppNum(ppContLayout(c).x))} mm from container end; Y ${Math.round(ppNum(ppContLayout(c).y))} mm from side wall.`;meta.appendChild(div);}
+ }catch(e){console.warn('V2.18 location details:',e);}
+ return result;
+};
+// Add A/B/C width zones to every exported and on-screen top-view schematic.
+const ppV218BaseBuildView=ppContBuildViewSvgV212;
+ppContBuildViewSvgV212=function(view){
+ let svg=ppV218BaseBuildView.apply(this,arguments);
+ if(view!=='top')return svg;
+ const L=Math.max(1,ppNum(document.getElementById('ppContLen')?.value)||12032),W=Math.max(1,ppNum(document.getElementById('ppContWid')?.value)||2352),VW=1100,VH=600,pad=44,scale=Math.min((VW-2*pad)/L,(VH-2*pad)/W),cw=L*scale,ch=W*scale,ox=(VW-cw)/2,oy=(VH-ch)/2;
+ let overlay='';for(let i=1;i<=2;i++){const yy=oy+ch*i/3;overlay+=`<line x1="${ox}" y1="${yy}" x2="${ox+cw}" y2="${yy}" stroke="#0f766e" stroke-width="2" stroke-dasharray="8 5" opacity=".85"/>`;}
+ ['A','B','C'].forEach((z,i)=>{const yy=oy+ch*(i+.5)/3;overlay+=`<rect x="${ox+4}" y="${yy-13}" width="28" height="26" rx="5" fill="#ffffff" stroke="#0f766e"/><text x="${ox+18}" y="${yy+5}" text-anchor="middle" font-size="16" font-weight="900" fill="#0f766e">${z}</text>`;});
+ return svg.replace('</svg>',overlay+'</svg>');
+};
+// Detailed CSV/PDF report: add A/B/C zone, tier, and exact support-chain columns.
+const ppV218OriginalExport=ppContExport;
+ppContExport=async function(kind){
+ const placed=ppSmartCrates.filter(c=>ppContLayout(c).placed),headers=['Crate No','Profiles','PCS','Cargo weight incl. tare kg','Width mm','Length mm','Height mm','X from container end mm','Y from side wall mm','Width zone A/B/C','Level','Supported by crate','Support chain','Elevation Z mm','Rotation'];
+ const rows=placed.map(c=>{const p=ppContLayout(c),d=ppContDims(c),loc=ppV218Location(c),chain=ppV218SupportChain(c);return [ppDisplayCrateId(c.id),[...new Set((c.items||[]).map(it=>it.profile))].join(' / '),ppContPcs(c),ppContCargoWeight(c).toFixed(1),d.W,d.L,d.H,Math.round(ppNum(p.x)),Math.round(ppNum(p.y)),loc.zone,loc.tier===1?'Floor':`Tier ${loc.tier}`,loc.support||'—',chain.length?chain.join(' ← '):'Floor / no support',Math.round(ppNum(p.zMm)),p.rot?'90°':'Original'];});
+ if(kind==='excel'||kind==='csv'){
+  const csv=[headers,...rows].map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n'),blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='AIS_Container_Loading_Details.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);return;
+ }
+ if(kind==='print'){ppContOpenColourPrintV212(headers,rows);return;}
+ if(kind!=='pdf')return ppV218OriginalExport.apply(this,arguments);
+ if(!window.jspdf?.jsPDF||typeof window.html2canvas!=='function'){if(typeof showToast==='function')showToast('PDF engine unavailable. Opening the colour print report instead.','warning');ppContOpenColourPrintV212(headers,rows);return;}
+ const doc=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4'}),views=[['top','TOP VIEW — WIDTH ZONES A / B / C'],['left','LEFT SIDE VIEW'],['right','RIGHT SIDE VIEW'],['front','FRONT VIEW'],['back','BACK VIEW']],totalPcs=placed.reduce((s,c)=>s+ppContPcs(c),0),weight=placed.reduce((s,c)=>s+ppContCargoWeight(c),0),L=ppNum(document.getElementById('ppContLen')?.value)||12032,W=ppNum(document.getElementById('ppContWid')?.value)||2352,H=ppNum(document.getElementById('ppContHei')?.value)||2393;
+ for(let i=0;i<views.length;i++){const [view,label]=views[i],stage=document.createElement('div');stage.style.cssText='position:fixed;left:-20000px;top:0;width:1240px;box-sizing:border-box;padding:28px;background:#fff;color:#12364d;font-family:Arial,sans-serif;';stage.innerHTML=`<h1 style="font-size:28px;margin:0 0 8px;color:#075b63">ALUMEX AIS TRACKER — CONTAINER LOADING PLAN</h1><h2 style="font-size:21px;margin:0 0 10px">${label}</h2><p>Container ${ppContEscV212(document.getElementById('ppSmartContainerType')?.selectedOptions?.[0]?.textContent||'40 ft Standard')} · Internal dimensions ${L} × ${W} × ${H} mm · ${placed.length}/${ppSmartCrates.length} crates · ${totalPcs.toLocaleString()} PCS · ${weight.toFixed(1)} kg estimated cargo weight</p><div style="border:1px solid #cbdde6;padding:10px;background:#f7fbfd">${ppContBuildViewSvgV212(view)}</div><p style="font-size:13px;color:#52677b">A/B/C divide the container width into three practical location bands. For each crate, use the matching zone, X/Y dimensions and level on the detail sheet. Stacked crates identify their direct supporting crate. Confirm actual dimensions, payload, restraint and timber strength before loading.</p>`;document.body.appendChild(stage);try{const canvas=await window.html2canvas(stage,{scale:1.5,backgroundColor:'#fff',logging:false,useCORS:true});if(i)doc.addPage('a4','landscape');const data=canvas.toDataURL('image/png'),ratio=canvas.height/canvas.width,iw=281,ih=Math.min(185,iw*ratio);doc.addImage(data,'PNG',8,8,iw,ih,'','FAST');}finally{stage.remove();}}
+ doc.addPage('a4','landscape');doc.setFont('helvetica','bold');doc.setFontSize(16);doc.setTextColor(7,91,99);doc.text('CRATE LOADING INSTRUCTIONS & POSITIONS',9,12);doc.setFont('helvetica','normal');doc.setFontSize(7);
+ if(typeof doc.autoTable==='function')doc.autoTable({head:[headers],body:rows,startY:17,theme:'grid',styles:{font:'helvetica',fontSize:6.4,cellPadding:1.6,overflow:'linebreak'},headStyles:{fillColor:[7,91,99],textColor:[255,255,255]},alternateRowStyles:{fillColor:[239,246,249]},margin:{left:6,right:6,bottom:8},didDrawPage:()=>{doc.setFontSize(7);doc.setTextColor(80,100,115);doc.text('Loading sequence: Floor crates first → confirm Zone A/B/C and X/Y → place Tier 2/3 only on the listed supporting crate.',7,202);}});
+ else {let y=20;rows.forEach(r=>{doc.text(r.map(v=>String(v)).join(' | ').slice(0,220),8,y);y+=6;if(y>195){doc.addPage('a4','landscape');y=15;}});}
+ doc.save('AIS_Container_Loading_Instructions_Zones_ABC.pdf');if(typeof showToast==='function')showToast('Colour PDF downloaded with container views, A/B/C width zones, exact crate locations and supporting-crate details.','success');
+};
+// Make the print fallback use the enhanced loading instructions too.
+const ppV218BasePrint=ppContOpenColourPrintV212;
+ppContOpenColourPrintV212=function(headers,rows){
+ const placed=ppSmartCrates.filter(c=>ppContLayout(c).placed),extraHeaders=['Width zone A/B/C','Level','Supported by crate','Support chain'];
+ if(!headers.includes('Width zone A/B/C')){headers=[...headers,...extraHeaders];rows=placed.map((c,i)=>{const p=ppContLayout(c),loc=ppV218Location(c),chain=ppV218SupportChain(c);return [...(rows[i]||[]),loc.zone,loc.tier===1?'Floor':`Tier ${loc.tier}`,loc.support||'—',chain.length?chain.join(' ← '):'Floor / no support'];});}
+ return ppV218BasePrint(headers,rows);
+};
+
+
+/* AIS Tracker V2.19 final side-view visibility correction:
+   near-side crates are painted last, masking crates behind them exactly as a real side elevation. */
+const ppFinalSideVisibilityBaseRender = ppSmartRenderContainer;
+ppSmartRenderContainer = function(){
+  const result = ppFinalSideVisibilityBaseRender.apply(this, arguments);
+  try {
+    const svg = document.querySelector('#ppContainerVisual svg[data-layout-view]');
+    const view = svg?.getAttribute('data-layout-view');
+    if (svg && (view === 'left' || view === 'right')) {
+      const groups = [...svg.querySelectorAll('g[onclick*="ppContPickById"]')];
+      const getCrate = g => {
+        const m = (g.getAttribute('onclick') || '').match(/ppContPickById\('([^']+)'\)/);
+        if (!m) return null;
+        try { return ppSmartCrates.find(c => c.id === decodeURIComponent(m[1])) || null; } catch(e) { return null; }
+      };
+      groups.sort((ga,gb) => {
+        const a=getCrate(ga), b=getCrate(gb);
+        const ay=ppNum(ppContLayout(a||{}).y), by=ppNum(ppContLayout(b||{}).y);
+        return view === 'left' ? by-ay : ay-by;
+      });
+      const anchor = svg.querySelector('text');
+      groups.forEach(g => svg.insertBefore(g, anchor || null));
+    }
+  } catch(e) { console.warn('Side view visibility correction skipped:', e); }
+  return result;
+};
