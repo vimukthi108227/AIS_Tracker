@@ -4249,10 +4249,10 @@ function deleteShipmentItem(id) { if (currentUserRole !== 'Admin') return; showC
 window.downloadPackingTemplate = function(){
     if(typeof XLSX==='undefined') return showToast('Excel library not loaded.','error');
     const rows=[
-      {'Crate No':'11','PO Number':'363760','Profile':'AL-1037','Item Code':'RT-BT68','Number of Crates':1,'Pcs per Crate':100,'Total Qty':100},
-      {'Crate No':'12','PO Number':'363760','Profile':'AL-1037','Item Code':'RT-BT68','Number of Crates':4,'Pcs per Crate':150,'Total Qty':600}
+      {'Crate No':'11-i','Profile':'AL-1037','Item Code':'RT-BT68','Length (mm)':2500,'Qty':100},
+      {'Crate No':'11-ii','Profile':'AL-1037','Item Code':'RT-BT68','Qty':150}
     ];
-    exportTableToExcel(rows,'AIS_Packing_List_7_Column_Template','Packing List');
+    exportTableToExcel(rows,'AIS_Packing_List_Simple_Template','Packing List');
 };
 
 function getReadyCrateRows(records) {
@@ -5033,109 +5033,107 @@ async function processPlExcelUpload() {
   if(uploadBtn){uploadBtn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Validating...';uploadBtn.disabled=true;}
   const file=fileInput.files[0];
   const defaultPlNum=file.name.replace(/\.[^/.]+$/,'').trim()||`PL-${uploadDate}`;
-  const roman=['i','ii','iii','iv','v','vi','vii','viii','ix','x','xi','xii','xiii','xiv','xv','xvi','xvii','xviii','xix','xx'];
-  const toRoman=n=>roman[n-1]||String(n);
-  const normalHeader=h=>{
+  const normalizeHeader=h=>{
     const raw=String(h??'').replace(/\uFEFF/g,'').trim().toLowerCase();
-    const compact=raw.replace(/[^a-z0-9]/g,'');
-    // Accept both the 7-column website template and the user's existing
-    // Packing List format: '#', 'PO #', 'Profile #', etc.
-    if(raw==='#') return 'crateno';
-    if(compact==='po') return 'ponumber';
-    if(compact==='profileno') return 'profile';
-    if(compact==='cratenumber') return 'crateno';
-    if(compact==='pcspercrateqty') return 'pcspercrate';
-    return compact;
+    const c=raw.replace(/[^a-z0-9]/g,'');
+    if(['#','cratenumber','crateno','crateid','crate'].includes(raw)||['cratenumber','crateno','crateid'].includes(c)) return 'crateno';
+    if(['profileno','profile','profilecode'].includes(c)) return 'profile';
+    if(['itemcode','item','itemnumber','itemno','itemnumbercode'].includes(c)) return 'itemcode';
+    if(['length','profilelength','lengthmm','lengthinmm'].includes(c)) return 'length';
+    if(['qty','quantity','pcs','pcsqty','totalqty','totalquantity','pieceqty','pieces'].includes(c)) return 'qty';
+    if(['ponumber','po','pono','purchaseorderno','purchaseordernumber'].includes(c)) return 'ponumber';
+    return c;
   };
-  const requiredHeaders=['crateno','ponumber','profile','itemcode','numberofcrates','pcspercrate','totalqty'];
-
-  try{
-    // The website selectors are the source of truth for this upload target.
+  const requiredHeaders=['crateno','profile','itemcode','qty'];
+  try {
     activePackingMonth=uploadMonth;
     activePackingContainer=uploadContainer;
-
     const data=new Uint8Array(await file.arrayBuffer());
     const workbook=XLSX.read(data,{type:'array',cellDates:true});
     if(!workbook.SheetNames?.length) throw new Error('The Excel workbook has no worksheets.');
-
-    // IMPORTANT: The user's workbook can contain Production Orders on the first
-    // sheet and the Packing List on another sheet (normally Sheet2). Search ALL
-    // worksheets instead of assuming the first sheet is the Packing List.
-    let worksheet=null, rawJson=null, headerRowIndex=-1, headers=[], packingSheetName='';
+    let rawJson=null, headerRowIndex=-1, headers=[], packingSheetName='';
     for(const sheetName of workbook.SheetNames){
-      const candidate=workbook.Sheets[sheetName];
-      const candidateJson=XLSX.utils.sheet_to_json(candidate,{header:1,defval:''});
+      const candidateJson=XLSX.utils.sheet_to_json(workbook.Sheets[sheetName],{header:1,defval:''});
       for(let i=0;i<Math.min(50,candidateJson.length);i++){
-        const row=(candidateJson[i]||[]).map(normalHeader);
+        const row=(candidateJson[i]||[]).map(normalizeHeader);
         if(requiredHeaders.every(h=>row.includes(h))){
-          worksheet=candidate; rawJson=candidateJson; headerRowIndex=i; headers=row; packingSheetName=sheetName;
-          break;
+          rawJson=candidateJson; headerRowIndex=i; headers=row; packingSheetName=sheetName; break;
         }
       }
-      if(worksheet) break;
+      if(rawJson) break;
     }
-    if(!worksheet || headerRowIndex<0) throw new Error('Required Packing List headers were not found in any Excel sheet. Required: Crate No, PO Number, Profile, Item Code, Number of Crates, Pcs per Crate, Total Qty.');
-
-    const col={}; requiredHeaders.forEach(h=>col[h]=headers.indexOf(h));
-    const rowsToInsert=[];
-    const errors=[];
-    const seen=new Set();
-
+    if(!rawJson) throw new Error('Required columns not found. Excel must contain: Crate No, Profile, Item Code, Qty. Length is optional when Item Code identifies one Master Catalog item.');
+    const col={}; [...requiredHeaders,'length','ponumber'].forEach(h=>col[h]=headers.indexOf(h));
+    const get=(row,h)=>col[h]>=0?row[col[h]]:'';
+    const normProfile=v=>String(v??'').trim().toUpperCase().replace(/^AL-\s*/,'');
+    const normCode=v=>String(v??'').trim().toUpperCase();
+    const normLength=v=>String(v??'').replace(/mm/gi,'').trim().replace(/\.0$/,'');
+    const rowsToInsert=[], errors=[], seen=new Set();
     for(let i=headerRowIndex+1;i<rawJson.length;i++){
-      const row=rawJson[i];
-      if(!row || row.every(v=>String(v??'').trim()==='')) continue;
+      const row=rawJson[i]||[];
+      if(row.every(v=>String(v??'').trim()==='')) continue;
       const excelRow=i+1;
-      const get=h=>row[col[h]];
-      const crateRaw=String(get('crateno')??'').trim().replace(/^crate\s*/i,'').replace(/\.0$/,'');
-      const poNum=String(get('ponumber')??'').trim().replace(/\.0$/,'');
-      let profile=String(get('profile')??'').trim();
-      const itemCode=String(get('itemcode')??'').trim();
-      // Ignore Excel total/subtotal rows. They are not Packing List records.
-      if(!poNum && !profile && !itemCode) continue;
-      const numberOfCrates=Number(get('numberofcrates'));
-      const pcsPerCrate=Number(get('pcspercrate'));
-      const totalQty=Number(get('totalqty'));
-      if(!crateRaw||!poNum||!profile||!itemCode||!Number.isInteger(numberOfCrates)||numberOfCrates<1||!Number.isInteger(pcsPerCrate)||pcsPerCrate<1||!Number.isFinite(totalQty)||totalQty<1){
-        errors.push(`Row ${excelRow}: all 7 required values must be valid.`); continue;
+      const crateRaw=String(get(row,'crateno')??'').trim().replace(/^crate\s*/i,'').replace(/\.0$/,'');
+      const profileRaw=String(get(row,'profile')??'').trim();
+      const itemCode=String(get(row,'itemcode')??'').trim();
+      const qtyRaw=String(get(row,'qty')??'').trim();
+      const lengthRaw=normLength(get(row,'length'));
+      const poNum=String(get(row,'ponumber')??'').trim().replace(/\.0$/,'');
+      // Ignore title, note and subtotal rows; only actual rows with crate/profile/item/qty are processed.
+      if(!crateRaw&&!profileRaw&&!itemCode&&!qtyRaw) continue;
+      // Ignore unrelated/incomplete rows rather than treating them as packing records.
+      if(!crateRaw||!profileRaw||!itemCode||!qtyRaw) continue;
+      const qty=Number(String(qtyRaw).replace(/,/g,''));
+      if(!Number.isFinite(qty)||qty<=0){
+        errors.push(`Row ${excelRow}: Qty must be a positive number.`); continue;
       }
-      if(totalQty!==numberOfCrates*pcsPerCrate){errors.push(`Row ${excelRow}: Total Qty must equal Number of Crates × Pcs per Crate.`);continue;}
-      if(profile.toUpperCase().startsWith('AL-')) profile=profile.substring(3).trim();
-      const normalizeProfile=v=>String(v??'').trim().toUpperCase().replace(/^AL-\s*/,'');
-
-      const catalogMatches=masterData.filter(m=>normalizeProfile(m.profile)===normalizeProfile(profile) && String(m.itemCode||'').trim().toUpperCase()===itemCode.toUpperCase());
-      if(catalogMatches.length===0){errors.push(`Row ${excelRow}: Profile ${profile} + Item Code ${itemCode} was not found in Master Catalog.`);continue;}
-      if(catalogMatches.length>1){errors.push(`Row ${excelRow}: Profile ${profile} + Item Code ${itemCode} matches multiple Master Catalog lengths. Excel has no Length column, so this row was not imported for safety.`);continue;}
-      const cat=catalogMatches[0];
-      const length=cleanLen(cat.length);
+      if(!Number.isInteger(qty)){errors.push(`Row ${excelRow}: Qty must be a whole number.`);continue;}
+      const matches=masterData.filter(m=>
+        normCode(m.itemCode)===normCode(itemCode) &&
+        (!profileRaw || normProfile(m.profile)===normProfile(profileRaw)) &&
+        (!lengthRaw || normLength(cleanLen(m.length))===lengthRaw)
+      );
+      if(!matches.length){
+        errors.push(`Row ${excelRow}: ${profileRaw} / ${itemCode}${lengthRaw?` / ${lengthRaw} mm`:''} not found in Master Catalog.`);continue;
+      }
+      if(matches.length>1){
+        errors.push(`Row ${excelRow}: ${itemCode} matches multiple Master Catalog entries. Add Length to Excel to identify the correct item.`);continue;
+      }
+      const cat=matches[0], profile=String(cat.profile||profileRaw).trim(), length=cleanLen(cat.length);
+      if(!length){errors.push(`Row ${excelRow}: Master Catalog length is missing for ${itemCode}.`);continue;}
+      const crateNo=`Crate ${crateRaw}`;
+      const uniqueKey=`${uploadMonth}|${uploadContainer}|${crateNo}|${profile}|${itemCode}|${length}`.toLowerCase();
+      if(seen.has(uniqueKey)){errors.push(`Row ${excelRow}: duplicate crate/profile/item entry in this Excel file (${crateRaw}).`);continue;}
+      seen.add(uniqueKey);
       const unitWeight=Number(cat.unitWeight)||0;
-      if(!length){errors.push(`Row ${excelRow}: Master Catalog length is missing for ${profile} / ${itemCode}.`);continue;}
-
-      const hasSuffix=/-[a-z]+$/i.test(crateRaw);
-      if(hasSuffix && numberOfCrates!==1){errors.push(`Row ${excelRow}: Crate No ${crateRaw} already has a suffix; use Number of Crates = 1.`);continue;}
-      const crateNames=hasSuffix?[crateRaw]:Array.from({length:numberOfCrates},(_,k)=>numberOfCrates>1?`${crateRaw}-${toRoman(k+1)}`:crateRaw);
-      for(const crateName of crateNames){
-        const uniqueKey=`${uploadMonth}|${uploadContainer}|${poNum}|${crateName}|${profile}|${itemCode}|${length}`.toLowerCase();
-        if(seen.has(uniqueKey)){errors.push(`Row ${excelRow}: duplicate crate/profile/item entry in this Excel file (${crateName}).`);continue;}
-        seen.add(uniqueKey);
-        const netWeight=Number((pcsPerCrate*unitWeight).toFixed(2));
-        rowsToInsert.push({pl_number:defaultPlNum,po_number:poNum,shipment_month:uploadMonth,container:uploadContainer,crate_no:`Crate ${crateName}`,profile,item_code:itemCode,length,box_qty:1,pcs_qty:pcsPerCrate,net_weight:netWeight,gross_weight:netWeight,packing_date:uploadDate});
-      }
+      const weight=Number((qty*unitWeight).toFixed(3));
+      rowsToInsert.push({
+        pl_number:defaultPlNum,
+        po_number:poNum||null,
+        shipment_month:uploadMonth,
+        container:uploadContainer,
+        crate_no:crateNo,
+        profile,
+        item_code:itemCode,
+        length,
+        box_qty:1,
+        pcs_qty:qty,
+        net_weight:weight,
+        gross_weight:weight,
+        packing_date:uploadDate
+      });
     }
-
     if(errors.length) throw new Error(errors.slice(0,8).join(' | ')+(errors.length>8?` | +${errors.length-8} more errors`:''));
     if(!rowsToInsert.length) throw new Error('No valid packing rows were found.');
-
-    // Safety check: do not insert records that already exist for the selected PL target.
-    const {data:existing,error:existingError}=await supabaseClient.from('packing_list').select('po_number,crate_no,profile,item_code,length,shipment_month,container').eq('shipment_month',uploadMonth).eq('container',uploadContainer);
+    // Read-only duplicate check: never overwrite, delete, or update existing records.
+    const {data:existing,error:existingError}=await supabaseClient.from('packing_list').select('crate_no,profile,item_code,length,shipment_month,container').eq('shipment_month',uploadMonth).eq('container',uploadContainer);
     if(existingError) throw existingError;
-    const existingKeys=new Set((existing||[]).map(x=>`${String(x.shipment_month||'').trim()}|${String(x.container||'').trim()}|${String(x.po_number||'').trim()}|${String(x.crate_no||'').replace(/^crate\s*/i,'').trim()}|${String(x.profile||'').trim()}|${String(x.item_code||'').trim()}|${cleanLen(x.length)}`.toLowerCase()));
-    const duplicateRows=rowsToInsert.filter(x=>existingKeys.has(`${uploadMonth}|${uploadContainer}|${x.po_number}|${x.crate_no.replace(/^crate\s*/i,'')}|${x.profile}|${x.item_code}|${cleanLen(x.length)}`.toLowerCase()));
+    const existingKeys=new Set((existing||[]).map(x=>`${String(x.shipment_month||'').trim()}|${String(x.container||'').trim()}|${String(x.crate_no||'').replace(/^crate\s*/i,'').trim()}|${String(x.profile||'').trim()}|${String(x.item_code||'').trim()}|${cleanLen(x.length)}`.toLowerCase()));
+    const duplicateRows=rowsToInsert.filter(x=>existingKeys.has(`${uploadMonth}|${uploadContainer}|${x.crate_no.replace(/^crate\s*/i,'')}|${x.profile}|${x.item_code}|${cleanLen(x.length)}`.toLowerCase()));
     if(duplicateRows.length) throw new Error(`Upload stopped safely: ${duplicateRows.length} record(s) already exist in ${uploadMonth} / ${uploadContainer}. Existing data was not changed.`);
-
     if(uploadBtn) uploadBtn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
     const {error:insertError}=await supabaseClient.from('packing_list').insert(rowsToInsert);
     if(insertError) throw insertError;
-
     const {data:plData,error:readError}=await supabaseClient.from('packing_list').select('*');
     if(readError) throw readError;
     if(plData){
@@ -5144,12 +5142,12 @@ async function processPlExcelUpload() {
     }
     fileInput.value='';
     window.onPlExcelUploadSelectionChange();
-    showToast(`${uploadMonth} / ${uploadContainer} Packing List uploaded successfully: ${rowsToInsert.length} crate-item records from sheet '${packingSheetName}'.`,`success`);
+    showToast(`${uploadMonth} / ${uploadContainer}: uploaded ${rowsToInsert.length} crate-item records from '${packingSheetName}'. Existing records were preserved.`, 'success');
     renderPackingListTable(); renderDashboard(); renderBalanceWorkTable();
-  }catch(err){
+  } catch(err) {
     console.error('Packing List Excel upload error:',err);
     showToast(`Upload failed: ${err?.message||'Invalid Excel or database error'}`,'error');
-  }finally{
+  } finally {
     if(uploadBtn){uploadBtn.innerHTML=originalBtnText;uploadBtn.disabled=false;}
   }
 }

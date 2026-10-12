@@ -784,9 +784,9 @@
             Upload target: <span id="plExcelUploadTarget">Select Date / Month / Container</span>
           </div>
           <p style="font-size:11px; color:var(--warning-color); margin-top:8px; font-weight:700;">
-            <b>Excel Upload – Required Columns (7 only):</b> Crate No | PO Number | Profile | Item Code | Number of Crates | Pcs per Crate | Total Qty<br>
-            <span style="color:#0369a1;">Date / Month / Container / PL Number / Length / Weight are NOT required in Excel. The selected Date + Month + Container above are applied to every uploaded row. Length + Unit Weight are read from Master Catalog.</span><br>
-            <span style="color:#0e6b75;">If Number of Crates is greater than 1, crate IDs are automatically created as 11-i / 11-ii / 11-iii...</span>
+            <b>Excel Upload – Required Columns (4 only):</b> Crate No | Profile | Item Code | Qty<br>
+            <span style="color:#0369a1;">Length is optional when Item Code + Profile match one Master Catalog item. If an item has multiple lengths, include Length (mm). PO Number is optional. Upload Date + Month + Container selected above are applied to every imported row. Weight and length are taken from Master Catalog.</span><br>
+            <span style="color:#0e6b75;">Only rows with the required values are imported. Other blank/title/subtotal rows are ignored. Existing records are never overwritten.</span>
           </p>
         </div>
       </div>
