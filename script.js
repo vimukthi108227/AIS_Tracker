@@ -2072,7 +2072,9 @@ function renderRejectTable() {
             <div><label for="rejectItemCodeFilter" style="display:block;font-weight:800;margin-bottom:6px;color:var(--primary-dark);">3. Filter by Item Code</label><select id="rejectItemCodeFilter" onchange="renderRejectTable()" style="padding:8px 12px;border-radius:6px;border:1px solid var(--accent-color);font-weight:700;width:100%;"><option value="">All Item Codes</option></select></div>
           </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;font-weight:800;font-size:13px;">
-            <div style="background:#dbeafe;color:#075985;padding:9px 14px;border-radius:7px;">Rejected Pcs: <span id="rejSumPcs">0</span> Pcs</div>
+            <div style="background:#dbeafe;color:#075985;padding:9px 14px;border-radius:7px;">Total Rejected Pcs: <span id="rejSumPcs">0</span> Pcs</div>
+            <div style="background:#fef3c7;color:#92400e;padding:9px 14px;border-radius:7px;"><i class="fa-solid fa-industry"></i> Plant Reject Pcs: <span id="rejSumPlantPcs">0</span> Pcs</div>
+            <div style="background:#ede9fe;color:#5b21b6;padding:9px 14px;border-radius:7px;"><i class="fa-solid fa-location-dot"></i> Other Reject Pcs: <span id="rejSumOtherPcs">0</span> Pcs</div>
             <div style="background:#fee2e2;color:#9f1239;padding:9px 14px;border-radius:7px;"><i class="fa-solid fa-dumpster"></i> Rejected Weight: <span id="rejSumTotal">0.00</span> kg</div>
             <div style="background:#ecfdf5;color:#065f46;padding:9px 14px;border-radius:7px;">Records: <span id="rejSumRecords">0</span></div>
             <button type="button" class="btn btn-secondary" onclick="clearRejectFilters()" style="padding:8px 13px;"><i class="fa-solid fa-filter-circle-xmark"></i> Clear Filters</button>
@@ -2118,11 +2120,21 @@ function renderRejectTable() {
     if (chosenItem) filteredLogs = filteredLogs.filter(r => String(r.item_code || '').trim() === chosenItem);
 
     const totalPcs = filteredLogs.reduce((sum, r) => sum + (Number(r.pcs) || 0), 0);
+    const plantRejectPcs = filteredLogs
+      .filter(r => String(r.location || '').trim().toLowerCase() === 'plant')
+      .reduce((sum, r) => sum + (Number(r.pcs) || 0), 0);
+    const otherRejectPcs = filteredLogs
+      .filter(r => String(r.location || '').trim().toLowerCase() === 'other')
+      .reduce((sum, r) => sum + (Number(r.pcs) || 0), 0);
     const totalWeight = filteredLogs.reduce((sum, r) => sum + (Number(r.weight) || 0), 0);
     const pcsEl = document.getElementById('rejSumPcs');
+    const plantPcsEl = document.getElementById('rejSumPlantPcs');
+    const otherPcsEl = document.getElementById('rejSumOtherPcs');
     const weightEl = document.getElementById('rejSumTotal');
     const recordsEl = document.getElementById('rejSumRecords');
     if (pcsEl) pcsEl.textContent = totalPcs.toLocaleString();
+    if (plantPcsEl) plantPcsEl.textContent = plantRejectPcs.toLocaleString();
+    if (otherPcsEl) otherPcsEl.textContent = otherRejectPcs.toLocaleString();
     if (weightEl) weightEl.textContent = totalWeight.toFixed(2);
     if (recordsEl) recordsEl.textContent = filteredLogs.length.toLocaleString();
 

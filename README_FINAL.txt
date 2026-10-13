@@ -9,3 +9,5 @@ Included:
 - Existing HTML, CSS, and application data schema retained; no DROP, TRUNCATE, or bulk-delete migration is included.
 
 Important: static source and ZIP integrity checks were run. This environment cannot verify your live Supabase credentials, RLS policies, deployed website, or actual save/read operations against your production database. Please deploy to a test copy first and confirm a small test record saves and reloads before replacing the live deployment. Keep a Supabase backup before testing stock movements.
+
+Reject Tracker update: Month/Profile/Item Code filters now show Total Rejected Pcs, Plant Reject Pcs, Other Reject Pcs, total rejected weight, and record count separately. Display-only calculations use existing reject_logs.location values; no database schema or existing records are changed.
