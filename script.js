@@ -2057,7 +2057,100 @@ async function saveRejectEntry() {
     document.getElementById('rejectEntryForm').reset(); document.getElementById('rejDate').value=d;
   } catch(e){ console.error(e); showToast(e.message||'Reject save failed.','error'); } finally { isAppBusy=false; }
 }
-function renderRejectTable() { try { const subTab = document.getElementById('rejectEntrySubTab'); let filterDiv = document.getElementById('rejectFilterContainer'); if (!filterDiv && subTab) { filterDiv = document.createElement('div'); filterDiv.id = 'rejectFilterContainer'; filterDiv.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; background: rgba(16, 185, 129, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px dashed var(--emerald-border); flex-wrap: wrap; gap: 15px;"><div><label style="font-weight:800; margin-right:10px; color:var(--primary-dark);"><i class="fa-solid fa-calendar-days"></i> Filter by Month:</label><input type="month" id="rejectMonthFilter" onchange="renderRejectTable()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent-color); font-weight: 700;"></div><div style="display:flex; gap: 12px; font-weight: 800; font-size: 13.5px; flex-wrap: wrap;"><div style="background: #fee2e2; color: #9f1239; padding: 8px 14px; border-radius: 6px;"><i class="fa-solid fa-dumpster"></i> Total: <span id="rejSumTotal">0.00</span> kg</div></div></div>`; const tableContainer = subTab.querySelector('.table-container'); subTab.insertBefore(filterDiv, tableContainer); const now = new Date(); document.getElementById('rejectMonthFilter').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; } const selectedMonthVal = document.getElementById('rejectMonthFilter') ? document.getElementById('rejectMonthFilter').value : ''; let filteredLogs = rejectLogs; let sumTotal = 0; if (selectedMonthVal) filteredLogs = rejectLogs.filter(r => r.reject_date && r.reject_date.startsWith(selectedMonthVal)); filteredLogs.forEach(r => { sumTotal += (parseFloat(r.weight) || 0); }); if (document.getElementById('rejSumTotal')) document.getElementById('rejSumTotal').textContent = sumTotal.toFixed(2); const tb = document.getElementById('rejectTableBody'); if(!tb) return; let html = ''; if(filteredLogs.length===0) html = `<tr><td colspan="10" style="text-align:center;">No Reject Records Found.</td></tr>`; else { filteredLogs.forEach(r => { html += `<tr><td>${r.reject_date}</td><td>${r.shift}</td><td>${r.location}</td><td>${r.stage}</td><td><b>${r.profile}</b></td><td>${r.item_code}</td><td>${r.length}</td><td>${r.pcs}</td><td>${r.weight} kg</td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-danger" onclick="deleteRejectItem(${r.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock"></i>`}</td></tr>`; }); } tb.innerHTML = html; } catch(e) {} }
+function renderRejectTable() {
+  try {
+    const subTab = document.getElementById('rejectEntrySubTab');
+    let filterDiv = document.getElementById('rejectFilterContainer');
+    if (!filterDiv && subTab) {
+      filterDiv = document.createElement('div');
+      filterDiv.id = 'rejectFilterContainer';
+      filterDiv.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:12px;background:rgba(16,185,129,.05);padding:15px;border-radius:8px;margin-bottom:15px;border:1px dashed var(--emerald-border);">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;align-items:end;">
+            <div><label for="rejectMonthFilter" style="display:block;font-weight:800;margin-bottom:6px;color:var(--primary-dark);"><i class="fa-solid fa-calendar-days"></i> 1. Filter by Month</label><input type="month" id="rejectMonthFilter" onchange="renderRejectTable()" style="padding:8px 12px;border-radius:6px;border:1px solid var(--accent-color);font-weight:700;"></div>
+            <div><label for="rejectProfileFilter" style="display:block;font-weight:800;margin-bottom:6px;color:var(--primary-dark);">2. Filter by Profile</label><select id="rejectProfileFilter" onchange="renderRejectTable()" style="padding:8px 12px;border-radius:6px;border:1px solid var(--accent-color);font-weight:700;width:100%;"><option value="">All Profiles</option></select></div>
+            <div><label for="rejectItemCodeFilter" style="display:block;font-weight:800;margin-bottom:6px;color:var(--primary-dark);">3. Filter by Item Code</label><select id="rejectItemCodeFilter" onchange="renderRejectTable()" style="padding:8px 12px;border-radius:6px;border:1px solid var(--accent-color);font-weight:700;width:100%;"><option value="">All Item Codes</option></select></div>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;font-weight:800;font-size:13px;">
+            <div style="background:#dbeafe;color:#075985;padding:9px 14px;border-radius:7px;">Rejected Pcs: <span id="rejSumPcs">0</span> Pcs</div>
+            <div style="background:#fee2e2;color:#9f1239;padding:9px 14px;border-radius:7px;"><i class="fa-solid fa-dumpster"></i> Rejected Weight: <span id="rejSumTotal">0.00</span> kg</div>
+            <div style="background:#ecfdf5;color:#065f46;padding:9px 14px;border-radius:7px;">Records: <span id="rejSumRecords">0</span></div>
+            <button type="button" class="btn btn-secondary" onclick="clearRejectFilters()" style="padding:8px 13px;"><i class="fa-solid fa-filter-circle-xmark"></i> Clear Filters</button>
+          </div>
+        </div>`;
+      const tableContainer = subTab.querySelector('.table-container');
+      if (tableContainer) subTab.insertBefore(filterDiv, tableContainer);
+      else subTab.appendChild(filterDiv);
+      const now = new Date();
+      const monthInput = document.getElementById('rejectMonthFilter');
+      if (monthInput) monthInput.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    const monthVal = document.getElementById('rejectMonthFilter')?.value || '';
+    const profileSelect = document.getElementById('rejectProfileFilter');
+    const itemSelect = document.getElementById('rejectItemCodeFilter');
+    const oldProfile = profileSelect?.value || '';
+    const oldItem = itemSelect?.value || '';
+
+    const monthLogs = monthVal
+      ? rejectLogs.filter(r => String(r.reject_date || '').startsWith(monthVal))
+      : rejectLogs.slice();
+
+    const profiles = [...new Set(monthLogs.map(r => String(r.profile || '').trim()).filter(Boolean))]
+      .sort((a,b) => a.localeCompare(b, undefined, {numeric:true, sensitivity:'base'}));
+    if (profileSelect) {
+      profileSelect.innerHTML = '<option value="">All Profiles</option>' +
+        profiles.map(p => `<option value="${String(p).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}">${String(p).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</option>`).join('');
+      if (profiles.includes(oldProfile)) profileSelect.value = oldProfile;
+    }
+    const chosenProfile = profileSelect?.value || '';
+    const profileLogs = chosenProfile ? monthLogs.filter(r => String(r.profile || '').trim() === chosenProfile) : monthLogs;
+    const itemCodes = [...new Set(profileLogs.map(r => String(r.item_code || '').trim()).filter(Boolean))]
+      .sort((a,b) => a.localeCompare(b, undefined, {numeric:true, sensitivity:'base'}));
+    if (itemSelect) {
+      itemSelect.innerHTML = '<option value="">All Item Codes</option>' +
+        itemCodes.map(ic => `<option value="${String(ic).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}">${String(ic).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</option>`).join('');
+      if (itemCodes.includes(oldItem)) itemSelect.value = oldItem;
+    }
+    const chosenItem = itemSelect?.value || '';
+
+    let filteredLogs = profileLogs;
+    if (chosenItem) filteredLogs = filteredLogs.filter(r => String(r.item_code || '').trim() === chosenItem);
+
+    const totalPcs = filteredLogs.reduce((sum, r) => sum + (Number(r.pcs) || 0), 0);
+    const totalWeight = filteredLogs.reduce((sum, r) => sum + (Number(r.weight) || 0), 0);
+    const pcsEl = document.getElementById('rejSumPcs');
+    const weightEl = document.getElementById('rejSumTotal');
+    const recordsEl = document.getElementById('rejSumRecords');
+    if (pcsEl) pcsEl.textContent = totalPcs.toLocaleString();
+    if (weightEl) weightEl.textContent = totalWeight.toFixed(2);
+    if (recordsEl) recordsEl.textContent = filteredLogs.length.toLocaleString();
+
+    const tb = document.getElementById('rejectTableBody');
+    if (!tb) return;
+    let tableHtml = '';
+    if (!filteredLogs.length) {
+      tableHtml = '<tr><td colspan="10" style="text-align:center;padding:22px;">No Reject Records Found for the selected filters.</td></tr>';
+    } else {
+      filteredLogs.forEach(r => {
+        const esc = v => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        tableHtml += `<tr><td>${esc(r.reject_date)}</td><td>${esc(r.shift)}</td><td>${esc(r.location)}</td><td>${esc(r.stage)}</td><td><b>${esc(r.profile)}</b></td><td>${esc(r.item_code)}</td><td>${esc(r.length)}</td><td>${(Number(r.pcs)||0).toLocaleString()}</td><td>${(Number(r.weight)||0).toFixed(2)} kg</td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-danger" onclick="deleteRejectItem(${Number(r.id)})" aria-label="Delete reject record"><i class="fa-solid fa-trash"></i></button>` : '<i class="fa-solid fa-lock"></i>'}</td></tr>`;
+      });
+    }
+    tb.innerHTML = tableHtml;
+  } catch(e) {
+    console.error('Reject Tracker filter rendering failed:', e);
+  }
+}
+window.clearRejectFilters = function() {
+  const month = document.getElementById('rejectMonthFilter');
+  const profile = document.getElementById('rejectProfileFilter');
+  const item = document.getElementById('rejectItemCodeFilter');
+  if (month) month.value = '';
+  if (profile) profile.value = '';
+  if (item) item.value = '';
+  renderRejectTable();
+};
 window.deleteRejectItem = function(id) { if(currentUserRole !== 'Admin') return; showConfirm("Delete this Reject record?", async () => {
   const row=rejectLogs.find(r=>Number(r.id)===Number(id)); if(!row) return;
   try {
