@@ -2739,3 +2739,114 @@ body.dark-mode #dashboardTab .pending-po-metric.still{background:#2a1c26;border-
 #packingPlannerTab #ppContTierView{border-color:#99c9d8;background:#f4fbff;font-weight:700}
 #packingPlannerTab #ppV217TierNote{margin-top:8px;border-color:#9bded2;background:#effcf8;color:#165b5b}
 #packingPlannerTab #ppContainerVisual g[style*="display: none"]{pointer-events:none}
+
+
+/* AIS Tracker — Alumex brand polish (teal + leaf green, restrained enterprise UI) */
+:root{
+  --primary-color:#176173;
+  --primary-dark:#104653;
+  --accent-color:#5ebb4e;
+  --accent-glow:rgba(94,187,78,.22);
+  --emerald-light:#f1f8f6;
+  --emerald-border:#d0e5df;
+  --card-bg:rgba(255,255,255,.97);
+  --border-color:#d7e2e8;
+  --text-color:#172b35;
+  --text-muted:#5d707b;
+  --success-color:#368a45;
+  --info-color:#147a98;
+  --bg-gradient:linear-gradient(135deg,#f4f8fa 0%,#edf5f5 48%,#f4f8f0 100%);
+  --shadow-sm:0 3px 10px rgba(16,70,83,.045);
+  --shadow-md:0 8px 24px rgba(16,70,83,.075);
+  --shadow-lg:0 16px 36px rgba(16,70,83,.12);
+}
+body.dark-mode{
+  --primary-color:#5ebb4e;
+  --primary-dark:#176173;
+  --accent-color:#80d66f;
+  --accent-glow:rgba(128,214,111,.2);
+  --emerald-light:#172b35;
+  --emerald-border:#29444e;
+  --card-bg:rgba(17,31,39,.97);
+  --border-color:#304650;
+  --text-color:#edf5f7;
+  --text-muted:#a8bac2;
+  --success-color:#80d66f;
+  --info-color:#63bdd0;
+  --bg-gradient:linear-gradient(135deg,#0c1b23 0%,#102832 55%,#122b27 100%);
+}
+body{letter-spacing:.05px}
+.header,.card,.kpi-card,.chart-card-animated{
+  border-color:var(--emerald-border)!important;
+  box-shadow:var(--shadow-md)!important;
+}
+.header{
+  background:rgba(255,255,255,.96)!important;
+  border-top:3px solid #5ebb4e!important;
+}
+body.dark-mode .header{background:rgba(17,31,39,.97)!important}
+.header-titles h1{color:#176173!important}
+body.dark-mode .header-titles h1{color:#edf5f7!important}
+.tab-btn.active{
+  background:linear-gradient(135deg,#176173,#104653)!important;
+  box-shadow:0 5px 14px rgba(23,97,115,.22)!important;
+}
+.btn{
+  box-shadow:0 3px 9px rgba(16,70,83,.13);
+  transition:background .18s ease,box-shadow .18s ease,transform .18s ease,opacity .18s ease;
+}
+.btn:hover:not(:disabled){box-shadow:0 6px 15px rgba(16,70,83,.18)}
+.btn:disabled{opacity:.68!important;cursor:wait!important;transform:none!important}
+th{background:linear-gradient(180deg,#104653 0%,#176173 100%)!important}
+.form-group label{color:#176173}
+body.dark-mode .form-group label{color:#dce9ed}
+.stage-section{border-left:4px solid #5ebb4e!important}
+#adminEntryTab .stage-section h4{color:#176173!important}
+body.dark-mode #adminEntryTab .stage-section h4{color:#80d66f!important}
+#saveDailyProductionBtn{min-width:190px}
+#saveDailyProductionBtn[aria-busy="true"]{background:linear-gradient(135deg,#526a73,#344c55)!important}
+.custom-toast{backdrop-filter:blur(12px);border-radius:12px!important;box-shadow:0 12px 30px rgba(16,70,83,.15)!important}
+input:focus,select:focus{box-shadow:0 0 0 3px rgba(94,187,78,.18)!important}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+}
+
+
+/* Alumex Smart UI refinement — consistent spacing, depth, focus and status clarity */
+:root{
+  --alumex-teal:#176173;
+  --alumex-teal-deep:#104653;
+  --alumex-green:#5ebb4e;
+  --alumex-mist:#f3f8f8;
+}
+body{background-image:var(--bg-gradient);background-attachment:fixed}
+#mainContent{scroll-margin-top:16px}
+.card,.kpi-card,.chart-card-animated{
+  border-radius:15px!important;
+  overflow:hidden;
+  transition:box-shadow .2s ease,border-color .2s ease,transform .2s ease;
+}
+.card:hover,.kpi-card:hover,.chart-card-animated:hover{border-color:#c2ddd6!important;box-shadow:0 12px 30px rgba(16,70,83,.095)!important}
+.card>h3,.card h3{letter-spacing:.05px}
+.card>h3 i,.card h3 i{color:var(--alumex-green)}
+.nav-tabs,.tabs-container{gap:7px}
+.tab-btn{border-radius:10px!important;transition:background .18s ease,color .18s ease,box-shadow .18s ease}
+.tab-btn:not(.active):hover{background:rgba(23,97,115,.07)!important;color:var(--alumex-teal)!important}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid rgba(94,187,78,.42)!important;outline-offset:2px}
+input,select,textarea{border-radius:9px!important;transition:border-color .16s ease,box-shadow .16s ease}
+input:hover,select:hover,textarea:hover{border-color:#9dbeb9}
+.table-container{border-radius:11px;overflow:auto;border:1px solid var(--border-color)}
+table{border-collapse:separate;border-spacing:0}
+thead th{position:sticky;top:0;z-index:1;letter-spacing:.12px}
+tbody tr{transition:background .14s ease}
+tbody tr:hover{background:rgba(94,187,78,.055)!important}
+#adminEntryTab .stage-section{border-radius:13px!important;background:linear-gradient(145deg,rgba(23,97,115,.035),rgba(94,187,78,.055))!important;border:1px solid var(--emerald-border)!important;border-left:4px solid var(--alumex-green)!important}
+#productionCardboardAvailability{border-radius:9px!important;line-height:1.5}
+#productionCardboardAvailability.danger{background:#fff7ed!important;color:#9a3412!important;border-color:#fed7aa!important}
+#productionCardboardAvailability.ok{background:#f0fdf4!important;color:#166534!important;border-color:#bbf7d0!important}
+#saveDailyProductionBtn{border-radius:10px!important;font-weight:800;letter-spacing:.1px;background:linear-gradient(135deg,#176173,#104653)!important;border:1px solid rgba(255,255,255,.2)}
+#saveDailyProductionBtn:not(:disabled):hover{background:linear-gradient(135deg,#1c7488,#145463)!important;transform:translateY(-1px)}
+#saveDailyProductionBtn[aria-busy="true"]{background:linear-gradient(135deg,#647982,#425b64)!important}
+.badge,.stock-badge,.pl-balance-badge,.cb-balance-pill{font-variant-numeric:tabular-nums}
+@media(max-width:760px){.card,.kpi-card,.chart-card-animated{border-radius:11px!important}.table-container{max-width:100%}}
+@media(prefers-reduced-motion:reduce){.card,.kpi-card,.chart-card-animated,.tab-btn,button,input,select,textarea{transition:none!important}}

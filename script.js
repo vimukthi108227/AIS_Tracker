@@ -670,10 +670,10 @@ async function loadDataFromSupabase(isSilent = false) {
     const uniqueData = []; const seenMap = new Map();
     catDataRaw.forEach(item => {
       const localExt = localExtras.find(e => String(e.p) === String(item.profile) && cleanLen(e.l) === cleanLen(item.length) && String(e.i) === String(item.item_code)) || {};
-      const obj = { db_id: item.id, profile: String(item.profile).trim(), itemCode: String(item.item_code || '').trim(), material: item.material || localExt.mat || '-', length: cleanLen(item.length), exLength: item.ex_length || localExt.ex || '', unitWeight: parseFloat(item.unit_weight) || 0, cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, boxCapacity: item.box_capacity || localExt.cap || 100 };
+      const obj = { db_id: item.id, db_ids: [item.id], dbRows: [{id:item.id,cutQty:Number(item.cut_qty)||0,punchQty:Number(item.punch_qty)||0,wrapQty:Number(item.wrap_qty)||0,boxQty:Number(item.box_qty)||0,crateQty:Number(item.crate_qty)||0}], profile: String(item.profile).trim(), itemCode: String(item.item_code || '').trim(), material: item.material || localExt.mat || '-', length: cleanLen(item.length), exLength: item.ex_length || localExt.ex || '', unitWeight: parseFloat(item.unit_weight) || 0, cutQty: Number(item.cut_qty)||0, punchQty: Number(item.punch_qty)||0, wrapQty: Number(item.wrap_qty)||0, boxQty: Number(item.box_qty)||0, crateQty: Number(item.crate_qty)||0, boxCapacity: item.box_capacity || localExt.cap || 100 };
       const uniqueKey = `${obj.profile}_${obj.itemCode}_${obj.length}`;
       if (!seenMap.has(uniqueKey)) { seenMap.set(uniqueKey, obj); uniqueData.push(obj); } 
-      else { const ex = seenMap.get(uniqueKey); ex.cutQty += obj.cutQty; ex.punchQty += obj.punchQty; ex.wrapQty += obj.wrapQty; ex.boxQty += obj.boxQty; ex.crateQty += obj.crateQty; if (!ex.itemCode || ex.itemCode === '-' || ex.itemCode === '') ex.itemCode = obj.itemCode; }
+      else { const ex = seenMap.get(uniqueKey); ex.db_ids.push(item.id); ex.dbRows.push({id:item.id,cutQty:obj.cutQty,punchQty:obj.punchQty,wrapQty:obj.wrapQty,boxQty:obj.boxQty,crateQty:obj.crateQty}); ex.cutQty += obj.cutQty; ex.punchQty += obj.punchQty; ex.wrapQty += obj.wrapQty; ex.boxQty += obj.boxQty; ex.crateQty += obj.crateQty; if (!ex.itemCode || ex.itemCode === '-' || ex.itemCode === '') ex.itemCode = obj.itemCode; }
     });
     masterData = uniqueData.sort((a, b) => (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) || (parseFloat(a.length)||0) - (parseFloat(b.length)||0));
     // Item Code for Production Orders is resolved from Master Catalog by Profile + Cut Length.
@@ -3752,18 +3752,23 @@ function onProfileSelect() { const profile = document.getElementById('selectProf
 function onItemCodeSelect() { const profile = document.getElementById('selectProfile').value; const itemCode = document.getElementById('selectItemCode').value; const lengthSelect = document.getElementById('selectLength'); lengthSelect.innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile || !itemCode) { onLengthSelect(); return; } const matches = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode === itemCode); matches.forEach(m => lengthSelect.appendChild(new Option(`${m.length} mm`, m.length))); if(matches.length === 1) { lengthSelect.value = matches[0].length; } onLengthSelect(); }
 function onLengthSelect() { const profile = document.getElementById('selectProfile').value; const itemCode = document.getElementById('selectItemCode').value; const length = document.getElementById('selectLength').value; const punchGroup = document.getElementById('punchGroup'); if(!profile || !itemCode || !length) { if(typeof updateProductionCardboardAvailability==='function') updateProductionCardboardAvailability(); return; } const matchedCat = masterData.find(m => String(m.profile).trim() === profile && m.itemCode === itemCode && cleanLen(m.length) === cleanLen(length)); if (matchedCat && isPunchBypassed(matchedCat.profile, matchedCat.length)) { punchGroup.style.display = 'none'; document.getElementById('punchQty').value = 0; } else { punchGroup.style.display = 'flex'; } if(typeof updateProductionCardboardAvailability==='function') updateProductionCardboardAvailability(); }
 function checkDateStatus() { const dateVal = document.getElementById('entryDate').value; const shiftVal = document.getElementById('shift').value; const banner = document.getElementById('entryStatusBanner'); if (!banner) return; if (!dateVal) { banner.style.display = 'none'; return; } const existing = historyLogs.filter(h => h.date === dateVal && h.shift === shiftVal); if (existing.length > 0) { banner.className = "status-banner status-red"; banner.style.display = "flex"; banner.innerHTML = `<div class="status-banner-content"><div class="status-banner-icon"><i class="fa-solid fa-triangle-exclamation"></i></div><div><div style="font-weight: 800; font-size: 15px;">Entries exist for ${dateVal}</div></div></div>`; } else { banner.className = "status-banner status-green"; banner.style.display = "flex"; banner.innerHTML = `<div class="status-banner-content"><div class="status-banner-icon"><i class="fa-solid fa-circle-check"></i></div><div><div style="font-weight: 800; font-size: 15px;">Ready for New Operations Entry</div></div></div>`; } }
-async function deductCardboardBoxesForProduction(profile, itemCode, length, boxesNeeded) {
-  if(boxesNeeded <= 0) return null;
-  const available=getAvailableCardboard(profile,itemCode,length);
-  if(boxesNeeded>available) throw new Error(`Not enough cardboard boxes for ${profile} / ${itemCode} / ${length} mm. Available: ${available} boxes; required: ${boxesNeeded} boxes.`);
-  const txToken=`TX-${Date.now()}-${Math.random().toString(36).slice(2,8)}`; const newEntry={cb_date:new Date().toISOString().split('T')[0],cb_type:cardboardType(profile,itemCode,length)+` | ${txToken}`,incoming:0,used:boxesNeeded};
+async function deductCardboardBoxesForProduction(profile, itemCode, length, boxesRequested) {
+  // Cardboard shortage must not block an otherwise valid Box production movement.
+  // Re-read the current balance here (not just in the form preview), then consume
+  // only what exists. If none exists, return without creating a negative balance.
+  const requested=Math.max(0,Math.floor(Number(boxesRequested)||0));
+  if(requested<=0) return null;
+  const available=Math.max(0,Math.floor(Number(getAvailableCardboard(profile,itemCode,length))||0));
+  const used=Math.min(requested,available);
+  if(used<=0) return null;
+  const txToken=`TX-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+  const newEntry={cb_date:new Date().toISOString().split('T')[0],cb_type:cardboardType(profile,itemCode,length)+` | ${txToken}`,incoming:0,used};
   const result=await supabaseClient.from('cardboard_stock').insert([newEntry]);
   if(result.error) throw new Error(dbErrorMessage(result.error,'Cardboard stock deduction failed'));
-  const localItem={id:-Date.now(),db_id:null,date:newEntry.cb_date,type:newEntry.cb_type,incoming:0,used:boxesNeeded,timestamp:new Date().toLocaleTimeString()};
+  const localItem={id:-Date.now(),db_id:null,date:newEntry.cb_date,type:newEntry.cb_type,incoming:0,used,timestamp:new Date().toLocaleTimeString()};
   cardboardStockList.unshift(localItem); saveCardboardLocally(); renderCardboardStock();
   return localItem;
 }
-
 
 function parseCardboardType(type){
   const str=String(type||'');
@@ -3857,73 +3862,170 @@ async function resetCardboardStock(){
 }
 
 async function submitDailyEntry() {
-  if(isAppBusy) return; isAppBusy=true;
+  if(isAppBusy) {
+    showToast('A save is already in progress. Please wait for it to finish.','info');
+    return;
+  }
+  isAppBusy = true;
+  const saveBtn = document.getElementById('saveDailyProductionBtn') || document.querySelector('#dailyEntryForm button[onclick="submitDailyEntry()"]');
+  const originalButtonHtml = saveBtn?.innerHTML || '<i class="fa-solid fa-floppy-disk"></i> Process Movement';
+  if(saveBtn){ saveBtn.disabled=true; saveBtn.setAttribute('aria-busy','true'); saveBtn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Saving...'; saveBtn.style.opacity='.78'; saveBtn.style.cursor='wait'; }
+
+  let updatedRows = [];
+  let insertedLog = null;
+  let databaseCommitComplete = false;
+  let cardboardDeducted = null;
+  let cardboardToDeduct = 0;
+  let item = null;
+  let newLog = null;
   try {
     if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return;
-    const dateVal=document.getElementById('entryDate').value, shiftVal=document.getElementById('shift').value,
-      profileVal=document.getElementById('selectProfile').value, itemCodeVal=document.getElementById('selectItemCode').value,
-      lengthVal=document.getElementById('selectLength').value, cutQty=parseInt(document.getElementById('cutQty').value)||0,
-      punchQty=parseInt(document.getElementById('punchQty').value)||0, wrapQty=parseInt(document.getElementById('wrapQty').value)||0,
-      enteredBoxes=Math.max(0,parseInt(document.getElementById('boxQty').value)||0), crateQty=parseInt(document.getElementById('crateQty').value)||0;
-    const availableCardboard=Math.max(0,Number(getAvailableCardboard(profileVal,itemCodeVal,lengthVal))||0);
-    // Do not block production when cardboard is insufficient. The production Box Qty is
-    // recorded as entered, while actual cardboard stock consumption is capped at what is available.
-    if(!dateVal||!profileVal||!itemCodeVal||!lengthVal) return showToast('Please select correctly.','warning');
-    const item=masterData.find(m=>String(m.profile).trim()===profileVal&&m.itemCode===itemCodeVal&&cleanLen(m.length)===cleanLen(lengthVal));
-    if(!item) return showToast('Selected catalog item was not found.','error');
+    const raw = id => String(document.getElementById(id)?.value ?? '0').trim();
+    const dateVal=raw('entryDate'), shiftVal=raw('shift'),
+      profileVal=raw('selectProfile'), itemCodeVal=raw('selectItemCode'),
+      lengthVal=raw('selectLength');
+    const cutQty=Number(raw('cutQty')||0), punchQty=Number(raw('punchQty')||0),
+      wrapQty=Number(raw('wrapQty')||0), enteredBoxes=Number(raw('boxQty')||0),
+      crateQty=Number(raw('crateQty')||0);
+
+    if(!dateVal||!profileVal||!itemCodeVal||!lengthVal)
+      return showToast('Please select date, profile, item code and length.','warning');
+    const quantities=[['Cut',cutQty],['Punch',punchQty],['Wrapping',wrapQty],['Box',enteredBoxes],['Crate',crateQty]];
+    const invalid=quantities.find(([label,value])=>!Number.isFinite(value)||value<0||!Number.isInteger(value));
+    if(invalid) return showToast(`${invalid[0]} quantity must be a whole number greater than or equal to 0.`,'warning');
+    if(quantities.every(([,value])=>value===0))
+      return showToast('Enter at least one production quantity before saving. This prevents empty/duplicate entries.','warning');
+
+    item=masterData.find(m=>String(m.profile).trim()===profileVal&&String(m.itemCode).trim()===itemCodeVal&&cleanLen(m.length)===cleanLen(lengthVal));
+    if(!item) return showToast('Selected catalog item was not found. Refresh data and try again.','error');
 
     const previous={cutQty:Number(item.cutQty)||0,punchQty:Number(item.punchQty)||0,wrapQty:Number(item.wrapQty)||0,boxQty:Number(item.boxQty)||0,crateQty:Number(item.crateQty)||0};
     let next={...previous};
-    const boxPcs=enteredBoxes*(item.boxCapacity||100);
-    next.cutQty+=cutQty;
-    if(punchQty>0){ next.cutQty=Math.max(0,next.cutQty-punchQty); next.punchQty+=punchQty; }
+    const boxCapacity=Math.max(1,Number(item.boxCapacity)||100);
+    const boxPcs=enteredBoxes*boxCapacity;
+
+    // Apply and validate movements in the real process order:
+    // Cut -> Punch (except bypass profiles) -> Wrapping -> Box -> Crate.
+    next.cutQty += cutQty;
+    if(punchQty>0){
+      if(punchQty>next.cutQty)
+        return showToast(`Punching needs ${punchQty} Pcs, but Cut stock after today's Cut entry is only ${next.cutQty} Pcs.`,'error');
+      next.cutQty -= punchQty;
+      next.punchQty += punchQty;
+    }
     if(wrapQty>0){
-      if(isPunchBypassed(profileVal,lengthVal)||next.punchQty<=0) next.cutQty=Math.max(0,next.cutQty-wrapQty);
-      else if(next.punchQty>=wrapQty) next.punchQty-=wrapQty;
-      else { const rem=wrapQty-next.punchQty; next.punchQty=0; next.cutQty=Math.max(0,next.cutQty-rem); }
+      const bypassPunch=isPunchBypassed(profileVal,lengthVal);
+      const sourceStage=bypassPunch?'Cut':'Punch';
+      const sourceQty=bypassPunch?next.cutQty:next.punchQty;
+      if(wrapQty>sourceQty)
+        return showToast(`Wrapping needs ${wrapQty} Pcs, but available ${sourceStage} stock is only ${sourceQty} Pcs.`,'error');
+      if(bypassPunch) next.cutQty-=wrapQty;
+      else next.punchQty-=wrapQty;
       next.wrapQty+=wrapQty;
     }
-    if(boxPcs>0){ next.wrapQty=Math.max(0,next.wrapQty-boxPcs); next.boxQty+=boxPcs; }
-    if(crateQty>0){ next.boxQty=Math.max(0,next.boxQty-crateQty); next.crateQty+=crateQty; }
-
-    const newLog={log_date:dateVal,shift:shiftVal,profile:profileVal,length:cleanLen(lengthVal),cut_qty:cutQty,punch_qty:punchQty,wrap_qty:wrapQty,box_qty:boxPcs,crate_qty:crateQty,log_time:new Date().toLocaleTimeString()};
-    let stockUpdated=false, insertedLog=null, cardboardDeducted=null;
-    try {
-      // Reserve only the cardboard that actually exists. If production needs more boxes,
-      // the remaining production quantity is still recorded, but cardboard stock bottoms at 0.
-      const cardboardToDeduct=Math.min(enteredBoxes,availableCardboard);
-      if(cardboardToDeduct>0) cardboardDeducted=await deductCardboardBoxesForProduction(profileVal,itemCodeVal,lengthVal,cardboardToDeduct);
-      if(item.db_id){
-        await dbUpdate('master_catalog',{cut_qty:next.cutQty,punch_qty:next.punchQty,wrap_qty:next.wrapQty,box_qty:next.boxQty,crate_qty:next.crateQty},item.db_id,'Production stock save failed');
-        stockUpdated=true;
-      } else throw new Error('Production stock save failed: this catalog item has no database ID. Refresh data and try again.');
-      insertedLog=await dbInsert('history_logs',newLog,'Production history save failed');
-    } catch(err) {
-      if(stockUpdated&&item.db_id){ try{ await dbUpdate('master_catalog',previousToDb(previous),item.db_id,'Production rollback failed'); }catch(rb){ console.error(rb); } }
-      // If later production save failed, reverse the cardboard transaction we just made.
-      if(cardboardDeducted){
-        try {
-          // The insert helper intentionally does not request SELECT/RETURNING; remove the most recent matching local transaction if possible.
-          const idx=cardboardStockList.indexOf(cardboardDeducted); if(idx>=0){cardboardStockList.splice(idx,1);saveCardboardLocally();}
-          const q=await supabaseClient.from('cardboard_stock').delete().eq('cb_date',cardboardDeducted.date).eq('cb_type',cardboardDeducted.type).eq('used',cardboardToDeduct);
-          if(q.error) console.warn('Cardboard rollback warning:',q.error);
-        } catch(rb){ console.warn('Cardboard rollback failed:',rb); }
-      }
-      throw err;
+    if(boxPcs>0){
+      if(boxPcs>next.wrapQty)
+        return showToast(`Box packing needs ${boxPcs} Pcs (${enteredBoxes} boxes × ${boxCapacity} Pcs/box), but Wrapping stock is only ${next.wrapQty} Pcs.`,'error');
+      next.wrapQty-=boxPcs;
+      next.boxQty+=boxPcs;
     }
-    Object.assign(item,{cutQty:next.cutQty,punchQty:next.punchQty,wrapQty:next.wrapQty,boxQty:next.boxQty,crateQty:next.crateQty});
+    if(crateQty>0){
+      if(crateQty>next.boxQty)
+        return showToast(`Crating needs ${crateQty} Pcs, but Box stock after today's Box entry is only ${next.boxQty} Pcs.`,'error');
+      next.boxQty-=crateQty;
+      next.crateQty+=crateQty;
+    }
+
+    const availableCardboard=Math.max(0,Number(getAvailableCardboard(profileVal,itemCodeVal,lengthVal))||0);
+    // Box quantity is production data, not a cardboard stock limit. When cardboard
+    // is short, save the full valid Box movement and consume only available boxes.
+    cardboardToDeduct=Math.min(enteredBoxes,availableCardboard);
+    let shortageBoxes=Math.max(0,enteredBoxes-cardboardToDeduct);
+
+    newLog={log_date:dateVal,shift:shiftVal,profile:profileVal,length:cleanLen(lengthVal),cut_qty:cutQty,punch_qty:punchQty,wrap_qty:wrapQty,box_qty:boxPcs,crate_qty:crateQty,log_time:new Date().toLocaleTimeString()};
+
+    // If the catalog display combines duplicate DB rows, consolidate the displayed
+    // total into the canonical row while zeroing only the matching duplicate stock
+    // quantities. This preserves the total and prevents the next sync doubling it.
+    let catalogRows = Array.isArray(item.dbRows) && item.dbRows.length ? item.dbRows.map(r=>({...r})) : [{id:item.db_id,...previous}];
+    if(!item.db_id || String(item.db_id).startsWith('-'))
+      throw new Error('This Master Catalog item is not linked to a saved Supabase row. Sync data and retry.');
+    const duplicateIds = new Set((item.db_ids||[item.db_id]).map(String));
+    if(catalogRows.length>1){
+      const sums={cutQty:0,punchQty:0,wrapQty:0,boxQty:0,crateQty:0};
+      catalogRows.forEach(r=>Object.keys(sums).forEach(k=>sums[k]+=Number(r[k])||0));
+      const matchesTotals=Object.keys(previous).every(k=>sums[k]===previous[k]);
+      if(!matchesTotals) throw new Error('Master Catalog stock changed or needs refresh. Please refresh data before saving this movement.');
+    }
+
+    // Record only the actual cardboard used. The helper rechecks the current balance
+    // and caps the deduction; lack of cardboard alone never blocks the Box movement.
+    cardboardDeducted=await deductCardboardBoxesForProduction(profileVal,itemCodeVal,lengthVal,enteredBoxes);
+    cardboardToDeduct=cardboardDeducted ? (Number(cardboardDeducted.used)||0) : 0;
+    shortageBoxes=Math.max(0,enteredBoxes-cardboardToDeduct);
+
+    for(const row of catalogRows){
+      const isCanonical=String(row.id)===String(item.db_id);
+      const values=isCanonical ? next : {cutQty:0,punchQty:0,wrapQty:0,boxQty:0,crateQty:0};
+      await dbUpdate('master_catalog',previousToDb(values),row.id,'Production stock save failed');
+      updatedRows.push({id:row.id,before:{cutQty:row.cutQty,punchQty:row.punchQty,wrapQty:row.wrapQty,boxQty:row.boxQty,crateQty:row.crateQty}});
+    }
+    insertedLog=await dbInsert('history_logs',newLog,'Production history save failed');
+    databaseCommitComplete = true;
+    // Clear quantities immediately after the database commit so a later UI/render
+    // exception cannot leave the just-saved quantities ready for an accidental retry.
+    ['cutQty','punchQty','wrapQty','boxQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
+    updateProductionCardboardAvailability();
+
+    Object.assign(item,next);
+    item.dbRows=catalogRows.map(row=>({id:row.id,...(String(row.id)===String(item.db_id)?next:{cutQty:0,punchQty:0,wrapQty:0,boxQty:0,crateQty:0})}));
+    item.db_ids=catalogRows.map(row=>row.id);
+
     aisRegisterUndo(`Daily Production • ${profileVal} / ${lengthVal} • ${dateVal}`, async()=>{
-      if(item.db_id) await aisUpdateById('master_catalog',item.db_id,previousToDb(previous));
+      for(const row of updatedRows) await dbUpdate('master_catalog',previousToDb(row.before),row.id,'Production undo failed');
       await aisDeleteLatest('history_logs',{log_date:newLog.log_date,shift:newLog.shift,profile:newLog.profile,length:newLog.length,cut_qty:newLog.cut_qty,punch_qty:newLog.punch_qty,wrap_qty:newLog.wrap_qty,box_qty:newLog.box_qty,crate_qty:newLog.crate_qty,log_time:newLog.log_time});
       if(cardboardDeducted) await aisDeleteLatest('cardboard_stock',{cb_date:cardboardDeducted.date,cb_type:cardboardDeducted.type,incoming:0,used:cardboardDeducted.used});
     },'adminEntryTab');
+
     historyLogs.unshift({id:insertedLog.id || -Date.now(),date:dateVal,shift:shiftVal,profile:profileVal,length:cleanLen(lengthVal),cutQty,punchQty,wrapQty,boxQty:boxPcs,crateQty,timestamp:insertedLog.log_time||insertedLog.created_at});
-    showToast('Movement saved to Supabase successfully.','success');
     renderDashboard(); renderProfileSummaryTable(); renderHistoryData(); checkDateStatus(); renderCardboardStock(); renderBalanceWorkTable();
     ['cutQty','punchQty','wrapQty','boxQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
-  } catch(e){ console.error('Production save error:',e); await loadDataFromSupabase(true).catch(()=>{}); showToast(e.message||'Movement save failed.','error'); }
-  finally{isAppBusy=false;}
+    updateProductionCardboardAvailability();
+    showToast(shortageBoxes>0
+      ? `Production saved successfully. Cardboard stock for this profile is now ${Math.max(0,Number(getAvailableCardboard(profileVal,itemCodeVal,lengthVal))||0)} box(es); ${shortageBoxes} box(es) had to be packed using separately prepared cardboard. Box Qty was saved.`
+      : 'Production saved successfully. Stock and history are updated.','success');
+  } catch(e) {
+    console.error('Production save error:',e);
+    if(databaseCommitComplete){
+      // The DB commit succeeded; never roll back committed stock just because a
+      // later render/undo/UI action failed. Refresh in the background instead.
+      ['cutQty','punchQty','wrapQty','boxQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
+      loadDataFromSupabase(true).catch(syncErr=>console.warn('Post-commit UI recovery sync failed:',syncErr));
+      showToast('Production data was saved, but the screen refresh had an issue. Data is syncing; do not re-enter this movement.','warning');
+    } else {
+      // Roll back only the rows that this attempt successfully changed before the history commit.
+      for(const row of [...updatedRows].reverse()){
+        try{ await dbUpdate('master_catalog',previousToDb(row.before),row.id,'Production rollback failed'); }
+        catch(rb){ console.error('Production stock rollback failed:',rb); }
+      }
+      if(cardboardDeducted){
+        try{
+          const q=await supabaseClient.from('cardboard_stock').delete().eq('cb_date',cardboardDeducted.date).eq('cb_type',cardboardDeducted.type).eq('used',cardboardToDeduct);
+          if(q.error) throw q.error;
+          const idx=cardboardStockList.indexOf(cardboardDeducted); if(idx>=0)cardboardStockList.splice(idx,1);
+          saveCardboardLocally();
+        }catch(rb){console.error('Cardboard rollback failed:',rb);}
+      }
+      // Re-sync asynchronously so error feedback isn't delayed by a full refresh.
+      loadDataFromSupabase(true).catch(syncErr=>console.warn('Post-save recovery sync failed:',syncErr));
+      showToast(e.message||'Production save failed. Please check the database connection before retrying.','error');
+    }
+  } finally {
+    if(saveBtn){saveBtn.disabled=false;saveBtn.removeAttribute('aria-busy');saveBtn.innerHTML=originalButtonHtml;saveBtn.style.opacity='';saveBtn.style.cursor='';}
+    isAppBusy=false;
+  }
 }
+
 function previousToDb(p){return {cut_qty:p.cutQty,punch_qty:p.punchQty,wrap_qty:p.wrapQty,box_qty:p.boxQty,crate_qty:p.crateQty};}
 
 function openStockEditModal(index, preferredStage = 'cutQty') { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editItemIndex').value = index; document.getElementById('editItemTarget').innerHTML = `Profile: <b>${item.profile}</b> | Item: <b>${item.itemCode || '-'}</b> | Length: <b>${item.length} mm</b>`; document.getElementById('editStageSelect').value = preferredStage; document.getElementById('editStageValue').value = item[preferredStage] || 0; document.getElementById('boxCapacityHelperText').dataset.capacity = item.boxCapacity || 100; document.getElementById('boxCapacityHelperText').innerText = `Master Capacity: ${item.boxCapacity || 100} Pcs per Box`; toggleBoxCountInput(); document.getElementById('stockEditModal').style.display = 'flex'; }
