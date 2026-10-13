@@ -4559,17 +4559,17 @@ window.exportPlReadyCratesPdf=async function(){
 };
 window.exportPlConsolidated=function(){
     ensurePackingSelection();
-    const rows=[]; document.querySelectorAll('#plSummaryTableBody tr').forEach(tr=>{const cells=[...tr.querySelectorAll('td')].map(td=>td.innerText.trim()); if(cells.length===10) rows.push(cells);});
+    const rows=[]; document.querySelectorAll('#plSummaryTableBody tr').forEach(tr=>{const cells=[...tr.querySelectorAll('td')].map(td=>td.innerText.trim()); if(cells.length===12) rows.push(cells);});
     if(!rows.length) return showToast('No Packing List balance data to export!','warning');
-    const headers=['Profile','Item Code','Cut Length','Ex Length','Pcs / Ex','Total Req Pcs','Req Extrusions','Current Stock (Pcs)','PL Balance','Cardboard Bal'];
+    const headers=['Profile','Item Code','Cut Length','Ex Length','Pcs / Ex','Total Req Pcs','Req Extrusions (from PL Balance)','Current Stock (Pcs)','WIP: Cut + Punch (Pcs)','Complete: Wrap + Box + Crate (Pcs)','PL Balance','Cardboard Bal'];
     const data=rows.map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]||''])));
     exportTableToExcel(data,'AIS_Packing_Summary_Active_PL','Packing Summary - Active PL');
 };
 window.exportPlConsolidatedPdf=function(){
     ensurePackingSelection();
-    const rows=[]; document.querySelectorAll('#plSummaryTableBody tr').forEach(tr=>{const cells=[...tr.querySelectorAll('td')].map(td=>td.innerText.trim()); if(cells.length===10) rows.push(cells);});
+    const rows=[]; document.querySelectorAll('#plSummaryTableBody tr').forEach(tr=>{const cells=[...tr.querySelectorAll('td')].map(td=>td.innerText.trim()); if(cells.length===12) rows.push(cells);});
     if(!rows.length) return showToast('No Packing List balance data to print!','warning');
-    const headers=['Profile','Item Code','Cut Length','Ex Length','Pcs / Ex','Total Req Pcs','Req Extrusions','Current Stock (Pcs)','PL Balance','Cardboard Bal'];
+    const headers=['Profile','Item Code','Cut Length','Ex Length','Pcs / Ex','Total Req Pcs','Req Extrusions (from PL Balance)','Current Stock (Pcs)','WIP: Cut + Punch (Pcs)','Complete: Wrap + Box + Crate (Pcs)','PL Balance','Cardboard Bal'];
     const data=rows.map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]||''])));
     exportDataToPdf(data,'AIS_Packing_Summary_Active_PL','AIS Tracker - Packing List Summary (Active PL)',`Month: ${activePackingMonth} • ${activePackingContainer} • Filter: ${document.getElementById('plSummaryBalanceFilter')?.selectedOptions?.[0]?.text||'All'}`);
 };
@@ -5018,23 +5018,36 @@ function renderPackingListTable() {
         updateBalanceFilterInfo();
         let consHTML = Object.values(consolidatedMap).map(v => {
             const matched = masterData.find(m => String(m.profile).trim() === String(v.profile).trim() && String(m.itemCode).trim() === String(v.itemCode).trim() && cleanLen(m.length) === cleanLen(v.length));
-            let currentStock = matched ? ((matched.cutQty||0) + (matched.punchQty||0) + (matched.wrapQty||0) + (matched.boxQty||0) + (matched.crateQty||0)) : 0;
-            let bal = currentStock - v.qty;
+            const cutPcs = matched ? (Number(matched.cutQty)||0) : 0;
+            const punchPcs = matched ? (Number(matched.punchQty)||0) : 0;
+            const wrapPcs = matched ? (Number(matched.wrapQty)||0) : 0;
+            const boxPcs = matched ? (Number(matched.boxQty)||0) : 0;
+            const cratePcs = matched ? (Number(matched.crateQty)||0) : 0;
+            // Read-only summary: do not mutate stock/master data.
+            const currentStock = cutPcs + punchPcs + wrapPcs + boxPcs + cratePcs;
+            const wipPcs = cutPcs + punchPcs;
+            const completePcs = wrapPcs + boxPcs + cratePcs;
+            // Signed balance retained: negative means shortage, positive means excess stock.
+            const bal = currentStock - (Number(v.qty)||0);
+            // Required extrusions are calculated only for the shortage shown by PL Balance.
+            const pcsPerEx = Number(getExtrusionPlan(v.profile,v.itemCode,v.length,v.qty).pcsPerEx) || 0;
+            const requiredExForBalance = pcsPerEx > 0 ? Math.ceil(Math.max(0, -bal) / pcsPerEx) : 0;
             if(!matchesBalanceFilter(bal, plSummaryMode)) return '';
-            let balStatus = bal >= 0 ? `<span class="pl-balance-badge pl-balance-positive"><i class="fa-solid fa-check"></i> +${bal}</span>` : `<span class="pl-balance-badge pl-balance-negative"><i class="fa-solid fa-arrow-down"></i> ${Math.abs(bal)}</span>`;
-            let wipPcs = matched ? ((matched.cutQty||0) + (matched.punchQty||0) + (matched.wrapQty||0)) : 0;
-            let plPendingQty = Math.max(0, v.qty - currentStock);
-            let unboxedAndPendingPcs = plPendingQty + wipPcs;
+            const balStatus = bal >= 0 ? `<span class="pl-balance-badge pl-balance-positive"><i class="fa-solid fa-check"></i> +${bal}</span>` : `<span class="pl-balance-badge pl-balance-negative"><i class="fa-solid fa-arrow-down"></i> ${Math.abs(bal)}</span>`;
+            // Keep the existing cardboard calculation unchanged for backward compatibility.
+            const legacyWipPcs = cutPcs + punchPcs + wrapPcs;
+            const plPendingQty = Math.max(0, (Number(v.qty)||0) - currentStock);
+            const unboxedAndPendingPcs = plPendingQty + legacyWipPcs;
             let cap = matched ? (matched.boxCapacity || 100) : 100;
             let reqBoxes = Math.ceil(unboxedAndPendingPcs / cap);
             let availCardboard = getAvailableCardboard(v.profile, v.itemCode, v.length);
             let cbBalance = availCardboard - reqBoxes;
             let cbStatusHtml = cbBalance >= 0 ? `<span style="color:var(--success-color);font-weight:800;">OK (+${cbBalance})</span>` : `<span style="color:var(--warning-color);font-weight:800;">Short ${Math.abs(cbBalance)}</span>`;
             const plan=getExtrusionPlan(v.profile,v.itemCode,v.length,v.qty);
-            return `<tr><td><b>${v.profile}</b></td><td><span style="color:var(--info-color);font-weight:600;">${v.itemCode}</span></td><td>${v.length} mm</td><td>${plan.exLength ? plan.exLength+' mm' : '-'}</td><td><span class="stock-badge" style="background:#eff6ff;color:#0369a1;">${plan.pcsPerEx || '-'} Pcs</span></td><td><span class="stock-badge bg-total">${v.qty} Pcs</span></td><td><span class="stock-badge" style="background:#fff7ed;color:#c2410c;">${plan.requiredExtrusions || '-'} Ex</span></td><td><span class="stock-badge bg-wrap">${currentStock} Pcs</span></td><td><b>${balStatus}</b></td><td style="background:${cbBalance < 0 ? 'rgba(225, 29, 72, 0.05)' : 'rgba(16, 185, 129, 0.05)'};">${cbStatusHtml}</td></tr>`;
+            return `<tr><td><b>${v.profile}</b></td><td><span style="color:var(--info-color);font-weight:600;">${v.itemCode}</span></td><td>${v.length} mm</td><td>${plan.exLength ? plan.exLength+' mm' : '-'}</td><td><span class="stock-badge" style="background:#eff6ff;color:#0369a1;">${plan.pcsPerEx || '-'} Pcs</span></td><td><span class="stock-badge bg-total">${v.qty} Pcs</span></td><td><span class="stock-badge" style="background:#fff7ed;color:#c2410c;">${pcsPerEx > 0 ? requiredExForBalance : '-'} Ex</span></td><td><span class="stock-badge bg-wrap">${currentStock} Pcs</span></td><td><span class="stock-badge" style="background:#ede9fe;color:#6d28d9;">${wipPcs} Pcs</span></td><td><span class="stock-badge" style="background:#dcfce7;color:#166534;">${completePcs} Pcs</span></td><td><b>${balStatus}</b></td><td style="background:${cbBalance < 0 ? 'rgba(225, 29, 72, 0.05)' : 'rgba(16, 185, 129, 0.05)'};">${cbStatusHtml}</td></tr>`;
         }).filter(Boolean).join('');
 
-        const sumTbody = document.getElementById('plSummaryTableBody'); if (sumTbody) sumTbody.innerHTML = consHTML || '<tr><td colspan="10" style="text-align:center;padding:24px;color:#64748b;font-weight:700;">No active PL lines match this balance filter.</td></tr>';
+        const sumTbody = document.getElementById('plSummaryTableBody'); if (sumTbody) sumTbody.innerHTML = consHTML || '<tr><td colspan="12" style="text-align:center;padding:24px;color:#64748b;font-weight:700;">No active PL lines match this balance filter.</td></tr>';
         const readyTbody = document.getElementById('plReadyToPackTableBody'); if (readyTbody) readyTbody.innerHTML = readyCratesHTML || '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);padding:30px;">No crates match this status</td></tr>';
         const rawTbody = document.getElementById('packingListTableBody'); if (rawTbody) rawTbody.innerHTML = rawHTML || '<tr><td colspan="12" style="text-align:center; color:var(--text-muted);">No logs</td></tr>';
     } catch(e) { console.error('Packing list render error:', e); const body=document.getElementById('packingListTableBody'); if(body) body.innerHTML='<tr><td colspan=12 style="text-align:center;color:#e11d48;font-weight:700;">Packing List could not be rendered. Check browser console for details.</td></tr>'; }
