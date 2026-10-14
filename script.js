@@ -2544,24 +2544,33 @@ async function aisUpdateById(table, id, values) {
   if (error) throw error;
 }
 
-function aisUndoLabel(){ return aisUndoStack.length ? `↩ Undo: ${aisUndoStack[aisUndoStack.length-1].label}` : '↩ Undo Last Change'; }
+function aisUndoCandidates(tabId=''){
+  return aisUndoStack.map((action,index)=>({action,index}))
+    .filter(entry=>!tabId || entry.action.tabId===tabId);
+}
 function aisUpdateUndoButtons(){
   document.querySelectorAll('.ais-undo-btn').forEach(btn=>{
-    btn.disabled = !aisUndoStack.length || aisUndoBusy;
-    btn.innerHTML = `<i class="fa-solid fa-rotate-left"></i> ${aisUndoLabel()}`;
-    btn.title = aisUndoStack.length ? `Undo ${aisUndoStack[aisUndoStack.length-1].label}` : 'No recent change to undo';
+    const tabId=btn.dataset.undoTab||'';
+    const candidates=aisUndoCandidates(tabId);
+    const latest=candidates.length?candidates[candidates.length-1].action:null;
+    const defaultLabel=tabId==='packingListTab'?'Undo Packing List':'Undo Last Change';
+    btn.disabled = !latest || aisUndoBusy;
+    btn.innerHTML = `<i class="fa-solid fa-rotate-left"></i> ${latest ? `Undo: ${latest.label}` : defaultLabel}`;
+    btn.title = latest ? `Undo ${latest.label}` : `No recent change${tabId?' on this page':''} to undo`;
   });
 }
 
-window.aisUndoLastAction = async function(){
-  if(aisUndoBusy || !aisUndoStack.length) return showToast('There is no recent change to undo.','info');
+window.aisUndoLastAction = async function(tabId=''){
+  const candidates=aisUndoCandidates(tabId);
+  if(aisUndoBusy || !candidates.length) return showToast(tabId==='packingListTab'?'No recent Packing List change is available to undo.':'There is no recent change to undo.','info');
   if(currentUserRole!=='Admin' && currentUserRole!=='Planner') return showToast('Undo is available to Admin / Planner only.','warning');
-  const action=aisUndoStack[aisUndoStack.length-1];
-  if(!confirm(`Undo this change?\n\n${action.label}\n\nThe saved data will be reverted.`)) return;
+  const selected=candidates[candidates.length-1];
+  const action=selected.action;
+  if(!confirm(`Undo this change?\n\n${action.label}\n\nThe saved data will be restored/reverted.`)) return;
   aisUndoBusy=true; aisUpdateUndoButtons();
   try{
     await action.undoFn();
-    aisUndoStack.pop();
+    aisUndoStack.splice(selected.index,1);
     await loadDataFromSupabase(true).catch(()=>{});
     showToast(`Undo successful: ${action.label}`,'success');
   }catch(e){
@@ -2581,9 +2590,9 @@ function aisInjectUndoButtons(){
     head.parentNode.insertBefore(wrap,head);
     wrap.appendChild(head);
     const btn=document.createElement('button');
-    btn.type='button'; btn.className='btn ais-undo-btn';
-    btn.style.cssText='background:#64748b;color:#fff;border:1px solid #475569;padding:7px 11px;font-size:11px;font-weight:900;';
-    btn.onclick=()=>window.aisUndoLastAction();
+    btn.type='button'; btn.className='btn ais-undo-btn'; btn.dataset.undoTab=tabId;
+    btn.style.cssText='background:#176173;color:#fff;border:1px solid #104653;padding:7px 11px;font-size:11px;font-weight:900;border-radius:9px;';
+    btn.onclick=()=>window.aisUndoLastAction(tabId);
     wrap.appendChild(btn);
   });
   aisUpdateUndoButtons();
@@ -5157,24 +5166,142 @@ function renderPackingListTable() {
         const rawTbody = document.getElementById('packingListTableBody'); if (rawTbody) rawTbody.innerHTML = rawHTML || '<tr><td colspan="12" style="text-align:center; color:var(--text-muted);">No logs</td></tr>';
     } catch(e) { console.error('Packing list render error:', e); const body=document.getElementById('packingListTableBody'); if(body) body.innerHTML='<tr><td colspan=12 style="text-align:center;color:#e11d48;font-weight:700;">Packing List could not be rendered. Check browser console for details.</td></tr>'; }
 }
+// Convert an in-memory Packing List row back to the existing Supabase schema.
+// Deliberately omit the old primary key when restoring; Supabase assigns a fresh ID.
+function packingListSnapshotToDbRow(item) {
+    return {
+        pl_number: item.plNumber || null,
+        po_number: item.poNumber || null,
+        shipment_month: item.month || 'January',
+        container: item.container || '1st Container',
+        crate_no: item.crateNo || 'Crate 1',
+        profile: item.profile,
+        item_code: item.itemCode || '',
+        length: cleanLen(item.length),
+        box_qty: Number(item.boxQty) || 1,
+        pcs_qty: Number(item.pcsQty) || 0,
+        net_weight: Number(item.netWeight) || 0,
+        gross_weight: Number(item.grossWeight) || 0,
+        packing_date: item.date || null
+    };
+}
+
+async function restorePackingListSnapshots(items) {
+    // Resume-safe restoration: if one insert fails, the next Undo attempt starts
+    // at the first item not yet restored. Existing IDs are not reused.
+    const restored = [];
+    for (const item of items) {
+        const row = packingListSnapshotToDbRow(item);
+        const { data, error } = await supabaseClient.from('packing_list').insert([row]).select('id').single();
+        if (error) throw new Error(`Could not restore crate data (${item.crateNo}, ${item.profile}): ${error.message}`);
+        restored.push(data?.id ?? null);
+    }
+    return restored;
+}
+
 window.deleteEntireCrate = async function(crateId) {
     if(currentUserRole !== 'Admin') return;
-    showConfirm(`Delete all items in ${crateId}?`, async () => {
-        const items = packingLists.filter(p => p.crateNo === crateId);
-        for (let item of items) {
-            try { await supabaseClient.from('packing_list').delete().eq('id', item.id); } catch(e){}
-            packingLists = packingLists.filter(p => p.id !== item.id);
+    const month = String(activePackingMonth || '').trim();
+    const container = String(activePackingContainer || '').trim();
+    // Restrict delete to the currently selected shipment; the same crate label
+    // can exist in other months/containers and must not be touched.
+    const items = packingLists.filter(p =>
+        String(p.crateNo) === String(crateId) &&
+        String(p.month || '').trim() === month &&
+        String(p.container || '').trim() === container
+    ).map(p => ({...p}));
+    if (!items.length) return showToast(`No items found for ${crateId} in ${month} / ${container}.`, 'info');
+
+    showConfirm(`Delete all ${items.length} item(s) in ${crateId}? You can use Undo to restore them.`, async () => {
+        const stateKey = manualCrateKey(crateId, container, month);
+        const hadManualState = Object.prototype.hasOwnProperty.call(globalManualCrates, stateKey);
+        const manualStateSnapshot = hadManualState ? JSON.parse(JSON.stringify(globalManualCrates[stateKey])) : null;
+        const deletedItems = [];
+        try {
+            for (const item of items) {
+                const { error } = await supabaseClient.from('packing_list').delete().eq('id', item.id);
+                if (error) throw new Error(`Could not delete ${item.profile} (${item.id}): ${error.message}`);
+                deletedItems.push(item);
+            }
+
+            if (hadManualState) {
+                delete globalManualCrates[stateKey];
+                if (!await window.saveManualCratesToDB()) throw new Error('Could not save the crate completion state change.');
+            }
+
+            packingLists = packingLists.filter(p => !(
+                String(p.crateNo) === String(crateId) &&
+                String(p.month || '').trim() === month &&
+                String(p.container || '').trim() === container
+            ));
+            renderPackingListTable(); renderDashboard(); renderBalanceWorkTable();
+
+            let restoreIndex = 0;
+            aisRegisterUndo(`Delete Crate ${crateId} • ${month} / ${container}`, async () => {
+                // Restore rows sequentially. Keep progress if a retry is needed.
+                while (restoreIndex < deletedItems.length) {
+                    const item = deletedItems[restoreIndex];
+                    const { error } = await supabaseClient.from('packing_list').insert([packingListSnapshotToDbRow(item)]);
+                    if (error) throw new Error(`Could not restore ${item.profile} in ${crateId}: ${error.message}`);
+                    restoreIndex++;
+                }
+                if (hadManualState) {
+                    globalManualCrates[stateKey] = manualStateSnapshot;
+                    if (!await window.saveManualCratesToDB()) throw new Error('Packing List items were restored, but crate completion state could not be restored. Retry Undo.');
+                }
+            }, 'packingListTab');
+            showToast(`Crate ${crateId} deleted. Use the Packing List Undo button to restore all ${items.length} item(s).`, 'success');
+        } catch (e) {
+            console.error('Delete crate group failed:', e);
+            // If a multi-row delete fails part-way through, restore rows already
+            // removed before reporting the failure; never silently ignore DB errors.
+            if (deletedItems.length) {
+                try {
+                    await restorePackingListSnapshots(deletedItems);
+                    if (hadManualState) {
+                        globalManualCrates[stateKey] = manualStateSnapshot;
+                        await window.saveManualCratesToDB();
+                    }
+                } catch (restoreError) {
+                    console.error('Partial crate delete recovery failed:', restoreError);
+                    showToast(`Delete was incomplete. Recovery also needs attention: ${restoreError.message}`, 'error');
+                    await loadDataFromSupabase(true).catch(()=>{});
+                    return;
+                }
+            }
+            if (hadManualState) globalManualCrates[stateKey] = manualStateSnapshot;
+            await loadDataFromSupabase(true).catch(()=>{});
+            showToast(`Crate delete failed; data refresh attempted. ${e.message || ''}`, 'error');
         }
-        const stateKey = manualCrateKey(crateId, activePackingContainer, activePackingMonth);
-        if(globalManualCrates[stateKey]) {
-            delete globalManualCrates[stateKey];
-            await window.saveManualCratesToDB();
-        }
-        renderPackingListTable(); renderDashboard(); renderBalanceWorkTable();
-        showToast(`Crate ${crateId} deleted`, "success");
     });
-}
-window.deletePackingListItem = function(id) { if(currentUserRole !== 'Admin') return; showConfirm("Delete this packing list record?", async () => { try { await supabaseClient.from('packing_list').delete().eq('id', id); } catch(e){} packingLists = packingLists.filter(p => p.id !== id); renderPackingListTable(); renderDashboard(); renderBalanceWorkTable(); showToast("Deleted", "success"); }); }
+};
+
+window.deletePackingListItem = function(id) {
+    if(currentUserRole !== 'Admin') return;
+    const item = packingLists.find(p => String(p.id) === String(id));
+    if (!item) return showToast('Packing List record not found. Refresh and try again.', 'warning');
+    const snapshot = {...item};
+    showConfirm(`Delete this Packing List record for ${snapshot.profile} / ${snapshot.crateNo}? You can use Undo to restore it.`, async () => {
+        try {
+            const { error } = await supabaseClient.from('packing_list').delete().eq('id', id);
+            if (error) throw error;
+            packingLists = packingLists.filter(p => String(p.id) !== String(id));
+            renderPackingListTable(); renderDashboard(); renderBalanceWorkTable();
+
+            let restored = false;
+            aisRegisterUndo(`Delete Packing List Item • ${snapshot.crateNo} • ${snapshot.profile}`, async () => {
+                if (restored) return;
+                const { error: restoreError } = await supabaseClient.from('packing_list').insert([packingListSnapshotToDbRow(snapshot)]);
+                if (restoreError) throw restoreError;
+                restored = true;
+            }, 'packingListTab');
+            showToast('Packing List record deleted. Use Undo to restore it.', 'success');
+        } catch (e) {
+            console.error('Delete Packing List record failed:', e);
+            showToast(`Delete failed: ${e.message || 'Database rejected the operation.'}`, 'error');
+        }
+    });
+};
 
 /*
  * PACKING LIST DATA RESET
@@ -5382,11 +5509,14 @@ async function processPlExcelUpload() {
     if(['profileno','profile','profilecode'].includes(c)) return 'profile';
     if(['itemcode','item','itemnumber','itemno','itemnumbercode'].includes(c)) return 'itemcode';
     if(['length','profilelength','lengthmm','lengthinmm'].includes(c)) return 'length';
-    if(['qty','quantity','pcs','pcsqty','totalqty','totalquantity','pieceqty','pieces'].includes(c)) return 'qty';
+    if(['numberofcrates','noofcrate','noofcrates','crateqty','cratesqty','cratecount','numbercrate','numbercrates'].includes(c)) return 'numberofcrates';
+    if(['pcspercrate','piecespercrate','percratepcs','cratepcs','qtypercrate','pcscrate'].includes(c)) return 'pcspercrate';
+    if(['totalqty','totalquantity','totalpcs','totalpcsqty','overallqty','overallquantity'].includes(c)) return 'totalqty';
+    if(['qty','quantity','pcs','pcsqty','pieceqty','pieces'].includes(c)) return 'qty';
     if(['ponumber','po','pono','purchaseorderno','purchaseordernumber'].includes(c)) return 'ponumber';
     return c;
   };
-  const requiredHeaders=['crateno','profile','itemcode','qty'];
+  const requiredHeaders=['crateno','profile','itemcode'];
   try {
     activePackingMonth=uploadMonth;
     activePackingContainer=uploadContainer;
@@ -5404,12 +5534,25 @@ async function processPlExcelUpload() {
       }
       if(rawJson) break;
     }
-    if(!rawJson) throw new Error('Required columns not found. Excel must contain: Crate No, Profile, Item Code, Qty. Length is optional when Item Code identifies one Master Catalog item.');
-    const col={}; [...requiredHeaders,'length','ponumber'].forEach(h=>col[h]=headers.indexOf(h));
+    if(!rawJson) throw new Error('Required columns not found. Excel must contain: Crate No, Profile and Item Code, plus Number of Crates with Pcs per Crate and/or Total Qty. Legacy Qty sheets are also supported. Length is optional when Item Code identifies one Master Catalog item.');
+    const col={}; [...requiredHeaders,'length','ponumber','numberofcrates','pcspercrate','totalqty','qty'].forEach(h=>col[h]=headers.indexOf(h));
     const get=(row,h)=>col[h]>=0?row[col[h]]:'';
     const normProfile=v=>String(v??'').trim().toUpperCase().replace(/^AL-\s*/,'');
     const normCode=v=>String(v??'').trim().toUpperCase();
     const normLength=v=>String(v??'').replace(/mm/gi,'').trim().replace(/\.0$/,'');
+    const toPositiveInt=(value,label,excelRow,errors,required=false)=>{
+      const raw=String(value??'').replace(/,/g,'').trim();
+      if(!raw){if(required)errors.push(`Row ${excelRow}: ${label} is required.`);return null;}
+      const n=Number(raw);
+      if(!Number.isFinite(n)||!Number.isInteger(n)||n<=0){errors.push(`Row ${excelRow}: ${label} must be a positive whole number.`);return null;}
+      return n;
+    };
+    const romanSuffix=n=>{
+      const pairs=[[1000,'m'],[900,'cm'],[500,'d'],[400,'cd'],[100,'c'],[90,'xc'],[50,'l'],[40,'xl'],[10,'x'],[9,'ix'],[5,'v'],[4,'iv'],[1,'i']];
+      let value=n,result='';
+      for(const [amount,symbol] of pairs){while(value>=amount){result+=symbol;value-=amount;}}
+      return result;
+    };
     const rowsToInsert=[], errors=[], seen=new Set();
     let lastMergedCrateRaw='';
     for(let i=headerRowIndex+1;i<rawJson.length;i++){
@@ -5419,25 +5562,41 @@ async function processPlExcelUpload() {
       const crateCellRaw=String(get(row,'crateno')??'').trim().replace(/^crate\s*/i,'').replace(/\.0$/,'');
       const profileRaw=String(get(row,'profile')??'').trim();
       const itemCode=String(get(row,'itemcode')??'').trim();
-      const qtyRaw=String(get(row,'qty')??'').trim();
+      const qtyRaw=String(get(row,'totalqty') || get(row,'qty') || '').trim();
+      const pcsPerCrateRaw=String(get(row,'pcspercrate')??'').trim();
+      const crateCountRaw=String(get(row,'numberofcrates')??'').trim();
       // Excel often merges a crate-number cell vertically across multiple profile rows.
-      // XLSX returns the crate number only on the first row; carry it forward for
-      // contiguous valid-looking item rows so every profile is assigned to that crate.
-      const hasItemData=!!(profileRaw&&itemCode&&qtyRaw);
+      // Carry it forward so each profile row can be expanded into the same numbered crates.
+      const hasItemData=!!(profileRaw&&itemCode&&(qtyRaw||pcsPerCrateRaw));
       const crateRaw=crateCellRaw || (hasItemData ? lastMergedCrateRaw : '');
       if(crateCellRaw) lastMergedCrateRaw=crateCellRaw;
       else if(!hasItemData) lastMergedCrateRaw='';
       const lengthRaw=normLength(get(row,'length'));
       const poNum=String(get(row,'ponumber')??'').trim().replace(/\.0$/,'');
       // Ignore title, note and subtotal rows; only actual rows with crate/profile/item/qty are processed.
-      if(!crateRaw&&!profileRaw&&!itemCode&&!qtyRaw) continue;
-      // Ignore unrelated/incomplete rows rather than treating them as packing records.
-      if(!crateRaw||!profileRaw||!itemCode||!qtyRaw) continue;
-      const qty=Number(String(qtyRaw).replace(/,/g,''));
-      if(!Number.isFinite(qty)||qty<=0){
-        errors.push(`Row ${excelRow}: Qty must be a positive number.`); continue;
+      if(!crateRaw&&!profileRaw&&!itemCode&&!qtyRaw&&!pcsPerCrateRaw) continue;
+      if(!crateRaw||!profileRaw||!itemCode||(!qtyRaw&&!pcsPerCrateRaw)) continue;
+
+      const crateCount=crateCountRaw ? toPositiveInt(crateCountRaw,'Number of Crates',excelRow,errors,true) : 1;
+      const totalQty=qtyRaw ? toPositiveInt(qtyRaw,'Total Qty',excelRow,errors,true) : null;
+      const pcsPerCrate=pcsPerCrateRaw ? toPositiveInt(pcsPerCrateRaw,'Pcs per Crate',excelRow,errors,true) : null;
+      if(crateCount===null || (qtyRaw && totalQty===null) || (pcsPerCrateRaw && pcsPerCrate===null)) continue;
+      if(crateCount>100){errors.push(`Row ${excelRow}: Number of Crates cannot exceed 100 in one row.`);continue;}
+      let crateQtys=[];
+      if(pcsPerCrate!==null){
+        crateQtys=Array(crateCount).fill(pcsPerCrate);
+        const calculatedTotal=pcsPerCrate*crateCount;
+        if(totalQty!==null && totalQty!==calculatedTotal){
+          errors.push(`Row ${excelRow}: Total Qty (${totalQty}) does not equal Pcs per Crate (${pcsPerCrate}) × Number of Crates (${crateCount}) = ${calculatedTotal}.`);
+          continue;
+        }
+      }else if(totalQty!==null){
+        // If only Total Qty is provided, distribute the exact total across the
+        // requested crate count, with remainder pieces assigned to earlier crates.
+        const base=Math.floor(totalQty/crateCount), remainder=totalQty%crateCount;
+        if(base<1){errors.push(`Row ${excelRow}: Total Qty (${totalQty}) is too small for ${crateCount} crates.`);continue;}
+        crateQtys=Array.from({length:crateCount},(_,idx)=>base+(idx<remainder?1:0));
       }
-      if(!Number.isInteger(qty)){errors.push(`Row ${excelRow}: Qty must be a whole number.`);continue;}
       const matches=masterData.filter(m=>
         normCode(m.itemCode)===normCode(itemCode) &&
         (!profileRaw || normProfile(m.profile)===normProfile(profileRaw)) &&
@@ -5451,27 +5610,35 @@ async function processPlExcelUpload() {
       }
       const cat=matches[0], profile=String(cat.profile||profileRaw).trim(), length=cleanLen(cat.length);
       if(!length){errors.push(`Row ${excelRow}: Master Catalog length is missing for ${itemCode}.`);continue;}
-      const crateNo=`Crate ${crateRaw}`;
-      const uniqueKey=`${uploadMonth}|${uploadContainer}|${crateNo}|${profile}|${itemCode}|${length}`.toLowerCase();
-      if(seen.has(uniqueKey)){errors.push(`Row ${excelRow}: duplicate crate/profile/item entry in this Excel file (${crateRaw}).`);continue;}
-      seen.add(uniqueKey);
       const unitWeight=Number(cat.unitWeight)||0;
-      const weight=Number((qty*unitWeight).toFixed(3));
-      rowsToInsert.push({
-        pl_number:defaultPlNum,
-        po_number:poNum||null,
-        shipment_month:uploadMonth,
-        container:uploadContainer,
-        crate_no:crateNo,
-        profile,
-        item_code:itemCode,
-        length,
-        box_qty:1,
-        pcs_qty:qty,
-        net_weight:weight,
-        gross_weight:weight,
-        packing_date:uploadDate
-      });
+      let rowHasError=false;
+      for(let crateIndex=0;crateIndex<crateCount;crateIndex++){
+        const label=crateCount===1 ? crateRaw : `${crateRaw}-${romanSuffix(crateIndex+1)}`;
+        const crateNo=`Crate ${label}`;
+        const qty=crateQtys[crateIndex];
+        const uniqueKey=`${uploadMonth}|${uploadContainer}|${crateNo}|${profile}|${itemCode}|${length}`.toLowerCase();
+        if(seen.has(uniqueKey)){
+          errors.push(`Row ${excelRow}: duplicate crate/profile/item entry in this Excel file (${label}).`);
+          rowHasError=true;continue;
+        }
+        seen.add(uniqueKey);
+        const weight=Number((qty*unitWeight).toFixed(3));
+        rowsToInsert.push({
+          pl_number:defaultPlNum,
+          po_number:poNum||null,
+          shipment_month:uploadMonth,
+          container:uploadContainer,
+          crate_no:crateNo,
+          profile,
+          item_code:itemCode,
+          length,
+          box_qty:1,
+          pcs_qty:qty,
+          net_weight:weight,
+          gross_weight:weight,
+          packing_date:uploadDate
+        });
+      }
     }
     if(errors.length) throw new Error(errors.slice(0,8).join(' | ')+(errors.length>8?` | +${errors.length-8} more errors`:''));
     if(!rowsToInsert.length) throw new Error('No valid packing rows were found.');

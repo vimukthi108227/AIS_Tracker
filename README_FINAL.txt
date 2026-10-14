@@ -41,3 +41,25 @@ Final Packing List Summary adjustment: Removed the separate Pending Cut column. 
 - Each crate card has an Admin-only green plus button. It opens a profile/item code/length/PCS form tied to that exact crate, current month, and container.
 - Manual add inserts one new packing_list row and reloads the normal Packing List/dashboard summaries. It rejects an identical profile+item+length already in the same crate to prevent accidental duplicate rows. PO is left null (consistent with Excel import allowing optional PO); it reuses the crate's existing PL number where available.
 - No existing rows are updated or deleted. Live Supabase insert/permissions were not tested in this build; test with a database backup first.
+
+
+Packing List Undo enhancement
+- The Packing List page Undo button is scoped to Packing List actions so it does not undo an unrelated change from another page.
+- Deleting a crate group registers an undo action with snapshots of all Packing List rows and the selected month/container crate completion state.
+- Undo restores every profile/item row belonging to the deleted crate, plus the crate completion state when present. Restored rows receive new database IDs; the original business data fields are preserved.
+- Deleting one Packing List line also registers an undo action.
+- Crate deletion is scoped to the currently selected shipment month and container, preventing the same crate label in another shipment from being deleted.
+- Database errors are no longer silently ignored during individual or group deletion. Partial group deletion attempts to restore already-deleted rows.
+- Undo history is session-only (up to 20 changes) and does not persist after browser reload/close.
+- Existing database schema and historical rows are not migrated or bulk-modified by this update. Live Supabase end-to-end testing is not available in this build environment; backup and test on a copy before deployment.
+
+
+Packing List Excel — Number of Crates support
+- Excel upload now recognizes Number of Crates / No of Crate / No of Crates, Pcs per Crate, and Total Qty columns.
+- For Crate No 2 and Number of Crates 3, each row expands to crate labels Crate 2-i, Crate 2-ii, Crate 2-iii.
+- If Pcs per Crate is supplied, that PCS quantity is assigned to each generated crate; when Total Qty is also supplied it must equal Pcs per Crate × Number of Crates.
+- If only Total Qty and Number of Crates are supplied, the total is distributed across the requested crates without losing PCS (remainder goes to earlier crates).
+- The merged crate number carry-forward logic means multiple profile rows with the same merged crate number expand into matching crate labels, so each crate contains all related profile types.
+- Legacy Excel upload with Crate No / Profile / Item Code / Qty remains supported and produces one crate row per profile line.
+- Existing duplicate protection remains: conflicting duplicate crate/profile/item rows stop the upload without changing old data.
+- No database schema change. Live Supabase upload was not run in this environment; use a backup and test copy before replacing the live website.
