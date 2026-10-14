@@ -2850,3 +2850,10 @@ tbody tr:hover{background:rgba(94,187,78,.055)!important}
 .badge,.stock-badge,.pl-balance-badge,.cb-balance-pill{font-variant-numeric:tabular-nums}
 @media(max-width:760px){.card,.kpi-card,.chart-card-animated{border-radius:11px!important}.table-container{max-width:100%}}
 @media(prefers-reduced-motion:reduce){.card,.kpi-card,.chart-card-animated,.tab-btn,button,input,select,textarea{transition:none!important}}
+
+/* Packing List: elegant per-crate profile add control and modal */
+.crate-card-row .crate-add-profile-btn{background:#159447;color:#fff;border:0;border-radius:9px;padding:7px 10px;font-weight:800;cursor:pointer}
+#manualCrateAddModal .form-group label{display:block;margin-bottom:6px;font-weight:800;color:var(--primary-color,#176173)}
+#manualCrateAddModal select,#manualCrateAddModal input{min-height:42px;border:1px solid var(--border-color,#d7e2e8);border-radius:9px;padding:9px 11px;background:var(--card-bg,#fff);color:var(--text-color,#172b35)}
+#manualCrateAddModal select:focus,#manualCrateAddModal input:focus{outline:2px solid rgba(94,187,78,.45);outline-offset:1px}
+@media(max-width:560px){#manualCrateAddModal>div{padding:16px!important}#manualCrateAddModal [style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr!important}#manualCrateAddModal .form-group{grid-column:1!important}}

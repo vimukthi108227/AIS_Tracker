@@ -35,3 +35,9 @@ Final Packing List Summary adjustment: Removed the separate Pending Cut column. 
 - The success message states how many boxes were packed with separately prepared cardboard. Upstream Wrapping Pcs validation remains active; cardboard shortage does not bypass production-stage stock validation.
 - Alumex UI refinement adds calmer card/table surfaces, consistent focus indicators, refined hover states, and a clearer production save/cardboard status treatment.
 - Static QA only; live Supabase end-to-end save/reload was not available in this environment. Back up and test a copy before production deployment.
+
+2026-10-14 — Merged Crate Excel Rows + Manual Add Profile
+- Packing List Excel import now fills down merged crate-number cells for contiguous item rows. Multiple profiles under a vertically merged crate number are all assigned to the same crate. Blank separator rows reset the carry-forward so the next group cannot inherit the previous crate number.
+- Each crate card has an Admin-only green plus button. It opens a profile/item code/length/PCS form tied to that exact crate, current month, and container.
+- Manual add inserts one new packing_list row and reloads the normal Packing List/dashboard summaries. It rejects an identical profile+item+length already in the same crate to prevent accidental duplicate rows. PO is left null (consistent with Excel import allowing optional PO); it reuses the crate's existing PL number where available.
+- No existing rows are updated or deleted. Live Supabase insert/permissions were not tested in this build; test with a database backup first.

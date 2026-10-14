@@ -5065,7 +5065,10 @@ function renderPackingListTable() {
             const editBtn=(currentUserRole==='Admin' && firstItem)
                 ? `<button class="btn" style="background:#0284c7;padding:7px 10px;font-size:11px;border-radius:8px;" onclick="openGenericEdit('packing_list', ${firstItem.id}, {pcs_qty: '${firstItem.pcsQty}', crate_no: '${firstItem.crateNo}'})"><i class="fa-solid fa-pen"></i></button>`
                 : '';
-            const actionBtn=`<div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;">${manualTickHtml}${editBtn}</div>`;
+            const addProfileBtn=currentUserRole==='Admin'
+                ? `<button type="button" class="btn" title="Add another profile/item to this crate" style="background:#16a34a;color:#fff;padding:7px 10px;font-size:12px;border-radius:8px;" onclick="openManualAddProfileToCrate('${encodeURIComponent(row.crateNo)}')"><i class="fa-solid fa-plus"></i></button>`
+                : '';
+            const actionBtn=`<div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;">${addProfileBtn}${manualTickHtml}${editBtn}</div>`;
 
             const profileCards=(row.profiles||[]).map(i=>{
                 const lineBg=i.status==='Ready to Pack'||i.status==='Manual Packed'?'#ffffff':'#fffaf0';
@@ -5408,14 +5411,22 @@ async function processPlExcelUpload() {
     const normCode=v=>String(v??'').trim().toUpperCase();
     const normLength=v=>String(v??'').replace(/mm/gi,'').trim().replace(/\.0$/,'');
     const rowsToInsert=[], errors=[], seen=new Set();
+    let lastMergedCrateRaw='';
     for(let i=headerRowIndex+1;i<rawJson.length;i++){
       const row=rawJson[i]||[];
-      if(row.every(v=>String(v??'').trim()==='')) continue;
+      if(row.every(v=>String(v??'').trim()==='')) { lastMergedCrateRaw=''; continue; }
       const excelRow=i+1;
-      const crateRaw=String(get(row,'crateno')??'').trim().replace(/^crate\s*/i,'').replace(/\.0$/,'');
+      const crateCellRaw=String(get(row,'crateno')??'').trim().replace(/^crate\s*/i,'').replace(/\.0$/,'');
       const profileRaw=String(get(row,'profile')??'').trim();
       const itemCode=String(get(row,'itemcode')??'').trim();
       const qtyRaw=String(get(row,'qty')??'').trim();
+      // Excel often merges a crate-number cell vertically across multiple profile rows.
+      // XLSX returns the crate number only on the first row; carry it forward for
+      // contiguous valid-looking item rows so every profile is assigned to that crate.
+      const hasItemData=!!(profileRaw&&itemCode&&qtyRaw);
+      const crateRaw=crateCellRaw || (hasItemData ? lastMergedCrateRaw : '');
+      if(crateCellRaw) lastMergedCrateRaw=crateCellRaw;
+      else if(!hasItemData) lastMergedCrateRaw='';
       const lengthRaw=normLength(get(row,'length'));
       const poNum=String(get(row,'ponumber')??'').trim().replace(/\.0$/,'');
       // Ignore title, note and subtotal rows; only actual rows with crate/profile/item/qty are processed.
@@ -5487,6 +5498,123 @@ async function processPlExcelUpload() {
     if(uploadBtn){uploadBtn.innerHTML=originalBtnText;uploadBtn.disabled=false;}
   }
 }
+
+
+/* Packing List: add a profile directly to an existing crate without replacing old rows. */
+function ensureManualCrateAddModal(){
+  if(document.getElementById('manualCrateAddModal')) return;
+  const wrap=document.createElement('div');
+  wrap.id='manualCrateAddModal';
+  wrap.style.cssText='display:none;position:fixed;inset:0;z-index:10050;background:rgba(8,25,34,.62);backdrop-filter:blur(5px);padding:18px;align-items:center;justify-content:center;';
+  wrap.innerHTML=`
+    <div role="dialog" aria-modal="true" aria-labelledby="manualCrateAddTitle" style="width:min(620px,100%);max-height:90vh;overflow:auto;background:var(--card-bg,#fff);color:var(--text-color,#17313a);border:1px solid var(--emerald-border,#d0e5df);border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.28);padding:22px;">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;border-bottom:1px solid var(--border-color,#d7e2e8);padding-bottom:14px;margin-bottom:18px;">
+        <div><div style="font-size:11px;letter-spacing:1.2px;font-weight:900;color:#16a34a;text-transform:uppercase;">AIS Packing List</div><h3 id="manualCrateAddTitle" style="margin:4px 0 0;font-size:20px;">Add Profile to Crate</h3><div id="manualCrateAddMeta" style="margin-top:6px;font-size:12px;color:var(--text-muted,#5d707b);"></div></div>
+        <button type="button" class="btn" onclick="closeManualAddProfileModal()" aria-label="Close" style="padding:7px 11px;">✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:13px;">
+        <div class="form-group" style="grid-column:1/-1;"><label>Profile</label><select id="manualCrateProfile" onchange="manualCrateProfileChanged()" required style="width:100%;"></select></div>
+        <div class="form-group"><label>Item Code</label><select id="manualCrateItemCode" onchange="manualCrateItemChanged()" required style="width:100%;"></select></div>
+        <div class="form-group"><label>Cut Length (mm)</label><select id="manualCrateLength" required style="width:100%;"></select></div>
+        <div class="form-group" style="grid-column:1/-1;"><label>PCS Quantity</label><input id="manualCratePcsQty" type="number" min="1" step="1" placeholder="Enter PCS quantity" required style="width:100%;"></div>
+      </div>
+      <div id="manualCrateAddPreview" style="margin-top:12px;padding:11px 13px;background:var(--emerald-light,#f1f8f6);border:1px solid var(--emerald-border,#d0e5df);border-radius:10px;font-size:12px;"></div>
+      <div style="display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap;margin-top:18px;">
+        <button type="button" class="btn" onclick="closeManualAddProfileModal()">Cancel</button>
+        <button type="button" class="btn btn-accent" id="manualCrateAddSaveBtn" onclick="saveManualProfileToCrate()"><i class="fa-solid fa-plus"></i> Add to This Crate</button>
+      </div>
+    </div>`;
+  wrap.addEventListener('click',e=>{if(e.target===wrap)closeManualAddProfileModal();});
+  document.body.appendChild(wrap);
+}
+let manualCrateAddTarget='';
+function manualCrateAddEsc(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function manualCrateAddSetOptions(id,items,placeholder){
+  const el=document.getElementById(id); if(!el)return;
+  el.innerHTML='';
+  const first=document.createElement('option');first.value='';first.textContent=placeholder||'Select';el.appendChild(first);
+  items.forEach(item=>{const op=document.createElement('option');op.value=String(item.value);op.textContent=String(item.label);el.appendChild(op);});
+}
+window.openManualAddProfileToCrate=function(encodedCrateNo){
+  if(currentUserRole!=='Admin') return showToast('Admin access is required to add a profile to a crate.','warning');
+  ensureManualCrateAddModal();
+  manualCrateAddTarget=decodeURIComponent(String(encodedCrateNo||''));
+  const rows=getPackingContainerRecords(activePackingMonth,activePackingContainer).filter(x=>String(x.crateNo||'').trim()===manualCrateAddTarget);
+  if(!rows.length) return showToast('Crate not found in the selected month/container. Refresh the Packing List and try again.','error');
+  const meta=document.getElementById('manualCrateAddMeta');
+  if(meta)meta.textContent=`${manualCrateAddTarget} • ${activePackingMonth} • ${activePackingContainer}`;
+  const profiles=[...new Set(masterData.map(x=>String(x.profile||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  manualCrateAddSetOptions('manualCrateProfile',profiles.map(v=>({value:v,label:v})),'Select Profile');
+  manualCrateAddSetOptions('manualCrateItemCode',[],'Select Item Code');
+  manualCrateAddSetOptions('manualCrateLength',[],'Select Length');
+  document.getElementById('manualCratePcsQty').value='';
+  const modal=document.getElementById('manualCrateAddModal');modal.style.display='flex';
+  manualCrateProfileChanged();
+};
+window.closeManualAddProfileModal=function(){const modal=document.getElementById('manualCrateAddModal');if(modal)modal.style.display='none';};
+window.manualCrateProfileChanged=function(){
+  const profile=document.getElementById('manualCrateProfile')?.value||'';
+  const items=[...new Set(masterData.filter(x=>String(x.profile||'').trim()===profile).map(x=>String(x.itemCode||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  manualCrateAddSetOptions('manualCrateItemCode',items.map(v=>({value:v,label:v})),'Select Item Code');
+  manualCrateItemChanged();
+};
+window.manualCrateItemChanged=function(){
+  const profile=document.getElementById('manualCrateProfile')?.value||'';
+  const code=document.getElementById('manualCrateItemCode')?.value||'';
+  const lengths=[...new Set(masterData.filter(x=>String(x.profile||'').trim()===profile&&String(x.itemCode||'').trim()===code).map(x=>cleanLen(x.length)).filter(Boolean))].sort((a,b)=>(Number(a)||0)-(Number(b)||0));
+  manualCrateAddSetOptions('manualCrateLength',lengths.map(v=>({value:v,label:`${v} mm`})),'Select Length');
+  const m=masterData.find(x=>String(x.profile||'').trim()===profile&&String(x.itemCode||'').trim()===code&&cleanLen(x.length)===cleanLen(document.getElementById('manualCrateLength')?.value));
+  const preview=document.getElementById('manualCrateAddPreview');
+  if(preview)preview.textContent=m?`Unit weight: ${(Number(m.unitWeight)||0).toFixed(3)} kg/Pcs • Crate: ${manualCrateAddTarget}`:`Select a profile, item code and length to continue.`;
+};
+window.saveManualProfileToCrate=async function(){
+  if(isAppBusy)return showToast('A save is already in progress. Please wait.','info');
+  if(currentUserRole!=='Admin')return showToast('Admin access is required.','warning');
+  const profile=document.getElementById('manualCrateProfile')?.value||'';
+  const itemCode=document.getElementById('manualCrateItemCode')?.value||'';
+  const length=cleanLen(document.getElementById('manualCrateLength')?.value||'');
+  const qty=Number(document.getElementById('manualCratePcsQty')?.value);
+  if(!manualCrateAddTarget||!profile||!itemCode||!length||!Number.isInteger(qty)||qty<=0)
+    return showToast('Select Profile, Item Code, Length and enter a whole PCS quantity above 0.','warning');
+  const catalog=masterData.find(x=>String(x.profile||'').trim()===profile&&String(x.itemCode||'').trim()===itemCode&&cleanLen(x.length)===length);
+  if(!catalog)return showToast('Selected item was not found in Master Catalog.','error');
+  const targetRows=getPackingContainerRecords(activePackingMonth,activePackingContainer).filter(x=>String(x.crateNo||'').trim()===manualCrateAddTarget);
+  if(!targetRows.length)return showToast('This crate is no longer in the selected container. Refresh and try again.','error');
+  const dup=targetRows.find(x=>String(x.profile||'').trim()===profile&&String(x.itemCode||'').trim()===itemCode&&cleanLen(x.length)===length);
+  if(dup)return showToast('This profile / item code / length already exists in this crate. Edit its existing PCS quantity to avoid duplicate records.','warning');
+  isAppBusy=true;
+  const btn=document.getElementById('manualCrateAddSaveBtn');const old=btn?.innerHTML;
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Saving...';}
+  try{
+    const date=new Date().toISOString().slice(0,10);
+    const existingPl=targetRows.find(x=>x.plNumber)?.plNumber;
+    const unitWeight=Number(catalog.unitWeight)||0;
+    const weight=Number((qty*unitWeight).toFixed(3));
+    const row={
+      pl_number:existingPl||`Manual-${date}`,
+      po_number:null,
+      shipment_month:activePackingMonth||new Date().toLocaleString('en-US',{month:'long'}),
+      container:activePackingContainer||'1st Container',
+      crate_no:manualCrateAddTarget,
+      profile,item_code:itemCode,length,
+      box_qty:1,pcs_qty:qty,net_weight:weight,gross_weight:weight,packing_date:date
+    };
+    const {data,error}=await supabaseClient.from('packing_list').insert([row]).select().single();
+    if(error)throw error;
+    packingLists.unshift({id:data?.id||-Date.now(),plNumber:row.pl_number,poNumber:null,month:row.shipment_month,container:row.container,crateNo:row.crate_no,profile,itemCode,length,boxQty:1,pcsQty:qty,netWeight:weight,grossWeight:weight,date});
+    aisRegisterUndo(`Packing List • ${manualCrateAddTarget} • ${profile}`,async()=>{
+      if(!data?.id) throw new Error('Saved row ID is unavailable; refresh data before undoing this entry.');
+      const {error:undoError}=await supabaseClient.from('packing_list').delete().eq('id',data.id);
+      if(undoError) throw undoError;
+      packingLists=packingLists.filter(x=>String(x.id)!==String(data.id));
+      renderPackingListTable();renderDashboard();renderBalanceWorkTable();
+    },'packingListTab');
+    closeManualAddProfileModal();
+    renderPackingListTable();renderDashboard();renderBalanceWorkTable();
+    showToast(`${profile} / ${itemCode} (${qty} Pcs) added to ${manualCrateAddTarget}.`,'success');
+  }catch(e){console.error('Manual crate profile add failed:',e);showToast(`Could not add profile: ${e?.message||e}`,'error');}
+  finally{isAppBusy=false;if(btn){btn.disabled=false;btn.innerHTML=old||'<i class="fa-solid fa-plus"></i> Add to This Crate';}}
+};
 
 function renderHistoryData() { 
     try {
