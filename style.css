@@ -2903,3 +2903,49 @@ tbody tr:hover{background:rgba(94,187,78,.055)!important}
     gap: 5px !important;
   }
 }
+
+/* Next PL stock-stage breakdown needs a wider, horizontally scrollable table. */
+.next-pl-table { min-width: 1840px; }
+.next-pl-table th { line-height: 1.35; }
+.next-pl-table td small { line-height: 1.35; }
+
+
+/* Next PL summary table exports and compact professional toolbar */
+.next-pl-summary-head {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-bottom:4px;
+}
+.next-pl-summary-actions {
+  display:flex;
+  align-items:center;
+  gap:7px;
+  flex-shrink:0;
+}
+.next-pl-summary-actions .btn {
+  min-height:32px;
+  padding:6px 10px;
+  border:0;
+  border-radius:8px;
+  font-size:12px;
+  font-weight:800;
+  box-shadow:0 2px 5px rgba(15,23,42,.10);
+}
+.next-pl-summary-actions .next-pl-summary-excel {
+  background:#0f766e;
+  color:#fff;
+}
+.next-pl-summary-actions .next-pl-summary-pdf {
+  background:#dc2626;
+  color:#fff;
+}
+.next-pl-summary-actions .btn:hover { filter:brightness(.96); transform:translateY(-1px); }
+.next-pl-summary-card .next-pl-summary-table { min-width:720px; }
+@media (max-width:700px) {
+  .next-pl-summary-head { align-items:flex-start; }
+  .next-pl-summary-actions { width:100%; }
+  .next-pl-summary-actions .btn { flex:1; }
+}

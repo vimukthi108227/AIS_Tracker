@@ -1489,7 +1489,12 @@ function nextPlRefreshFilters(rows){
   poSel.innerHTML='<option value="">All POs</option>'+pos.map(x=>`<option value="${nextPlEsc(x)}">${nextPlEsc(x)}</option>`).join('');
   pfSel.innerHTML='<option value="">All Profiles</option>'+pfs.map(x=>`<option value="${nextPlEsc(x)}">${nextPlEsc(x)}</option>`).join('');
   if(pos.includes(poCur))poSel.value=poCur; if(pfs.some(x=>nextPlSameProfile(x,pfCur)))pfSel.value=pfs.find(x=>nextPlSameProfile(x,pfCur))||'';
-  if(lfSel){ const ls=[...new Set(rows.map(r=>cleanLen(r.length)).filter(Boolean))].sort((a,b)=>Number(a)-Number(b)); lfSel.innerHTML='<option value="">All Lengths</option>'+ls.map(x=>`<option value="${nextPlEsc(x)}">${nextPlEsc(x)} mm</option>`).join(''); if(ls.includes(cleanLen(lfCur)))lfSel.value=cleanLen(lfCur); }
+  if(lfSel){
+    const lengthRows=rows.filter(r=>(!poSel.value||r.poNumber===poSel.value)&&(!pfSel.value||nextPlSameProfile(r.profile,pfSel.value)));
+    const ls=[...new Set(lengthRows.map(r=>cleanLen(r.length)).filter(Boolean))].sort((a,b)=>Number(a)-Number(b));
+    lfSel.innerHTML='<option value="">All Lengths</option>'+ls.map(x=>`<option value="${nextPlEsc(x)}">${nextPlEsc(x)} mm</option>`).join('');
+    if(ls.includes(cleanLen(lfCur)))lfSel.value=cleanLen(lfCur); else lfSel.value='';
+  }
 }
 function nextPlSetQty(rowKey,value){
   const row=nextPlGetRows().find(r=>r.rowKey===String(rowKey)); if(!row)return;
@@ -1515,7 +1520,7 @@ function nextPlFilteredRows(){
   let filtered=rows.filter(r=>(!po||r.poNumber===po)&&(!pf||nextPlSameProfile(r.profile,pf))&&(!lf||cleanLen(r.length)===cleanLen(lf)));
   if(mode==='selected') filtered=filtered.filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
   else if(mode==='stock') filtered=filtered.filter(r=>r.availableForPo>0 && r.pendingQty>0);
-  else if(mode==='cut') filtered=filtered.filter(r=>r.needCutQty>0 && r.pendingQty>0);
+  else if(mode==='cut') filtered=filtered.filter(r=>Math.max(0,nextPlNum(nextPlSelection[r.rowKey])-Math.max(0,r.availableForPo))>0 && r.pendingQty>0);
   else if(mode==='pending') filtered=filtered.filter(r=>r.pendingQty>0);
   else {
     // Suggested: show lines that can actually contribute to the next PL. If an
@@ -1710,6 +1715,35 @@ function nextPlRenderShipmentBalance(rows){
   </div><div class="next-pl-shipment-note"><b>${nextPlEsc(poSel.value)} • ${nextPlEsc(pfSel.value)} • ${nextPlEsc(lenSel.value)} mm</b> — Full shipment balance is the default planning quantity. Edit <b>Next PL Select Pcs</b> only when the target weight requires a reduction.</div>`;
 }
 
+function nextPlExportSummaryTable(which, format){
+  const bodyId=which==='profile'?'nextPlProfileSummaryBody':'nextPlPoSummaryBody';
+  const body=document.getElementById(bodyId), table=body?.closest('table');
+  if(!body||!table){showToast('Summary table is not available yet.','warning');return;}
+  const title=which==='profile'?'AIS Tracker - Next PL Profile Summary':'AIS Tracker - PO-wise Next PL Plan';
+  const base=which==='profile'?'AIS_Next_PL_Profile_Summary':'AIS_Next_PL_PO_Wise_Plan';
+  const headers=Array.from(table.querySelectorAll('thead th')).map(th=>(th.innerText||th.textContent||'').replace(/\s+/g,' ').trim());
+  const readRow=tr=>Array.from(tr.querySelectorAll('td')).map(td=>(td.innerText||td.textContent||'').replace(/\s+/g,' ').trim());
+  const bodyRows=Array.from(body.querySelectorAll('tr')).filter(tr=>!tr.querySelector('.next-pl-summary-empty')).map(readRow);
+  const foot=table.querySelector('tfoot');
+  const footRows=foot?Array.from(foot.querySelectorAll('tr')).map(readRow):[];
+  if(!bodyRows.length){showToast('No summary rows available to export. Select planning Pcs or use Auto Build first.','warning');return;}
+  const aoa=[headers,...bodyRows,...footRows];
+  const stamp=new Date().toISOString().slice(0,10);
+  if(format==='excel'){
+    if(typeof XLSX==='undefined'||!XLSX.utils||!XLSX.writeFile){showToast('Excel export library is not loaded.','error');return;}
+    const wb=XLSX.utils.book_new(), ws=XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols']=headers.map((h,i)=>({wch:Math.min(28,Math.max(12,String(h).length,...aoa.slice(1).map(r=>String(r[i]||'').length))+2)}));
+    XLSX.utils.book_append_sheet(wb,ws,which==='profile'?'Profile Summary':'PO-wise Plan');
+    XLSX.writeFile(wb,`${base}_${stamp}.xlsx`);
+    showToast('Summary Excel downloaded.','success');
+    return;
+  }
+  const objects=bodyRows.map(row=>Object.fromEntries(headers.map((h,i)=>[h,row[i]||''])));
+  if(footRows.length){
+    footRows.forEach((row,idx)=>objects.push(Object.fromEntries(headers.map((h,i)=>[h,row[i]||'']))));
+  }
+  exportDataToPdf(objects,`${base}_${stamp}`,title,'Next PL planning summary');
+}
 function nextPlRenderProfileSummary(rows){
   const box=document.getElementById('nextPlProfileSummaryBody'), poBox=document.getElementById('nextPlPoSummaryBody'); if(!box||!poBox)return;
   const selectedRows=(rows||[]).filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
@@ -1834,24 +1868,28 @@ function renderNextPlPlanning(){
     if(!uniqueStockKeys.has(r.key)){availableWeight+=r.stockTotal*r.unitWeight;uniqueStockKeys.add(r.key);}
   });
   const remainingMin=Math.max(0,summary.targetMin-currentPlWeight), remainingMax=Math.max(0,summary.targetMax-currentPlWeight);
-  if(!rows.length)body.innerHTML='<tr><td colspan="18" style="padding:28px;text-align:center;color:#64748b;font-weight:800;">No pending PO lines with matching Master Catalog data.</td></tr>';
+  if(!rows.length)body.innerHTML='<tr><td colspan="21" style="padding:28px;text-align:center;color:#64748b;font-weight:800;">No pending PO lines with matching Master Catalog data.</td></tr>';
   else body.innerHTML=rows.map((r,i)=>`<tr class="${r.excluded?'next-pl-excluded':''}">
     <td><span style="display:inline-block;min-width:25px;padding:3px 6px;border-radius:999px;background:${i<3?'#dcfce7':'#f1f5f9'};color:${i<3?'#047857':'#475569'};font-weight:900;">${i+1}</span></td>
     <td>${nextPlEsc(r.date||'-')}</td><td><b>${nextPlEsc(r.poNumber)}</b></td><td><b>${nextPlEsc(r.profile)}</b></td><td>${nextPlEsc(r.itemCode||'-')}</td><td>${nextPlEsc(r.length)} mm</td>
-    <td>${r.unitWeight.toFixed(4)} kg</td><td class="next-pl-pending"><b>${r.pendingQty.toLocaleString()}</b> <small style="display:block;color:#be123c;font-weight:800;">${r.remainingPoWeight.toFixed(2)} kg</small></td><td>${r.currentPlQty.toLocaleString()} <small style="display:block;color:#047857;font-weight:800;">${r.currentPlWeight.toFixed(2)} kg</small></td><td>${r.stockTotal.toLocaleString()} <small style="display:block;color:#0f766e;font-weight:800;">${(r.stockTotal*r.unitWeight).toFixed(2)} kg</small></td><td>${r.stockReady.toLocaleString()} <small style="display:block;color:#0f766e;font-weight:800;">${(r.stockReady*r.unitWeight).toFixed(2)} kg</small></td><td>${r.stockWip.toLocaleString()} <small style="display:block;color:#b45309;font-weight:800;">${(r.stockWip*r.unitWeight).toFixed(2)} kg</small></td><td class="next-pl-available"><b>${r.availableForPo.toLocaleString()}</b> <small style="display:block;color:#047857;font-weight:800;">${(r.availableForPo*r.unitWeight).toFixed(2)} kg</small></td><td><input class="next-pl-select-input ${nextPlManualOverride[r.rowKey]?'manual':''}" type="number" min="0" max="${Math.floor(r.pendingQty)}" step="1" value="${Math.floor(r.selectedQty)}" ${r.excluded?'disabled':''} title="Click and edit Next PL Select Pcs. Maximum: shipment balance ${Math.floor(r.pendingQty).toLocaleString()} Pcs." onclick="this.select()" onfocus="this.select()" onchange="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)"></td><td class="next-pl-weight"><b>${(r.selectedQty*r.unitWeight).toFixed(2)} kg</b></td><td class="next-pl-pending-cut"><b>${r.planNeedCutQty.toLocaleString()}</b><small style="display:block;color:#be123c;font-weight:800;">pending cut</small></td><td>${r.planNeedCutWeight.toFixed(2)} kg</td><td><label class="next-pl-skip"><input type="checkbox" ${r.excluded?'checked':''} onchange="nextPlToggleExclude('${nextPlEsc(r.rowKey)}',this.checked)"> Skip</label>${nextPlManualOverride[r.rowKey]?'<div class="next-pl-manual-badge">Manual / Cut</div>':''}</td>
+    <td>${r.unitWeight.toFixed(4)} kg</td><td class="next-pl-pending"><b>${r.pendingQty.toLocaleString()}</b> <small style="display:block;color:#be123c;font-weight:800;">${r.remainingPoWeight.toFixed(2)} kg</small></td><td>${r.currentPlQty.toLocaleString()} <small style="display:block;color:#047857;font-weight:800;">${r.currentPlWeight.toFixed(2)} kg</small></td><td>${r.stockTotal.toLocaleString()} <small style="display:block;color:#0f766e;font-weight:800;">${(r.stockTotal*r.unitWeight).toFixed(2)} kg</small></td><td>${r.stockCut.toLocaleString()} <small style="display:block;color:#0369a1;font-weight:800;">${(r.stockCut*r.unitWeight).toFixed(2)} kg</small></td><td>${r.stockPunch.toLocaleString()} <small style="display:block;color:#c2410c;font-weight:800;">${(r.stockPunch*r.unitWeight).toFixed(2)} kg</small></td><td>${r.stockWrap.toLocaleString()} <small style="display:block;color:#a21caf;font-weight:800;">${(r.stockWrap*r.unitWeight).toFixed(2)} kg</small></td><td>${r.stockBox.toLocaleString()} <small style="display:block;color:#047857;font-weight:800;">${(r.stockBox*r.unitWeight).toFixed(2)} kg</small></td><td>${r.stockCrate.toLocaleString()} <small style="display:block;color:#047857;font-weight:800;">${(r.stockCrate*r.unitWeight).toFixed(2)} kg</small></td><td class="next-pl-available"><b>${r.availableForPo.toLocaleString()}</b> <small style="display:block;color:#047857;font-weight:800;">${(r.availableForPo*r.unitWeight).toFixed(2)} kg</small></td><td><input class="next-pl-select-input ${nextPlManualOverride[r.rowKey]?'manual':''}" type="number" min="0" max="${Math.floor(r.pendingQty)}" step="1" value="${Math.floor(r.selectedQty)}" ${r.excluded?'disabled':''} title="Click and edit Next PL Select Pcs. Maximum: shipment balance ${Math.floor(r.pendingQty).toLocaleString()} Pcs." onclick="this.select()" onfocus="this.select()" onchange="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)"></td><td class="next-pl-weight"><b>${(r.selectedQty*r.unitWeight).toFixed(2)} kg</b></td><td class="next-pl-pending-cut"><b>${r.planNeedCutQty.toLocaleString()}</b><small style="display:block;color:#be123c;font-weight:800;">pending cut</small></td><td>${r.planNeedCutWeight.toFixed(2)} kg</td><td><label class="next-pl-skip"><input type="checkbox" ${r.excluded?'checked':''} onchange="nextPlToggleExclude('${nextPlEsc(r.rowKey)}',this.checked)"> Skip</label>${nextPlManualOverride[r.rowKey]?'<div class="next-pl-manual-badge">Manual / Cut</div>':''}</td>
   </tr>`).join('');
   const totalBalanceWeight=rows.reduce((s,r)=>s+Math.max(0,r.remainingPoWeight),0);
   const totalCurrentPlWeight=rows.reduce((s,r)=>s+Math.max(0,r.currentPlWeight),0);
-  const totalStockWeight=rows.reduce((s,r)=>s+Math.max(0,r.stockTotal)*Math.max(0,r.unitWeight),0);
-  const totalReadyWeight=rows.reduce((s,r)=>s+Math.max(0,r.stockReady)*Math.max(0,r.unitWeight),0);
-  const totalWipWeight=rows.reduce((s,r)=>s+Math.max(0,r.stockWip)*Math.max(0,r.unitWeight),0);
+  const uniqueStockRows=[]; const countedStockKeys=new Set(); rows.forEach(r=>{if(!countedStockKeys.has(r.key)){countedStockKeys.add(r.key);uniqueStockRows.push(r);}});
+  const totalStockWeight=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockTotal)*Math.max(0,r.unitWeight),0);
+  const totalCutWeight=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockCut)*Math.max(0,r.unitWeight),0);
+  const totalPunchWeight=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockPunch)*Math.max(0,r.unitWeight),0);
+  const totalWrapWeight=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockWrap)*Math.max(0,r.unitWeight),0);
+  const totalBoxWeight=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockBox)*Math.max(0,r.unitWeight),0);
+  const totalCrateWeight=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockCrate)*Math.max(0,r.unitWeight),0);
   const totalAvailableWeight=rows.reduce((s,r)=>s+Math.max(0,r.availableForPo)*Math.max(0,r.unitWeight),0);
   const totalNeedCutWeight=rows.reduce((s,r)=>s+Math.max(0,r.planNeedCutWeight||0),0);
   const totalSelectedPcs=rows.reduce((s,r)=>s+Math.max(0,r.selectedQty),0);
   const totalSelectedWeight=rows.reduce((s,r)=>s+Math.max(0,r.selectedQty)*Math.max(0,r.unitWeight),0);
   const mainFoot=document.getElementById('nextPlPlanningFoot');
-  const totalBalancePcs=rows.reduce((s,r)=>s+Math.max(0,r.pendingQty),0), totalCurrentPlPcs=rows.reduce((s,r)=>s+Math.max(0,r.currentPlQty),0), totalStockPcs=rows.reduce((s,r)=>s+Math.max(0,r.stockTotal),0), totalReadyPcs=rows.reduce((s,r)=>s+Math.max(0,r.stockReady),0), totalWipPcs=rows.reduce((s,r)=>s+Math.max(0,r.stockWip),0), totalAvailablePcs=rows.reduce((s,r)=>s+Math.max(0,r.availableForPo),0), totalNeedCutPcs=rows.reduce((s,r)=>s+Math.max(0,r.planNeedCutQty||0),0);
-  if(mainFoot)mainFoot.innerHTML=`<tr class="next-pl-total-row"><td colspan="7">TOTAL — VISIBLE PO LINES</td><td><b>${totalBalancePcs.toLocaleString()} Pcs</b><small>${totalBalanceWeight.toFixed(2)} kg</small></td><td><b>${totalCurrentPlPcs.toLocaleString()} Pcs</b><small>${totalCurrentPlWeight.toFixed(2)} kg</small></td><td><b>${totalStockPcs.toLocaleString()} Pcs</b><small>${totalStockWeight.toFixed(2)} kg</small></td><td><b>${totalReadyPcs.toLocaleString()} Pcs</b><small>${totalReadyWeight.toFixed(2)} kg</small></td><td><b>${totalWipPcs.toLocaleString()} Pcs</b><small>${totalWipWeight.toFixed(2)} kg</small></td><td><b>${totalAvailablePcs.toLocaleString()} Pcs</b><small>${totalAvailableWeight.toFixed(2)} kg</small></td><td><b>${totalSelectedPcs.toLocaleString()} Pcs</b></td><td><b>${totalSelectedWeight.toFixed(2)} kg</b></td><td><b>${totalNeedCutPcs.toLocaleString()} Pcs</b></td><td><b>${totalNeedCutWeight.toFixed(2)} kg</b></td><td>-</td></tr>`;
+  const totalBalancePcs=rows.reduce((s,r)=>s+Math.max(0,r.pendingQty),0), totalCurrentPlPcs=rows.reduce((s,r)=>s+Math.max(0,r.currentPlQty),0), totalStockPcs=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockTotal),0), totalCutPcs=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockCut),0), totalPunchPcs=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockPunch),0), totalWrapPcs=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockWrap),0), totalBoxPcs=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockBox),0), totalCratePcs=uniqueStockRows.reduce((s,r)=>s+Math.max(0,r.stockCrate),0), totalAvailablePcs=rows.reduce((s,r)=>s+Math.max(0,r.availableForPo),0), totalNeedCutPcs=rows.reduce((s,r)=>s+Math.max(0,r.planNeedCutQty||0),0);
+  if(mainFoot)mainFoot.innerHTML=`<tr class="next-pl-total-row"><td colspan="7">TOTAL — VISIBLE PO LINES</td><td><b>${totalBalancePcs.toLocaleString()} Pcs</b><small>${totalBalanceWeight.toFixed(2)} kg</small></td><td><b>${totalCurrentPlPcs.toLocaleString()} Pcs</b><small>${totalCurrentPlWeight.toFixed(2)} kg</small></td><td><b>${totalStockPcs.toLocaleString()} Pcs</b><small>${totalStockWeight.toFixed(2)} kg</small></td><td><b>${totalCutPcs.toLocaleString()} Pcs</b><small>${totalCutWeight.toFixed(2)} kg</small></td><td><b>${totalPunchPcs.toLocaleString()} Pcs</b><small>${totalPunchWeight.toFixed(2)} kg</small></td><td><b>${totalWrapPcs.toLocaleString()} Pcs</b><small>${totalWrapWeight.toFixed(2)} kg</small></td><td><b>${totalBoxPcs.toLocaleString()} Pcs</b><small>${totalBoxWeight.toFixed(2)} kg</small></td><td><b>${totalCratePcs.toLocaleString()} Pcs</b><small>${totalCrateWeight.toFixed(2)} kg</small></td><td><b>${totalAvailablePcs.toLocaleString()} Pcs</b><small>${totalAvailableWeight.toFixed(2)} kg</small></td><td><b>${totalSelectedPcs.toLocaleString()} Pcs</b></td><td><b>${totalSelectedWeight.toFixed(2)} kg</b></td><td><b>${totalNeedCutPcs.toLocaleString()} Pcs</b></td><td><b>${totalNeedCutWeight.toFixed(2)} kg</b></td><td>-</td></tr>`;
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
   set('nextPlCurrentPLWeight',`${currentPlWeight.toFixed(2)} kg`); set('nextPlCurrentPLPcs',`${summary.pcs.toLocaleString()} Pcs`); set('nextPlRemainingMin',`${remainingMin.toFixed(2)} kg`); set('nextPlRemainingMax',`${remainingMax.toFixed(2)} kg`);
   set('nextPlSelectedWeight',`${selectedWeight.toFixed(2)} kg`); set('nextPlTotalNextWeight',`${(currentPlWeight+selectedWeight).toFixed(2)} kg`); set('nextPlPendingAfterNextWeight',`${pendingAfterNextWeight.toFixed(2)} kg`); set('nextPlSelectedPcs',selectedPcs.toLocaleString()); set('nextPlSelectedLines',`${selectedLines} selected lines`); set('nextPlAvailableWeight',`${availableWeight.toFixed(2)} kg`); set('nextPlToMin',`${Math.max(0,remainingMin-selectedWeight).toFixed(2)} kg`); set('nextPlToMax',`${Math.max(0,remainingMax-selectedWeight).toFixed(2)} kg`); set('nextPlNeedCutWeight',`${cutWeight.toFixed(2)} kg`);
@@ -1925,8 +1963,8 @@ function nextPlExportExcel(){
   const summary=nextPlGetCurrentSummary(); const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
   if(!rows.length)return showToast('No selected planning lines to export.','warning');
   if(typeof XLSX==='undefined'||!XLSX.utils||!XLSX.writeFile)return showToast('Excel export library is not loaded.','error');
-  const out=rows.map((r,i)=>({Priority:i+1,'PO Date':r.date,'PO Number':r.poNumber,Profile:r.profile,'Item Code':r.itemCode,Length:r.length,'Unit Weight (kg)':r.unitWeight,'Original PO Pending (Pcs)':r.originalPendingQty,'Already in Current PL (Pcs)':r.currentPlQty,'Remaining PO Qty (Pcs)':r.pendingQty,'Current Stock (Pcs)':r.stockTotal,'Need Cut (Pcs)':r.needCutQty,'Need Cut Weight (kg)':r.needCutWeight,'Selected Pcs':nextPlNum(nextPlSelection[r.rowKey]),'Selected Weight (kg)':nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight}));
-  out.push({'PO Date':'','PO Number':'TOTAL CURRENT PL','Profile':'','Item Code':'','Length':'','Unit Weight (kg)':'','Original PO Pending (Pcs)':'','Already in Current PL (Pcs)':summary.pcs,'Remaining PO Qty (Pcs)':'','Current Stock (Pcs)':'','Need Cut (Pcs)':'','Need Cut Weight (kg)':'','Selected Pcs':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey]),0),'Selected Weight (kg)':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0)+summary.weight});
+  const out=rows.map((r,i)=>{const selected=nextPlNum(nextPlSelection[r.rowKey]);const pendingCut=Math.max(0,selected-Math.max(0,r.availableForPo));return {Priority:i+1,'PO Date':r.date,'PO Number':r.poNumber,Profile:r.profile,'Item Code':r.itemCode,Length:r.length,'Unit Weight (kg)':r.unitWeight,'Original PO Pending (Pcs)':r.originalPendingQty,'Already in Current PL (Pcs)':r.currentPlQty,'Remaining PO Qty (Pcs)':r.pendingQty,'Stock After Current PL (Pcs)':r.stockTotal,'Cut Stock (Pcs)':r.stockCut,'Punch Stock (Pcs)':r.stockPunch,'Wrapping Stock (Pcs)':r.stockWrap,'Box Stock (Pcs)':r.stockBox,'Crate Stock (Pcs)':r.stockCrate,'Available for Shipment (Pcs)':r.availableForPo,'Need Cut (Pcs)':pendingCut,'Need Cut Weight (kg)':pendingCut*r.unitWeight,'Selected Pcs':selected,'Selected Weight (kg)':selected*r.unitWeight};});
+  out.push({'PO Date':'','PO Number':'TOTAL CURRENT PL','Profile':'','Item Code':'','Length':'','Unit Weight (kg)':'','Original PO Pending (Pcs)':'','Already in Current PL (Pcs)':summary.pcs,'Remaining PO Qty (Pcs)':'','Stock After Current PL (Pcs)':'','Cut Stock (Pcs)':'','Punch Stock (Pcs)':'','Wrapping Stock (Pcs)':'','Box Stock (Pcs)':'','Crate Stock (Pcs)':'','Available for Shipment (Pcs)':'','Need Cut (Pcs)':'','Need Cut Weight (kg)':'','Selected Pcs':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey]),0),'Selected Weight (kg)':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0)+summary.weight});
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(out),'Next PL Plan');XLSX.writeFile(wb,`AIS_Next_PL_15-19T_Plan_${new Date().toISOString().slice(0,10)}.xlsx`);showToast('Next PL planning Excel downloaded.','success');
 }
 function nextPlExportPdf(){
@@ -1942,11 +1980,18 @@ function nextPlExportPdf(){
     'Length':`${r.length} mm`,
     'Unit Wt (kg)':r.unitWeight.toFixed(4),
     'Shipment Balance (Pcs)':r.pendingQty,
-    'Current Stock (Pcs)':r.stockTotal,
+    'Already in Current PL (Pcs)':r.currentPlQty,
+    'Stock After Current PL (Pcs)':r.stockTotal,
+    'Cut Stock (Pcs)':r.stockCut,
+    'Punch Stock (Pcs)':r.stockPunch,
+    'Wrapping Stock (Pcs)':r.stockWrap,
+    'Box Stock (Pcs)':r.stockBox,
+    'Crate Stock (Pcs)':r.stockCrate,
+    'Available for Shipment (Pcs)':r.availableForPo,
     'Next PL Select (Pcs)':nextPlNum(nextPlSelection[r.rowKey]),
     'Next PL Weight (kg)':(nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight).toFixed(2),
-    'Pending Cut (Pcs)':r.needCutQty,
-    'Pending Cut Weight (kg)':r.needCutWeight.toFixed(2)
+    'Pending Cut (Pcs)':Math.max(0,nextPlNum(nextPlSelection[r.rowKey])-Math.max(0,r.availableForPo)),
+    'Pending Cut Weight (kg)':(Math.max(0,nextPlNum(nextPlSelection[r.rowKey])-Math.max(0,r.availableForPo))*r.unitWeight).toFixed(2)
   }));
   data.push({
     'Priority':'', 'PO Date':'', 'PO Number':'TOTAL', 'Profile':'', 'Item Code':'', 'Length':'',
@@ -1954,8 +1999,8 @@ function nextPlExportPdf(){
     'Current Stock (Pcs)':rows.reduce((s,r)=>s+Math.max(0,r.stockTotal),0),
     'Next PL Select (Pcs)':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey]),0),
     'Next PL Weight (kg)':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0).toFixed(2),
-    'Pending Cut (Pcs)':rows.reduce((s,r)=>s+Math.max(0,r.needCutQty),0),
-    'Pending Cut Weight (kg)':rows.reduce((s,r)=>s+Math.max(0,r.needCutWeight),0).toFixed(2)
+    'Pending Cut (Pcs)':rows.reduce((s,r)=>s+Math.max(0,nextPlNum(nextPlSelection[r.rowKey])-Math.max(0,r.availableForPo)),0),
+    'Pending Cut Weight (kg)':rows.reduce((s,r)=>s+Math.max(0,nextPlNum(nextPlSelection[r.rowKey])-Math.max(0,r.availableForPo))*Math.max(0,r.unitWeight),0).toFixed(2)
   });
   exportDataToPdf(data,'AIS_Next_PL_15-19T_Plan','AIS Tracker - Next PL 15–19T Planning',`Current PL: ${summary.weight.toFixed(2)} kg • Target: ${summary.targetMin.toLocaleString()}–${summary.targetMax.toLocaleString()} kg • Filtered planning lines`);
 }
@@ -1964,7 +2009,7 @@ function nextPlPrint(){
   const summary=nextPlGetCurrentSummary(); const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0); if(!rows.length)return showToast('No selected planning lines to print.','warning');
   const totalNew=rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0),grand=summary.weight+totalNew;
   const w=window.open('','_blank','width=1300,height=850');if(!w)return;
-  w.document.write(`<html><head><title>AIS Next PL Plan</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#0f172a}h2{margin:0 0 4px;color:#075985}p{color:#475569;font-size:12px}.kpi{display:inline-block;margin:3px 12px 3px 0;padding:7px 10px;border:1px solid #cbd5e1;border-radius:6px}table{width:100%;border-collapse:collapse;margin-top:15px;font-size:10px}th,td{border:1px solid #cbd5e1;padding:5px;text-align:center}th{background:#075985;color:#fff}tfoot td{font-weight:900;background:#f1f5f9}</style></head><body><h2>AIS Tracker • Next PL 15–19T Planning</h2><p><span class="kpi">Current PL: <b>${summary.weight.toFixed(2)} kg</b></span><span class="kpi">New Selection: <b>${totalNew.toFixed(2)} kg</b></span><span class="kpi">Total Planned: <b>${grand.toFixed(2)} kg</b></span><span class="kpi">Target: <b>${summary.targetMin.toLocaleString()}–${summary.targetMax.toLocaleString()} kg</b></span></p><table><thead><tr><th>Priority</th><th>PO</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Remaining PO</th><th>Stock</th><th>Need Cut</th><th>Select Pcs</th><th>Unit Wt</th><th>Weight</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${nextPlEsc(r.poNumber)}</td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.itemCode)}</td><td>${nextPlEsc(r.length)} mm</td><td>${r.pendingQty.toLocaleString()}</td><td>${r.stockTotal.toLocaleString()}</td><td>${r.needCutQty.toLocaleString()}</td><td>${nextPlNum(nextPlSelection[r.rowKey]).toLocaleString()}</td><td>${r.unitWeight.toFixed(4)}</td><td>${(nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight).toFixed(2)}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="10">CURRENT + NEW TOTAL WEIGHT</td><td>${grand.toFixed(2)} kg</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`);w.document.close();
+  w.document.write(`<html><head><title>AIS Next PL Plan</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#0f172a}h2{margin:0 0 4px;color:#075985}p{color:#475569;font-size:12px}.kpi{display:inline-block;margin:3px 12px 3px 0;padding:7px 10px;border:1px solid #cbd5e1;border-radius:6px}table{width:100%;border-collapse:collapse;margin-top:15px;font-size:10px}th,td{border:1px solid #cbd5e1;padding:5px;text-align:center}th{background:#075985;color:#fff}tfoot td{font-weight:900;background:#f1f5f9}</style></head><body><h2>AIS Tracker • Next PL 15–19T Planning</h2><p><span class="kpi">Current PL: <b>${summary.weight.toFixed(2)} kg</b></span><span class="kpi">New Selection: <b>${totalNew.toFixed(2)} kg</b></span><span class="kpi">Total Planned: <b>${grand.toFixed(2)} kg</b></span><span class="kpi">Target: <b>${summary.targetMin.toLocaleString()}–${summary.targetMax.toLocaleString()} kg</b></span></p><table><thead><tr><th>Priority</th><th>PO</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Shipment Balance</th><th>Current PL</th><th>Stock After Current PL</th><th>Cut</th><th>Punch</th><th>Wrap</th><th>Box</th><th>Crate</th><th>Available</th><th>Pending Cut</th><th>Select Pcs</th><th>Unit Wt</th><th>Weight</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${nextPlEsc(r.poNumber)}</td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.itemCode)}</td><td>${nextPlEsc(r.length)} mm</td><td>${r.pendingQty.toLocaleString()}</td><td>${r.currentPlQty.toLocaleString()}</td><td>${r.stockTotal.toLocaleString()}</td><td>${r.stockCut.toLocaleString()}</td><td>${r.stockPunch.toLocaleString()}</td><td>${r.stockWrap.toLocaleString()}</td><td>${r.stockBox.toLocaleString()}</td><td>${r.stockCrate.toLocaleString()}</td><td>${r.availableForPo.toLocaleString()}</td><td>${Math.max(0,nextPlNum(nextPlSelection[r.rowKey])-Math.max(0,r.availableForPo)).toLocaleString()}</td><td>${nextPlNum(nextPlSelection[r.rowKey]).toLocaleString()}</td><td>${r.unitWeight.toFixed(4)}</td><td>${(nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight).toFixed(2)}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="17">CURRENT + NEW TOTAL WEIGHT</td><td>${grand.toFixed(2)} kg</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`);w.document.close();
 }
 
 function switchTab(tabId, btn) {
@@ -3624,136 +3669,169 @@ function matchesBalanceFilter(balance, mode) {
     return true;
 }
 function isProductionOrderBalanceMode(mode) { return mode === 'all_po' || mode === 'pending_po' || mode === 'available_po'; }
+function getBalanceProfileFilterValue() { return String(document.getElementById('balanceProfileFilter')?.value || '').trim(); }
+
 function updateBalanceFilterInfo() {
     const active = getActivePackingListSelection();
     const activeLabel = `${active.month || ''} • ${active.container || ''}`.replace(/^ • | • $/g,'');
-    const mode = getPlBalanceFilterValue('balancePlFilter');
-    let text = 'Showing all active PL lines.';
-    if (mode === 'pending') text = 'Showing only active PL lines with pending balance.';
-    else if (mode === 'available') text = 'Showing only active PL lines with available balance.';
-    else if (mode === 'all_po') text = 'Showing all Production Order balance lines.';
-    else if (mode === 'pending_po') text = 'Showing only Production Orders with pending balance.';
-    else if (mode === 'available_po') text = 'Showing only Production Orders with available balance.';
+    const selectedProfile = getBalanceProfileFilterValue();
+    const text = selectedProfile ? `Profile ${selectedProfile} — showing matching active PL lines.` : 'Showing all active PL lines. Pending Cut is calculated separately for total shipment balance and Current PL.';
     const el = document.getElementById('balancePlFilterInfo'); if(el) el.textContent = `${activeLabel} — ${text}`;
-    const el2 = document.getElementById('plSummaryBalanceFilterInfo'); if(el2) el2.textContent = `${activeLabel} — ${text}`;
+    const summaryMode = getPlBalanceFilterValue('plSummaryBalanceFilter');
+    let summaryText = 'Showing all active PL lines.';
+    if (summaryMode === 'pending') summaryText = 'Showing only active PL lines with pending balance.';
+    else if (summaryMode === 'available') summaryText = 'Showing only active PL lines with available balance.';
+    else if (summaryMode === 'all_po') summaryText = 'Showing all Production Order balance lines.';
+    else if (summaryMode === 'pending_po') summaryText = 'Showing only Production Orders with pending balance.';
+    else if (summaryMode === 'available_po') summaryText = 'Showing only Production Orders with available balance.';
+    const el2 = document.getElementById('plSummaryBalanceFilterInfo'); if(el2) el2.textContent = `${activeLabel} — ${summaryText}`;
+}
+
+function getBalanceWorkRows() {
+    ensurePackingSelection();
+    const activePlMap = getActivePlBalanceMap();
+    const selectedProfile = getBalanceProfileFilterValue();
+    const shipMap = new Map();
+    (shipmentList || []).forEach(s => {
+        const k = `${String(s.poNumber).trim()}_${String(s.profile).trim()}_${cleanLen(s.length)}`;
+        shipMap.set(k, (shipMap.get(k) || 0) + (Number(s.shippedQty)||0));
+    });
+    const rows = [];
+    (masterData || []).forEach(item => {
+        const profile = String(item.profile ?? '').trim();
+        const itemCode = String(item.itemCode ?? '').trim();
+        const length = cleanLen(item.length);
+        if (selectedProfile && profile !== selectedProfile) return;
+        const key = `${profile}_${itemCode}_${length}`;
+        const plInfo = activePlMap.get(key);
+        // Balance Work intentionally displays only items present in the active Current PL.
+        if (!plInfo) return;
+
+        const cut = Math.max(0, Number(item.cutQty)||0);
+        const punch = Math.max(0, Number(item.punchQty)||0);
+        const wrap = Math.max(0, Number(item.wrapQty)||0);
+        const box = Math.max(0, Number(item.boxQty)||0);
+        const crate = Math.max(0, Number(item.crateQty)||0);
+        const wipBoxStock = cut + punch + wrap + box;
+        const totalStock = wipBoxStock + crate;
+        let shipmentBalance = 0;
+        (poList || []).forEach(po => {
+            if (String(po.profile).trim() === profile && cleanLen(po.length) === length) {
+                const shipped = shipMap.get(`${String(po.poNumber).trim()}_${String(po.profile).trim()}_${cleanLen(po.length)}`) || 0;
+                shipmentBalance += Math.max(0, (Number(po.orderQty)||0) - shipped);
+            }
+        });
+
+        const currentPlQty = Math.max(0, Number(plInfo.qty)||0);
+        const pendingCutShipment = Math.max(0, shipmentBalance - totalStock);
+        const pendingCutCurrentPl = Math.max(0, currentPlQty - totalStock);
+        const plBalance = totalStock - currentPlQty;
+        const pendingForPlanning = Math.max(pendingCutShipment, pendingCutCurrentPl);
+        const exLen = parseFloat(item.exLength) || 0;
+        const cutLen = parseFloat(item.length) || 0;
+        const pcsPerEx = exLen > 0 && cutLen > 0 ? Math.floor(exLen / cutLen) : 0;
+        const reqEx = pcsPerEx > 0 ? Math.ceil(pendingForPlanning / pcsPerEx) : 0;
+        const unboxed = pendingForPlanning + cut + punch + wrap;
+        const reqBoxes = Math.ceil(unboxed / (Number(item.boxCapacity)||100));
+        const cbBalance = getAvailableCardboard(item.profile, item.itemCode, item.length) - reqBoxes;
+        const unitWeight = Math.max(0, Number(item.unitWeight ?? item.unitWt ?? item.unit_weight)||0);
+        rows.push({
+            item, profile, itemCode, length, exLen, pcsPerEx, wipBoxStock, crate, shipmentBalance,
+            currentPlQty, totalStock, pendingCutShipment, pendingCutCurrentPl, plBalance,
+            pendingForPlanning, reqEx, unboxed, reqBoxes, cbBalance, unitWeight
+        });
+    });
+    rows.sort((a,b) => String(a.profile).localeCompare(String(b.profile), undefined, {numeric:true,sensitivity:'base'}) ||
+        String(a.itemCode).localeCompare(String(b.itemCode), undefined, {numeric:true,sensitivity:'base'}) ||
+        Number(a.length)-Number(b.length));
+    return rows;
 }
 
 function renderBalanceWorkTable() {
     try {
         const tbody = document.getElementById('balanceWorkTableBody'); if(!tbody) return;
-        ensurePackingSelection();
         const activePlMap = getActivePlBalanceMap();
-        const filterMode = getPlBalanceFilterValue('balancePlFilter');
-        const poMode = isProductionOrderBalanceMode(filterMode);
+        const profileSelect = document.getElementById('balanceProfileFilter');
+        if (profileSelect) {
+            const current = String(profileSelect.value || '');
+            const profiles = [...new Set([...activePlMap.values()].map(v => String(v.profile||'').trim()).filter(Boolean))]
+                .sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
+            profileSelect.innerHTML = '<option value="">All Profiles</option>' + profiles.map(p=>`<option value="${String(p).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}">${String(p).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}</option>`).join('');
+            if (profiles.includes(current)) profileSelect.value = current;
+        }
         updateBalanceFilterInfo();
-        let html = '';
-        let visibleRows = 0;
-        if (masterData.length === 0) {
-            html = `<tr><td colspan="14" style="color:#888;text-align:center;">No profiles available.</td></tr>`;
-        } else {
-            const shipMap = new Map();
-            shipmentList.forEach(s => { const k = `${String(s.poNumber).trim()}_${String(s.profile).trim()}_${cleanLen(s.length)}`; shipMap.set(k, (shipMap.get(k) || 0) + (Number(s.shippedQty)||0)); });
-            masterData.forEach(item => {
-                const key = `${String(item.profile).trim()}_${String(item.itemCode).trim()}_${cleanLen(item.length)}`;
-                const plInfo = activePlMap.get(key);
-
-                let currentStockTotal = (item.cutQty || 0) + (item.punchQty || 0) + (item.wrapQty || 0) + (item.boxQty || 0);
-                const crateQty = item.crateQty || 0;
-                let unshippedPoTotal = 0;
-                poList.forEach(po => {
-                    if (String(po.profile).trim() === String(item.profile).trim() && cleanLen(po.length) === cleanLen(item.length)) {
-                        const shippedForPo = shipMap.get(`${String(po.poNumber).trim()}_${String(po.profile).trim()}_${cleanLen(po.length)}`) || 0;
-                        unshippedPoTotal += Math.max(0, (Number(po.orderQty)||0) - shippedForPo);
-                    }
-                });
-
-                // Production-order balance = remaining PO quantity after available production stock.
-                const poPendingQty = Math.max(0, unshippedPoTotal - (currentStockTotal + crateQty));
-                const poBalance = (currentStockTotal + crateQty) - unshippedPoTotal;
-
-                // In Active PL mode, keep the existing PL balance calculation exactly as before.
-                // In Production Order mode, use the PO balance instead.
-                if (!poMode && !plInfo) return;
-                if (poMode && unshippedPoTotal <= 0 && filterMode === 'all_po') return;
-                const displayBalance = poMode ? poBalance : plInfo.balance;
-                if (!matchesBalanceFilter(displayBalance, filterMode)) return;
-                visibleRows++;
-
-                const maxPending = poMode
-                    ? poPendingQty
-                    : Math.max(poPendingQty, Math.max(0, -(plInfo?.balance || 0)));
-                const exLen = parseFloat(item.exLength) || 0, cutLen = parseFloat(item.length) || 0;
-                let pcsPerEx = 0, reqEx = '-';
-                if (exLen > 0 && cutLen > 0) { pcsPerEx = Math.floor(exLen / cutLen); if(pcsPerEx > 0) reqEx = Math.ceil(maxPending / pcsPerEx); }
-                const wipPcs = (item.cutQty || 0) + (item.punchQty || 0) + (item.wrapQty || 0);
-                const unboxedAndPendingPcs = maxPending + wipPcs;
-                const reqBoxes = Math.ceil(unboxedAndPendingPcs / (item.boxCapacity || 100));
-                const cbBalance = getAvailableCardboard(item.profile, item.itemCode, item.length) - reqBoxes;
-                const cbStatusHtml = cbBalance >= 0 ? `<span style="color:var(--success-color);font-weight:800;">OK (+${cbBalance})</span>` : `<span style="color:var(--warning-color);font-weight:800;"><i class="fa-solid fa-arrow-down"></i> Short ${Math.abs(cbBalance)}</span>`;
-                const bal = displayBalance;
-                const balHtml = bal >= 0
-                    ? `<span class="bw-badge bw-ok"><i class="fa-solid fa-check"></i> +${formatBalanceInt(bal)} <small>Pcs</small></span>`
-                    : `<span class="bw-badge bw-pending-pl"><i class="fa-solid fa-arrow-down"></i> ${formatBalanceInt(Math.abs(bal))} <small>Pcs</small></span>`;
-                html += `<tr class="balance-work-row"><td class="bw-profile"><b>${item.profile}</b></td><td class="bw-item"><span>${item.itemCode || '-'}</span></td><td class="bw-length">${formatBalanceLength(item.length)} mm</td><td class="bw-length">${item.exLength ? formatBalanceLength(item.exLength) : '-'} mm</td><td><span class="bw-badge bw-ex">${formatBalanceInt(pcsPerEx)}</span></td><td><span class="bw-badge bw-stock">${formatBalanceInt(currentStockTotal)} <small>Pcs</small></span></td><td><span class="bw-badge bw-crate">${formatBalanceInt(crateQty)} <small>Pcs</small></span></td><td><span class="bw-badge bw-po">${formatBalanceInt(unshippedPoTotal)} <small>Pcs</small></span></td><td><span class="bw-badge ${poPendingQty > 0 ? 'bw-pending-po' : 'bw-ok'}">${formatBalanceInt(poPendingQty)} <small>Pcs</small></span></td><td>${balHtml}</td><td><span class="bw-badge bw-exreq">${reqEx === '-' ? '-' : formatBalanceInt(reqEx)} <small>Ex</small></span></td><td><span class="bw-badge bw-unboxed">${formatBalanceInt(unboxedAndPendingPcs)} <small>Pcs</small></span></td><td><span class="bw-badge bw-boxes">${formatBalanceInt(reqBoxes)} <small>Boxes</small></span></td><td class="bw-cardboard ${cbBalance < 0 ? 'short' : 'ok'}">${cbStatusHtml}</td></tr>`;
-            });
+        const rows = getBalanceWorkRows();
+        if (!rows.length) {
+            tbody.innerHTML = `<tr><td colspan="16" style="color:#64748b;text-align:center;padding:26px;font-weight:750;"><i class="fa-solid fa-circle-info" style="color:#0e7490;margin-right:6px;"></i>No active Current PL lines match this profile.</td></tr>`;
+            return;
         }
-        if (!visibleRows && masterData.length) {
-            html = `<tr><td colspan="14" style="color:#64748b;text-align:center;padding:24px;font-weight:700;"><i class="fa-solid fa-circle-check" style="color:#10b981;margin-right:6px;"></i>No records match this balance filter.</td></tr>`;
-        }
-        tbody.innerHTML = html;
+        tbody.innerHTML = rows.map(r => {
+            const cbStatusHtml = r.cbBalance >= 0
+                ? `<span class="bw-cardboard-status ok">OK (+${formatBalanceInt(r.cbBalance)})</span>`
+                : `<span class="bw-cardboard-status short"><i class="fa-solid fa-arrow-down"></i> Short ${Math.abs(r.cbBalance)}</span>`;
+            const balHtml = r.plBalance >= 0
+                ? `<span class="bw-badge bw-ok"><i class="fa-solid fa-check"></i> +${formatBalanceInt(r.plBalance)} <small>Pcs</small></span>`
+                : `<span class="bw-badge bw-pending-pl"><i class="fa-solid fa-arrow-down"></i> ${formatBalanceInt(Math.abs(r.plBalance))} <small>Pcs</small></span>`;
+            const pendingHtml = (qty, cls) => `<span class="bw-pending-cut ${cls}"><b>${formatBalanceInt(qty)}</b><small>Pcs</small><em>${(qty*r.unitWeight).toFixed(2)} kg</em></span>`;
+            return `<tr class="balance-work-row">
+                <td class="bw-profile"><b>${r.profile}</b></td>
+                <td class="bw-item"><span>${r.itemCode || '-'}</span></td>
+                <td class="bw-length">${formatBalanceLength(r.length)} mm</td>
+                <td class="bw-length">${r.item.exLength ? formatBalanceLength(r.item.exLength) : '-'} mm</td>
+                <td><span class="bw-badge bw-ex">${formatBalanceInt(r.pcsPerEx)}</span></td>
+                <td><span class="bw-badge bw-stock">${formatBalanceInt(r.wipBoxStock)} <small>Pcs</small></span></td>
+                <td><span class="bw-badge bw-crate">${formatBalanceInt(r.crate)} <small>Pcs</small></span></td>
+                <td><span class="bw-badge bw-po">${formatBalanceInt(r.shipmentBalance)} <small>Pcs</small><em>${(r.shipmentBalance*r.unitWeight).toFixed(2)} kg</em></span></td>
+                <td><span class="bw-badge bw-current-pl">${formatBalanceInt(r.currentPlQty)} <small>Pcs</small><em>${(r.currentPlQty*r.unitWeight).toFixed(2)} kg</em></span></td>
+                <td>${pendingHtml(r.pendingCutShipment,'shipment')}</td>
+                <td>${pendingHtml(r.pendingCutCurrentPl,'current')}</td>
+                <td>${balHtml}</td>
+                <td><span class="bw-badge bw-exreq">${r.reqEx === 0 ? '-' : formatBalanceInt(r.reqEx)} <small>Ex</small></span></td>
+                <td><span class="bw-badge bw-unboxed">${formatBalanceInt(r.unboxed)} <small>Pcs</small></span></td>
+                <td><span class="bw-badge bw-boxes">${formatBalanceInt(r.reqBoxes)} <small>Boxes</small></span></td>
+                <td class="bw-cardboard ${r.cbBalance < 0 ? 'short' : 'ok'}">${cbStatusHtml}</td>
+            </tr>`;
+        }).join('');
     } catch(e) { console.error('Balance Work render error:',e); }
 }
 
 function buildActiveBalanceWorkExportData() {
-    ensurePackingSelection();
-    const activePlMap = getActivePlBalanceMap();
-    const mode = getPlBalanceFilterValue('balancePlFilter');
-    const poMode = isProductionOrderBalanceMode(mode);
-    const shipMap = new Map();
-    shipmentList.forEach(s => { const k = `${String(s.poNumber).trim()}_${String(s.profile).trim()}_${cleanLen(s.length)}`; shipMap.set(k, (shipMap.get(k) || 0) + (Number(s.shippedQty)||0)); });
-    const out=[];
-    masterData.forEach(item=>{
-        const key=`${String(item.profile).trim()}_${String(item.itemCode).trim()}_${cleanLen(item.length)}`;
-        const v=activePlMap.get(key);
-        let unshipped=0;
-        poList.forEach(po=>{
-            if(String(po.profile).trim()===String(item.profile).trim()&&cleanLen(po.length)===cleanLen(item.length)){
-                const shipped=shipMap.get(`${String(po.poNumber).trim()}_${String(po.profile).trim()}_${cleanLen(po.length)}`)||0;
-                unshipped += Math.max(0,(Number(po.orderQty)||0)-shipped);
-            }
-        });
-        const stock=(item.cutQty||0)+(item.punchQty||0)+(item.wrapQty||0)+(item.boxQty||0);
-        const crate=item.crateQty||0;
-        const poBalance=(stock+crate)-unshipped;
-        if(!poMode && !v) return;
-        if(poMode && unshipped<=0 && mode==='all_po') return;
-        const balance=poMode?poBalance:v.balance;
-        if(!matchesBalanceFilter(balance,mode)) return;
-        const exLen=parseFloat(item.exLength)||0, cutLen=parseFloat(item.length)||0;
-        const pcsPerEx=exLen>0&&cutLen>0?Math.floor(exLen/cutLen):0;
-        const pending=Math.max(0,-balance);
-        const reqEx=pcsPerEx>0?Math.ceil(pending/pcsPerEx):0;
-        const wip=(item.cutQty||0)+(item.punchQty||0)+(item.wrapQty||0);
-        const unboxed=wip+pending;
-        const reqBoxes=Math.ceil(unboxed/(item.boxCapacity||100));
-        const cb=getAvailableCardboard(item.profile,item.itemCode,item.length)-reqBoxes;
-        out.push({'Profile':item.profile,'Item Code':item.itemCode||'-','Cut L (mm)':item.length,'Ex L (mm)':item.exLength||'-','Pcs / Ex':pcsPerEx,'WIP+Box Stock':stock,'Crate Qty':crate,'Unshipped PO':unshipped,'PO Pending':Math.max(0,unshipped-(stock+crate)),'PL Balance':balance,'Req. Extrusions':reqEx,'Unboxed Pcs':unboxed,'Req. Boxes':reqBoxes,'Cardboard Bal':cb>=0?`OK (+${cb})`:`Short ${Math.abs(cb)}`});
-    });
-    return out;
+    return getBalanceWorkRows().map(r => ({
+        'Profile': r.profile,
+        'Item Code': r.itemCode || '-',
+        'Cut Length (mm)': r.length,
+        'Ex Length (mm)': r.item.exLength || '-',
+        'Pcs / Ex': r.pcsPerEx,
+        'WIP + Box Stock (Pcs)': r.wipBoxStock,
+        'Crate Stock (Pcs)': r.crate,
+        'Total Shipment Balance (Pcs)': r.shipmentBalance,
+        'Total Shipment Balance (kg)': (r.shipmentBalance*r.unitWeight).toFixed(2),
+        'Current PL (Pcs)': r.currentPlQty,
+        'Current PL (kg)': (r.currentPlQty*r.unitWeight).toFixed(2),
+        'Pending Cut - Shipment (Pcs)': r.pendingCutShipment,
+        'Pending Cut - Shipment (kg)': (r.pendingCutShipment*r.unitWeight).toFixed(2),
+        'Pending Cut - Current PL (Pcs)': r.pendingCutCurrentPl,
+        'Pending Cut - Current PL (kg)': (r.pendingCutCurrentPl*r.unitWeight).toFixed(2),
+        'PL Balance (Pcs)': r.plBalance,
+        'Required Extrusions': r.reqEx,
+        'Unboxed Pcs': r.unboxed,
+        'Required Boxes': r.reqBoxes,
+        'Cardboard Balance': r.cbBalance >= 0 ? `OK (+${r.cbBalance})` : `Short ${Math.abs(r.cbBalance)}`
+    }));
 }
 
 function exportBalanceWorkExcel() {
-    const data=buildActiveBalanceWorkExportData();
+    const data = buildActiveBalanceWorkExportData();
     if(!data.length) return showToast('No Balance Work data to export!','warning');
-    const modeText=document.getElementById('balancePlFilter')?.selectedOptions?.[0]?.text||'All';
-    exportTableToExcel(data,'AIS_Balance_Work','Balance Work - '+modeText);
+    const profile = getBalanceProfileFilterValue();
+    exportTableToExcel(data,'AIS_Balance_Work',`Balance Work${profile ? '_Profile_'+profile : ''}`);
 }
 window.exportBalanceWorkPdf=function(){
-    const data=buildActiveBalanceWorkExportData();
+    const data = buildActiveBalanceWorkExportData();
     if(!data.length) return showToast('No Balance Work data to print!','warning');
-    const modeText=document.getElementById('balancePlFilter')?.selectedOptions?.[0]?.text||'All';
-    const title=isProductionOrderBalanceMode(getPlBalanceFilterValue('balancePlFilter'))?'AIS Tracker - Balance Work (Production Orders)':'AIS Tracker - Balance Work (Active PL)';
-    exportDataToPdf(data,'AIS_Balance_Work',title,`Month: ${activePackingMonth} • ${activePackingContainer} • Filter: ${modeText}`);
+    const profile = getBalanceProfileFilterValue();
+    const active = getActivePackingListSelection();
+    exportDataToPdf(data,'AIS_Balance_Work','AIS Tracker - Balance Work & Pending Cut',`Active PL: ${active.month} • ${active.container} • Profile: ${profile || 'All Profiles'}`);
 };
 
 function populateProfileDropdown() { const select = document.getElementById('selectProfile'); if(!select) return; select.innerHTML = '<option value="">-- Choose Profile --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }

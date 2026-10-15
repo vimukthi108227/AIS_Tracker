@@ -90,3 +90,35 @@ Packing List Crate Card UI cleanup (2026-10-15)
 - Kept the crate-level "PL Req Total", profile/item details, Cut Length, live stage quantities (Crate/Box/Wrap/Punch/Cut), pending-cut quantity, status, add-profile, pack checkbox, and edit action.
 - Increased spacing and label clarity and added responsive layout rules for smaller screens.
 - Only the Packing List display template and CSS were changed; no data, database schema, or stock logic was modified in this UI-only update.
+
+
+Next PL PO-wise Stock & Pending Cut logic update (2026-10-15)
+- Expanded the Next PL table to show shipment balance, quantity already represented in Current PL, stock remaining after reserving Current PL, and the available stage breakdown: Cut, Punch, Wrapping, Box and Crate.
+- Stock pools are allocated in PO priority order so one profile/item/length stock pool is not made available to every PO line independently.
+- Available for Shipment is capped at that PO line's remaining shipment balance.
+- Pending Cut is based on the newly selected Next PL quantity: max(0, selected Pcs - available stock allocated to that PO line).
+- Excel/PDF/Print exports include the stage stock breakdown and use selected-quantity-based pending cut calculations.
+- Stock totals in the footer count each profile/item/length stock key once, avoiding repeated totals across multiple PO lines.
+- Existing operational data, database schema, packing list rows, stock records, and Undo logic were not changed by this display/planning calculation update.
+- JavaScript syntax, table column count, ZIP integrity and arithmetic checks passed. Live Supabase validation was not performed in this environment.
+
+
+Next PL UI + Balance Work Profile Filter Update (2026-10-15)
+- Next PL table layout: fixed compact header height, cleaner spacing, stronger contrast, and horizontal scrolling for the detailed stock-stage columns.
+- Removed the Balance Work PL Balance Filter dropdown.
+- Added a Profile-only filter for Balance Work.
+- Balance Work now shows Total Shipment Balance, Current PL Pcs, Pending Cut based on Shipment Balance, and Pending Cut based on Current PL as separate values (Pcs and kg).
+- Pending Cut - Shipment = max(0, remaining unshipped Production Order quantity - total current stock across Cut/Punch/Wrapping/Box/Crate).
+- Pending Cut - Current PL = max(0, active Current PL quantity - total current stock across Cut/Punch/Wrapping/Box/Crate).
+- Required extrusions, unboxed pcs, required boxes, and cardboard calculations use the larger of those two pending-cut quantities, consistent with the prior planning approach.
+- Excel and PDF exports include the new values and follow the Profile filter.
+- Existing PO, shipment, production, stock, packing-list and Supabase schema/data are not intentionally modified by this UI/calculation update.
+- JavaScript syntax, 16-column Balance Work table, 21-column Next PL table, arithmetic checks, and ZIP integrity were verified. Live Supabase/browser integration was not run in this environment.
+
+
+Next PL Profile Length Filter + Summary Exports (2026-10-15)
+- The Length filter options now cascade from the selected PO and Profile. Selecting a Profile limits the Length dropdown to lengths available for that Profile; a previously selected incompatible Length is cleared.
+- Added independent Excel and PDF export buttons to the Next PL Profile Summary table and the PO-wise Next PL Plan table.
+- Exports use the currently rendered summary rows and include the table footer totals.
+- The update changes only planning filters, summary-table export controls, and display CSS. It does not alter stock records, shipment records, PO records, or database schema.
+- JavaScript syntax and ZIP integrity passed. Browser/live Supabase testing was not performed.
