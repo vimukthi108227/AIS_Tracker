@@ -2857,3 +2857,49 @@ tbody tr:hover{background:rgba(94,187,78,.055)!important}
 #manualCrateAddModal select,#manualCrateAddModal input{min-height:42px;border:1px solid var(--border-color,#d7e2e8);border-radius:9px;padding:9px 11px;background:var(--card-bg,#fff);color:var(--text-color,#172b35)}
 #manualCrateAddModal select:focus,#manualCrateAddModal input:focus{outline:2px solid rgba(94,187,78,.45);outline-offset:1px}
 @media(max-width:560px){#manualCrateAddModal>div{padding:16px!important}#manualCrateAddModal [style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr!important}#manualCrateAddModal .form-group{grid-column:1!important}}
+
+
+/* Packing List crate cards: simplified, clearer detail layout */
+#packingListTab .pl-crate-card-header {
+  min-width: 0;
+}
+#packingListTab .pl-crate-card-header > div,
+#packingListTab .pl-crate-profile-heading > div,
+#packingListTab .pl-crate-profile-row > div {
+  min-width: 0;
+}
+#packingListTab .pl-crate-profile-row .stock-badge {
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+@media (max-width: 1050px) {
+  #packingListTab .pl-crate-card-header {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+  }
+  #packingListTab .pl-crate-profile-heading,
+  #packingListTab .pl-crate-profile-row {
+    grid-template-columns: 100px minmax(150px, 1fr) minmax(115px, .7fr) minmax(280px, 2fr) !important;
+    gap: 10px !important;
+  }
+}
+@media (max-width: 700px) {
+  #packingListTab .pl-crate-card-header {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    padding: 12px !important;
+  }
+  #packingListTab .pl-crate-profile-heading {
+    display: none !important;
+  }
+  #packingListTab .pl-crate-profile-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    padding: 12px !important;
+  }
+  #packingListTab .pl-crate-profile-row > div:last-child {
+    grid-column: 1 / -1;
+  }
+  #packingListTab .pl-crate-profile-row > div:last-child > div:last-child {
+    gap: 5px !important;
+  }
+}

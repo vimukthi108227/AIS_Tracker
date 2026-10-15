@@ -63,3 +63,30 @@ Packing List Excel — Number of Crates support
 - Legacy Excel upload with Crate No / Profile / Item Code / Qty remains supported and produces one crate row per profile line.
 - Existing duplicate protection remains: conflicting duplicate crate/profile/item rows stop the upload without changing old data.
 - No database schema change. Live Supabase upload was not run in this environment; use a backup and test copy before replacing the live website.
+
+
+2026-10-14 — AIS Production Orders workbook compatibility
+- Excel import now carries forward both Crate No and Number of Crates from merged cells in contiguous profile rows.
+- The supplied AIS 1st CNT OCT worksheet is supported: each profile row in a merged crate group is allocated to all corresponding generated crate labels.
+- Example: Crate No 2, Number of Crates 4, Pcs per Crate 150 creates 2-i, 2-ii, 2-iii and 2-iv with 150 PCS of that profile in each crate.
+- Added a separate upload-ready workbook generated from the uploaded source, with merged values expanded, formulas replaced by calculated values, and lengths populated from Production Orders when available.
+- Rows without a matching Production Orders length leave Length blank so Master Catalog can resolve unique profile/item code matches. If Master Catalog has multiple matching lengths, add the correct length before upload.
+- Existing Packing List rows are not modified by the importer; duplicate checks stop conflicting re-uploads. No database schema change.
+- Static checks only; live Supabase upload was not performed.
+
+
+2026-10-15 — Crate-stage allocation and completion display
+- Packing List stage quantities are allocated once across crate lines so the same profile stock is not counted as available for every crate.
+- Manually completed crates reserve current Crate-stage stock first; uncompleted crate lines allocate Box, Wrapping, Punch and Cut stock in that order.
+- Crate cards now show Crate / Box / Wrapping / Punch / Cut stage quantities and the uncovered Pcs as PENDING CUT.
+- A crate is Ready to Pack when each profile line can be supplied by Box + Wrapping; completion consumes Box first and uses Wrapping for any remaining required Pcs.
+- The completion tick remains explicit: a crate is marked PACKED & COMPLETED only when the Admin confirms it. Completion stock movement updates master_catalog Box/Wrapping/Crate quantities and persists the existing manual crate state; no schema change.
+- Static JavaScript and ZIP checks passed. Live Supabase/browser end-to-end checks were not run; backup and test on a copy before deployment.
+
+
+Packing List Crate Card UI cleanup (2026-10-15)
+- Removed the crate-header metrics "Box + Wrap Available" and "Req Extrusions" to reduce clutter.
+- Removed the per-profile columns "Ex L", "Pcs / Ex", "PL Req Pcs", and "Req Ex" from the crate detail list as requested.
+- Kept the crate-level "PL Req Total", profile/item details, Cut Length, live stage quantities (Crate/Box/Wrap/Punch/Cut), pending-cut quantity, status, add-profile, pack checkbox, and edit action.
+- Increased spacing and label clarity and added responsive layout rules for smaller screens.
+- Only the Packing List display template and CSS were changed; no data, database schema, or stock logic was modified in this UI-only update.

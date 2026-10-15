@@ -4480,90 +4480,90 @@ window.downloadPackingTemplate = function(){
     exportTableToExcel(rows,'AIS_Packing_List_Simple_Template','Packing List');
 };
 
-function getReadyCrateRows(records) {
-    // Crate-level readiness/status. A crate is Ready only when EVERY
-    // profile/item/length line assigned to that crate has its full required
-    // quantity in Box Stage. For non-ready crates, show the earliest missing
-    // stage so the operator knows why the crate is pending.
-    const rows=[];
-    const stockMap=new Map();
-    masterData.forEach(m=>{
-        const key=`${String(m.profile||'').trim()}|${String(m.itemCode||'').trim()}|${cleanLen(m.length)}`;
-        stockMap.set(key, {
-            cut:Math.max(0, Number(m.cutQty)||0),
-            punch:Math.max(0, Number(m.punchQty)||0),
-            wrap:Math.max(0, Number(m.wrapQty)||0),
-            box:Math.max(0, Number(m.boxQty)||0),
-            crate:Math.max(0, Number(m.crateQty)||0)
-        });
+function allocatePackingLineStock(records) {
+    // Allocate available stock once across the selected shipment's crate lines.
+    // Manually completed crates reserve Crate-stage stock first; remaining lines
+    // consume Box -> Wrapping -> Punch -> Cut. No Master Catalog values are mutated.
+    const stocks = masterData.map(m => ({
+        catalog:m,
+        profile:String(m.profile||'').trim(), itemCode:String(m.itemCode||'').trim(), length:cleanLen(m.length),
+        cut:Math.max(0,Number(m.cutQty)||0), punch:Math.max(0,Number(m.punchQty)||0),
+        wrap:Math.max(0,Number(m.wrapQty)||0), box:Math.max(0,Number(m.boxQty)||0), crate:Math.max(0,Number(m.crateQty)||0)
+    }));
+    const findStock = item => stocks.find(s =>
+        s.profile===String(item.profile||'').trim() && s.length===cleanLen(item.length) &&
+        (!String(item.itemCode||'').trim() || s.itemCode===String(item.itemCode||'').trim())
+    );
+    const allocations = new Map();
+    const ordered = [...records].sort((a,b)=>{
+        const am=isManualCrateComplete(a.crateNo,activePackingContainer,activePackingMonth);
+        const bm=isManualCrateComplete(b.crateNo,activePackingContainer,activePackingMonth);
+        if(am!==bm) return am?-1:1;
+        return sortCrates(a,b);
     });
+    ordered.forEach(item=>{
+        const req=Math.max(0,Number(item.pcsQty)||0);
+        const manual=isManualCrateComplete(item.crateNo,activePackingContainer,activePackingMonth);
+        const stock=findStock(item);
+        const a={req,manual,crate:0,box:0,wrap:0,punch:0,cut:0,pending:0,catalog:stock?.catalog||null};
+        if(stock && manual){
+            a.crate=Math.min(req,stock.crate);
+            stock.crate-=a.crate;
+            // A completed flag is the packing record; don't reclassify any shortfall
+            // as Cut/WIP, since those pieces may already have been shipped.
+        } else if(stock && req>0){
+            let left=req;
+            a.box=Math.min(left,stock.box); stock.box-=a.box; left-=a.box;
+            a.wrap=Math.min(left,stock.wrap); stock.wrap-=a.wrap; left-=a.wrap;
+            a.punch=Math.min(left,stock.punch); stock.punch-=a.punch; left-=a.punch;
+            a.cut=Math.min(left,stock.cut); stock.cut-=a.cut; left-=a.cut;
+            a.pending=Math.max(0,left);
+        } else if(req>0) a.pending=req;
+        if(manual) a.status='Manual Packed';
+        else if(a.box+a.wrap>=req && req>0) a.status='Ready to Pack';
+        else if(a.box+a.wrap+a.punch>=req && req>0) a.status='Pending Wrapping';
+        else if(a.box+a.wrap+a.punch+a.cut>=req && req>0) a.status='Pending Punch';
+        else a.status='Pending Cut';
+        allocations.set(item,a);
+    });
+    return allocations;
+}
 
+function getReadyCrateRows(records) {
+    const rows=[];
+    const allocations=allocatePackingLineStock(records);
     const crateGroups=new Map();
     [...records].sort(sortCrates).forEach(item=>{
         const crateNo=String(item.crateNo||'-').trim();
-        if(!crateGroups.has(crateNo)) crateGroups.set(crateNo, []);
+        if(!crateGroups.has(crateNo)) crateGroups.set(crateNo,[]);
         crateGroups.get(crateNo).push(item);
     });
-
-    function lineStatus(required, st){
-        const req=Math.max(0, Number(required)||0);
-        if(req<=0) return {status:'Ready to Pack',availableBox:0,reason:'Ready'};
-        const box=st?.box||0, wrap=st?.wrap||0, punch=st?.punch||0, cut=st?.cut||0;
-        if(box>=req) return {status:'Ready to Pack',availableBox:req,reason:'Ready'};
-        // Stock is counted through the production flow. The first stage that
-        // cannot supply the remaining requirement determines the pending label.
-        if(box+wrap>=req) return {status:'Pending Box',availableBox:box,reason:'Pending Box'};
-        if(box+wrap+punch>=req) return {status:'Pending Wrapping',availableBox:box,reason:'Pending Wrapping'};
-        if(box+wrap+punch+cut>=req) return {status:'Pending Punch',availableBox:box,reason:'Pending Punch'};
-        return {status:'Pending Cut',availableBox:box,reason:'Pending Cut'};
-    }
-
+    const priority={'Pending Cut':1,'Pending Punch':2,'Pending Wrapping':3,'Ready to Pack':99,'Manual Packed':100};
     crateGroups.forEach(items=>{
         const crateNo=String(items[0]?.crateNo||'-').trim();
+        const manual=isManualCrateComplete(crateNo,activePackingContainer,activePackingMonth);
         const details=[];
-        let crateReady=true;
-        let crateStatus='Ready to Pack';
-        let statusPriority=99;
-        const priority={
-            'Pending Cut':1,
-            'Pending Punch':2,
-            'Pending Wrapping':3,
-            'Pending Box':4,
-            'Ready to Pack':99,
-            'Manual Packed':100
-        };
-
+        let crateStatus=manual?'Manual Packed':'Ready to Pack', statusPriority=manual?100:99;
         items.forEach(item=>{
-            const key=`${String(item.profile||'').trim()}|${String(item.itemCode||'').trim()}|${cleanLen(item.length)}`;
-            const req=Math.max(0, Number(item.pcsQty)||0);
-            const st=stockMap.get(key)||{cut:0,punch:0,wrap:0,box:0,crate:0};
-            const ls=lineStatus(req,st);
-            const manual=isManualCrateComplete(crateNo,activePackingContainer,activePackingMonth);
-            const finalStatus=manual ? 'Manual Packed' : ls.status;
-            if(!manual && ls.status!=='Ready to Pack') crateReady=false;
-            if(priority[finalStatus] < statusPriority){ statusPriority=priority[finalStatus]; crateStatus=finalStatus; }
+            const a=allocations.get(item)||{req:Number(item.pcsQty)||0,crate:0,box:0,wrap:0,punch:0,cut:0,pending:Number(item.pcsQty)||0,status:'Pending Cut'};
+            const req=Math.max(0,Number(item.pcsQty)||0);
+            const finalStatus=manual?'Manual Packed':a.status;
+            if(!manual && priority[finalStatus]<statusPriority){statusPriority=priority[finalStatus];crateStatus=finalStatus;}
             const exPlan=getExtrusionPlan(item.profile,item.itemCode,item.length,req);
             details.push({
-                id:item.id, crateNo, profile:item.profile||'-', itemCode:item.itemCode||'-', length:item.length||'-',
-                exLength:exPlan.exLength, pcsPerEx:exPlan.pcsPerEx, requiredExtrusions:exPlan.requiredExtrusions,
-                pcsQty:req, availableBox:Math.min(req,st.box), status:finalStatus,
-                cut:st.cut, punch:st.punch, wrap:st.wrap, box:st.box, crate:st.crate,
-                plNumber:item.plNumber||'', poNumber:item.poNumber||'', date:item.date||''
+                id:item.id,crateNo,profile:item.profile||'-',itemCode:item.itemCode||'-',length:item.length||'-',
+                exLength:exPlan.exLength,pcsPerEx:exPlan.pcsPerEx,requiredExtrusions:exPlan.requiredExtrusions,
+                pcsQty:req,availableBox:Math.min(req,a.box+a.wrap),status:finalStatus,
+                cut:a.cut,punch:a.punch,wrap:a.wrap,box:a.box,crate:a.crate,pending:a.pending,
+                plNumber:item.plNumber||'',poNumber:item.poNumber||'',date:item.date||''
             });
         });
-
-        const manual=isManualCrateComplete(crateNo,activePackingContainer,activePackingMonth);
         if(manual) crateStatus='Manual Packed';
         rows.push({
-            id:details[0]?.id, crateNo,
-            profile:details[0]?.profile||'-', itemCode:details[0]?.itemCode||'-', length:details[0]?.length||'-',
-            pcsQty:details.reduce((a,x)=>a+x.pcsQty,0),
-            availableBox:details.reduce((a,x)=>a+x.availableBox,0),
-            requiredExtrusions:details.reduce((a,x)=>a+(Number(x.requiredExtrusions)||0),0),
-            status:crateStatus,
-            profiles:details,
-            profileCount:details.length,
-            plNumber:details.map(x=>x.plNumber).filter(Boolean).join(', '),
+            id:details[0]?.id,crateNo,profile:details[0]?.profile||'-',itemCode:details[0]?.itemCode||'-',length:details[0]?.length||'-',
+            pcsQty:details.reduce((s,x)=>s+x.pcsQty,0),availableBox:details.reduce((s,x)=>s+x.availableBox,0),
+            requiredExtrusions:details.reduce((s,x)=>s+(Number(x.requiredExtrusions)||0),0),status:crateStatus,
+            profiles:details,profileCount:details.length,plNumber:details.map(x=>x.plNumber).filter(Boolean).join(', '),
             poNumber:details.map(x=>x.poNumber).filter(Boolean).join(', ')
         });
     });
@@ -4581,7 +4581,7 @@ function getFilteredReadyCrateRows(records){
 window.exportPlReadyCrates=function(){
     ensurePackingSelection();
     const rows=getFilteredReadyCrateRows(getPackingContainerRecords(activePackingMonth,activePackingContainer));
-    const data=rows.map(r=>({'Crate ID':r.crateNo,'Profile':r.profile,'Item Code':r.itemCode,'Length':r.length,'Req Qty':r.pcsQty,'Box Available':r.availableBox,'Status':r.status}));
+    const data=rows.map(r=>({'Crate ID':r.crateNo,'Profile':r.profile,'Item Code':r.itemCode,'Length':r.length,'Req Qty':r.pcsQty,'Box + Wrap Available':r.availableBox,'Status':r.status}));
     exportTableToExcel(data,'AIS_Ready_Crates','Ready Crates');
 };
 window.exportPlReadyCratesPdf=async function(){
@@ -4700,37 +4700,16 @@ function renderPlAnalytics(filteredPls) {
         for(let i=1; i<=50; i++) { crateMap["Crate " + i] = { req: 0, comp: 0, items: [] }; }
 
         filteredPls.sort(sortCrates);
-        let availableStock = masterData.map(m => ({ db_id: m.db_id, profile: m.profile, length: m.length, itemCode: m.itemCode, cutQty: m.cutQty, punchQty: m.punchQty, wrapQty: m.wrapQty, boxQty: m.boxQty, crateQty: m.crateQty, unitWeight: m.unitWeight }));
-        
+        const stageAllocations=allocatePackingLineStock(filteredPls);
         filteredPls.forEach(pl => {
-            const reqQty = pl.pcsQty;
-            const matched = availableStock.find(m => String(m.profile).trim() === String(pl.profile).trim() && cleanLen(m.length) === cleanLen(pl.length) && m.itemCode === pl.itemCode);
-            const uw = matched ? (matched.unitWeight || 0) : 0;
-            
-            let allocatedBox = 0, allocatedWrap = 0, allocatedPunch = 0, allocatedCut = 0;
-            let remReq = reqQty;
-            
-            if (matched) {
-                let combinedBoxStock = matched.boxQty + matched.crateQty;
-                allocatedBox = Math.min(remReq, combinedBoxStock);
-                
-                if (allocatedBox > matched.crateQty) {
-                    matched.boxQty -= (allocatedBox - matched.crateQty);
-                    matched.crateQty = 0;
-                } else {
-                    matched.crateQty -= allocatedBox;
-                }
-                remReq -= allocatedBox;
-
-                allocatedWrap = Math.min(remReq, matched.wrapQty); matched.wrapQty -= allocatedWrap; remReq -= allocatedWrap;
-                allocatedPunch = Math.min(remReq, matched.punchQty); matched.punchQty -= allocatedPunch; remReq -= allocatedPunch;
-                allocatedCut = Math.min(remReq, matched.cutQty); matched.cutQty -= allocatedCut; remReq -= allocatedCut;
-            }
-            
+            const reqQty = Math.max(0,Number(pl.pcsQty)||0);
+            const allocation=stageAllocations.get(pl)||{crate:0,box:0,wrap:0,punch:0,cut:0,pending:reqQty};
+            const matched = masterData.find(m => String(m.profile).trim() === String(pl.profile).trim() && cleanLen(m.length) === cleanLen(pl.length) && (!pl.itemCode || String(m.itemCode||'').trim()===String(pl.itemCode).trim()));
+            const uw = matched ? (Number(matched.unitWeight)||0) : 0;
             if (!crateMap[pl.crateNo]) crateMap[pl.crateNo] = { req: 0, comp: 0, items: [] };
             crateMap[pl.crateNo].req += reqQty;
-            crateMap[pl.crateNo].comp += allocatedBox;
-            crateMap[pl.crateNo].items.push({ profile: pl.profile, itemCode: pl.itemCode || (matched ? matched.itemCode : ''), length: pl.length, req: reqQty, crate: 0, box: allocatedBox, wrap: allocatedWrap, punch: allocatedPunch, cut: allocatedCut, pending: remReq, unitWeight: uw });
+            crateMap[pl.crateNo].comp += Math.min(reqQty,allocation.box+allocation.wrap);
+            crateMap[pl.crateNo].items.push({ profile: pl.profile, itemCode: pl.itemCode || (matched ? matched.itemCode : ''), length: pl.length, req: reqQty, crate: allocation.crate||0, box: allocation.box||0, wrap: allocation.wrap||0, punch: allocation.punch||0, cut: allocation.cut||0, pending: allocation.pending||0, unitWeight: uw });
         });
 
         let sortedCrateKeys = Object.keys(crateMap).sort((a,b) => {
@@ -4797,7 +4776,7 @@ function renderPlAnalytics(filteredPls) {
             let stageName = "Pending", stageColor = "#475569", stageBg = "#f8fafc", icon = "fa-spinner";
             
             if (isManualComplete) { stageName = "PACKED & COMPLETED"; stageColor = "#059669"; stageBg = "linear-gradient(90deg, #ecfdf5, #ffffff)"; icon = "fa-check-double"; }
-            else if (totBox === totReq && totReq > 0) { stageName = "READY TO PACK"; stageColor = "#10b981"; stageBg = "#ecfdf5"; icon = "fa-box"; }
+            else if (crate.items.every(i => (i.box + i.wrap) >= i.req) && totReq > 0) { stageName = "READY TO PACK"; stageColor = "#10b981"; stageBg = "#ecfdf5"; icon = "fa-box"; }
             else if (totPending > 0) { stageName = "Awaiting / Short"; stageColor = "#e11d48"; stageBg = "#fff1f2"; icon = "fa-hourglass-start"; }
             else if (totCut > 0) { stageName = "Processing: Cut"; stageColor = "#0284c7"; stageBg = "#f0f9ff"; icon = "fa-scissors"; }
             else if (totPunch > 0) { stageName = "Processing: Punch"; stageColor = "#ea580c"; stageBg = "#fff7ed"; icon = "fa-hammer"; }
@@ -4806,17 +4785,18 @@ function renderPlAnalytics(filteredPls) {
 
             let itemDetailsHtml = '';
             itemDetailsHtml = crate.items.map(i => {
-                let boxStageFull = (i.box === i.req);
+                let boxStageFull = ((i.box + i.wrap) >= i.req);
                 return `<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; border-left: 3px solid ${isManualComplete ? '#059669' : '#0284c7'}; padding-left: 10px; margin-bottom: 5px; font-size: 11.5px;">
                     <div style="font-weight: 700; color: var(--primary-dark); margin-right: 15px;">
                         Pr: ${i.profile} <span style="margin: 0 4px; color: #cbd5e1;">|</span> L: ${i.length}mm <span style="margin: 0 4px; color: #cbd5e1;">|</span> Req Qty: ${i.req}
                     </div>
                     <div style="display:flex; gap:6px; flex-wrap:wrap; font-size: 10.5px; align-items:center;">
+                        <span style="background: #059669; color: #fff; padding: 2px 6px; border-radius: 4px; font-weight: 700;">Crate: ${i.crate||0}</span>
                         <span style="background: #10b981; color: #fff; padding: 2px 6px; border-radius: 4px; font-weight: 700;">Box: ${i.box}</span>
                         <span style="background: #d946ef; color: #fff; padding: 2px 6px; border-radius: 4px; font-weight: 700;">Wrp: ${i.wrap}</span>
                         <span style="background: #ea580c; color: #fff; padding: 2px 6px; border-radius: 4px; font-weight: 700;">Pch: ${i.punch}</span>
                         <span style="background: #0284c7; color: #fff; padding: 2px 6px; border-radius: 4px; font-weight: 700;">Cut: ${i.cut}</span>
-                        ${i.pending > 0 ? `<span style="border: 1px solid #e11d48; color: #e11d48; padding: 1px 6px; border-radius: 4px; font-weight: 800;">SHORT: ${i.pending}</span>` : (boxStageFull ? `<span style="background:#059669; color:#fff; padding:2px 6px; border-radius: 4px; font-weight: 800;"><i class="fa-solid fa-check"></i> READY TO PACK</span>` : `<span style="border: 1px solid #10b981; color: #10b981; padding: 1px 6px; border-radius: 4px; font-weight: 800;"><i class="fa-solid fa-check"></i> OK</span>`)}
+                        ${i.pending > 0 ? `<span style="border: 1px solid #e11d48; color: #e11d48; padding: 1px 6px; border-radius: 4px; font-weight: 800;">PENDING CUT: ${i.pending} Pcs</span>` : (boxStageFull ? `<span style="background:#059669; color:#fff; padding:2px 6px; border-radius: 4px; font-weight: 800;"><i class="fa-solid fa-check"></i> READY TO PACK</span>` : `<span style="border: 1px solid #10b981; color: #10b981; padding: 1px 6px; border-radius: 4px; font-weight: 800;"><i class="fa-solid fa-check"></i> OK</span>`)}
                     </div>
                 </div>`;
             }).join('');
@@ -5052,8 +5032,7 @@ function renderPackingListTable() {
             const map={
                 'Ready to Pack':{c:'#059669',bg:'#ecfdf5',icon:'fa-check',label:'Ready to Pack'},
                 'Manual Packed':{c:'#059669',bg:'#d1fae5',icon:'fa-check-double',label:'Manual Packed'},
-                'Pending Box':{c:'#b45309',bg:'#fef3c7',icon:'fa-box-open',label:'Pending Box'},
-                'Pending Wrapping':{c:'#c2410c',bg:'#ffedd5',icon:'fa-arrows-rotate',label:'Pending Wrapping'},
+                                'Pending Wrapping':{c:'#c2410c',bg:'#ffedd5',icon:'fa-arrows-rotate',label:'Pending Wrapping'},
                 'Pending Punch':{c:'#7c3aed',bg:'#f3e8ff',icon:'fa-hammer',label:'Pending Punch'},
                 'Pending Cut':{c:'#dc2626',bg:'#fee2e2',icon:'fa-scissors',label:'Pending Cut'}
             };
@@ -5081,15 +5060,19 @@ function renderPackingListTable() {
 
             const profileCards=(row.profiles||[]).map(i=>{
                 const lineBg=i.status==='Ready to Pack'||i.status==='Manual Packed'?'#ffffff':'#fffaf0';
-                return `<div style="display:grid;grid-template-columns:90px minmax(145px,1.35fr) 95px 95px 85px 100px 100px minmax(115px,.9fr);gap:8px;align-items:center;padding:10px 12px;border-top:1px solid #dbe5ea;background:${lineBg};font-size:12px;">
-                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Profile</div><b style="font-size:13px;color:#334155;">${i.profile}</b></div>
-                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Item Code</div><span style="color:var(--info-color);font-weight:800;">${i.itemCode}</span></div>
-                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Cut L</div><b>${i.length} mm</b></div>
-                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Ex L</div><b style="color:#047857;">${i.exLength ? i.exLength+' mm' : '-'}</b></div>
-                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Pcs / Ex</div><span class="stock-badge" style="background:#eff6ff;color:#0369a1;">${i.pcsPerEx || '-'}</span></div>
-                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">PL Req</div>${currentUserRole==='Admin' ? `<button type="button" class="stock-badge bg-total" style="border:0;cursor:pointer;min-width:58px;" title="Admin: click to edit Pcs Qty" onclick="openGenericEdit('packing_list', ${i.id}, {pcs_qty: '${i.pcsQty}'})">${i.pcsQty}</button>` : `<span class="stock-badge bg-total">${i.pcsQty}</span>`}</div>
-                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Req Ex</div><span class="stock-badge" style="background:#fff7ed;color:#c2410c;">${i.requiredExtrusions || '-'}</span></div>
-                    <div><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Box / Status</div><span class="stock-badge" style="background:#ecfdf5;color:#10b981;">${i.availableBox}</span> ${lineStatusHtml(i.status)}</div>
+                return `<div class="pl-crate-profile-row" style="display:grid;grid-template-columns:120px minmax(180px,1.2fr) 130px minmax(360px,2fr);gap:14px;align-items:center;padding:12px 16px;border-top:1px solid #dbe5ea;background:${lineBg};font-size:12px;">
+                    <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.04em;">Profile</div><b style="font-size:14px;color:#334155;">${i.profile}</b></div>
+                    <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.04em;">Item Code</div><span style="color:var(--info-color);font-weight:800;font-size:13px;">${i.itemCode}</span></div>
+                    <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.04em;">Cut Length</div><b style="font-size:13px;">${i.length} mm</b></div>
+                    <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.04em;">Current Stage / Pending</div><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:5px;">
+                        <span class="stock-badge" style="background:#d1fae5;color:#047857;">Crate ${i.crate||0}</span>
+                        <span class="stock-badge" style="background:#ecfdf5;color:#059669;">Box ${i.box||0}</span>
+                        <span class="stock-badge" style="background:#fae8ff;color:#a21caf;">Wrap ${i.wrap||0}</span>
+                        <span class="stock-badge" style="background:#ffedd5;color:#c2410c;">Punch ${i.punch||0}</span>
+                        <span class="stock-badge" style="background:#e0f2fe;color:#0369a1;">Cut ${i.cut||0}</span>
+                        ${i.pending>0?`<span class="stock-badge" style="background:#fee2e2;color:#b91c1c;">Pending Cut ${i.pending}</span>`:''}
+                        ${lineStatusHtml(i.status)}
+                    </div></div>
                 </div>`;
             }).join('');
 
@@ -5097,19 +5080,17 @@ function renderPackingListTable() {
                 <td colspan="7" style="padding:0 0 16px 0;border:0;background:transparent;">
                     <div style="border:2px solid ${crateBorder};border-radius:16px;overflow:hidden;background:${crateBg};box-shadow:0 4px 14px rgba(15,23,42,.10);margin:0 2px 0 2px;position:relative;">
                         <div style="height:5px;background:${crateBorder};width:100%;"></div>
-                        <div style="display:grid;grid-template-columns:140px 90px minmax(180px,1.4fr) 115px 120px 105px minmax(145px,1fr) 110px;gap:10px;align-items:center;padding:14px 16px;border-bottom:2px solid ${crateBorder};background:linear-gradient(90deg,rgba(255,255,255,.72),rgba(255,255,255,.28));">
-                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Crate</div><b style="font-size:17px;color:#164e63;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-box-open"></i>${row.crateNo}</b></div>
-                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Profiles</div><b>${row.profileCount}</b></div>
-                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Profiles / Items</div><span style="font-size:12px;color:#475569;">${row.profiles.map(x=>x.itemCode).join(' • ')}</span></div>
-                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">PL Req Total</div><span class="stock-badge bg-total">${row.pcsQty}</span></div>
-                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Box Stage Total</div><span class="stock-badge" style="background:#ecfdf5;color:#10b981;">${row.availableBox}</span></div>
-                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Req Extrusions</div><span class="stock-badge" style="background:#fff7ed;color:#c2410c;">${row.requiredExtrusions || '-'}</span></div>
-                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;">Crate Status</div>${crateStatusHtml(row.status)}</div>
+                        <div class="pl-crate-card-header" style="display:grid;grid-template-columns:140px 90px minmax(180px,1.4fr) 125px minmax(155px,1fr) 110px;gap:14px;align-items:center;padding:16px 18px;border-bottom:2px solid ${crateBorder};background:linear-gradient(90deg,rgba(255,255,255,.82),rgba(255,255,255,.34));">
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.04em;">Crate</div><b style="font-size:18px;color:#164e63;display:inline-flex;align-items:center;gap:7px;"><i class="fa-solid fa-box-open"></i>${row.crateNo}</b></div>
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.04em;">Profiles</div><b style="font-size:14px;">${row.profileCount}</b></div>
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.04em;">Profiles / Items</div><span style="font-size:12px;color:#475569;line-height:1.6;">${row.profiles.map(x=>x.itemCode).join(' • ')}</span></div>
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.04em;">PL Req Total</div><span class="stock-badge bg-total" style="font-size:13px;padding:5px 10px;">${row.pcsQty} Pcs</span></div>
+                            <div><div style="font-size:10px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.04em;">Crate Status</div>${crateStatusHtml(row.status)}</div>
                             <div>${actionBtn}</div>
                         </div>
                         <div style="padding:0;background:#fff;">
-                            <div style="display:grid;grid-template-columns:90px minmax(145px,1.35fr) 95px 95px 85px 100px 100px minmax(115px,.9fr);gap:8px;align-items:center;padding:8px 12px;background:#dcecf0;color:#164e63;border-bottom:1px solid #c7dfe5;font-size:10px;font-weight:800;text-transform:uppercase;">
-                                <div>Profile</div><div>Item Code</div><div>Cut L</div><div>Ex L</div><div>Pcs / Ex</div><div>PL Req Pcs</div><div>Req Ex</div><div>Box / Status</div>
+                            <div class="pl-crate-profile-heading" style="display:grid;grid-template-columns:120px minmax(180px,1.2fr) 130px minmax(360px,2fr);gap:14px;align-items:center;padding:10px 16px;background:#dcecf0;color:#164e63;border-bottom:1px solid #c7dfe5;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;">
+                                <div>Profile</div><div>Item Code</div><div>Cut Length</div><div>Current Stage / Pending</div>
                             </div>
                             ${profileCards}
                         </div>
@@ -5555,22 +5536,31 @@ async function processPlExcelUpload() {
     };
     const rowsToInsert=[], errors=[], seen=new Set();
     let lastMergedCrateRaw='';
+    let lastMergedCrateCount=1;
     for(let i=headerRowIndex+1;i<rawJson.length;i++){
       const row=rawJson[i]||[];
-      if(row.every(v=>String(v??'').trim()==='')) { lastMergedCrateRaw=''; continue; }
+      if(row.every(v=>String(v??'').trim()==='')) { lastMergedCrateRaw=''; lastMergedCrateCount=1; continue; }
       const excelRow=i+1;
       const crateCellRaw=String(get(row,'crateno')??'').trim().replace(/^crate\s*/i,'').replace(/\.0$/,'');
       const profileRaw=String(get(row,'profile')??'').trim();
       const itemCode=String(get(row,'itemcode')??'').trim();
       const qtyRaw=String(get(row,'totalqty') || get(row,'qty') || '').trim();
       const pcsPerCrateRaw=String(get(row,'pcspercrate')??'').trim();
-      const crateCountRaw=String(get(row,'numberofcrates')??'').trim();
-      // Excel often merges a crate-number cell vertically across multiple profile rows.
-      // Carry it forward so each profile row can be expanded into the same numbered crates.
+      const crateCountCellRaw=String(get(row,'numberofcrates')??'').trim();
+      // Both Crate No and Number of Crates can be vertically merged in the source
+      // Excel. Continuation rows inherit both values so every profile expands to
+      // the same physical crates.
       const hasItemData=!!(profileRaw&&itemCode&&(qtyRaw||pcsPerCrateRaw));
       const crateRaw=crateCellRaw || (hasItemData ? lastMergedCrateRaw : '');
-      if(crateCellRaw) lastMergedCrateRaw=crateCellRaw;
-      else if(!hasItemData) lastMergedCrateRaw='';
+      const crateCountRaw=crateCountCellRaw || (!crateCellRaw && hasItemData ? String(lastMergedCrateCount) : '');
+      if(crateCellRaw){
+        lastMergedCrateRaw=crateCellRaw;
+        lastMergedCrateCount=crateCountCellRaw ? Number(crateCountCellRaw) : 1;
+      } else if(hasItemData && crateCountCellRaw) {
+        lastMergedCrateCount=Number(crateCountCellRaw);
+      } else if(!hasItemData) {
+        lastMergedCrateRaw=''; lastMergedCrateCount=1;
+      }
       const lengthRaw=normLength(get(row,'length'));
       const poNum=String(get(row,'ponumber')??'').trim().replace(/\.0$/,'');
       // Ignore title, note and subtotal rows; only actual rows with crate/profile/item/qty are processed.
