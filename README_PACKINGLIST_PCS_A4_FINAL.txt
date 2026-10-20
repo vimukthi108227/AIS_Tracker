@@ -27,3 +27,13 @@ Latest-page behavior refinement:
 - Historical Packing Lists remain available from the Month/Container selectors.
 - Creation/update timestamps are preferred over shipment date when determining the most recently saved records.
 - No database schema change, data deletion, or reset was added.
+
+Recheck fix (2026-10-20): Packing List rows now retain created_at/updated_at/timestamp metadata when available, so latest-list selection can use real save/update times instead of relying only on the packing date. This does not alter database schema or stored records.
+
+
+SAFE UPDATE — ENTER KEY + DUPLICATE SAVE GUARD
+- Press Enter in supported data-entry forms to trigger the form primary save action.
+- Packing List Enter action adds the selected profile to the current crate; use the explicit button to save/start a new crate.
+- Rapid repeat submissions of identical form data are blocked for 5 seconds, and concurrent saves are blocked while the same action is processing.
+- Existing HTML/CSS/JS functions and database schema are preserved; no existing records are deleted or migrated.
+- Validation performed: JavaScript syntax check and ZIP integrity check. Live Supabase/browser testing was not performed.

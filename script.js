@@ -693,7 +693,7 @@ async function loadDataFromSupabase(isSilent = false) {
       length: cleanLen(item.length), orderQty: item.order_qty
     }));
     shipmentList = shipData.map(item => ({ id: item.id, date: item.shipment_date, month: item.shipment_month, poNumber: item.po_number, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), container: item.container, shippedQty: item.shipped_qty, remainingBalance: item.remaining_balance }));
-    packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate 1`, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date }));
+    packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate 1`, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date, createdAt: item.created_at || item.createdAt || null, updatedAt: item.updated_at || item.updatedAt || null, timestamp: item.timestamp || null }));
     historyLogs = logData.map(item => ({ id: item.id, date: item.log_date, shift: item.shift, profile: item.profile, length: cleanLen(item.length), cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, timestamp: item.log_time || item.created_at || new Date().toISOString() }));
     rejectLogs = rjData; recoverLogs = rcData; dailyInstructionsList = (instData || []).map(normalizeDailyInstructionRow);
     nextPlStateLoaded = false; nextPlRestorePersistedState();
@@ -5595,7 +5595,7 @@ async function savePackingListEntry(startNewCrate=false){
   const newPl={pl_number:plNum,po_number:poNum,shipment_month:filterMonth,container,crate_no:crateNo,profile,item_code:itemCode,length,box_qty:1,pcs_qty:pcsQty,net_weight:netWeight,gross_weight:grossWeight,packing_date:plDate};
   const {data:inserted,error}=await supabaseClient.from('packing_list').insert([newPl]).select().single();
   if(error)throw new Error(`Packing List save failed: ${error.message}`);
-  packingLists.unshift({id:inserted?.id||-Date.now(),plNumber:plNum,poNumber:poNum,month:filterMonth,container,crateNo,profile,itemCode,length,boxQty:1,pcsQty,netWeight,grossWeight,date:plDate});
+  packingLists.unshift({id:inserted?.id||-Date.now(),plNumber:plNum,poNumber:poNum,month:filterMonth,container,crateNo,profile,itemCode,length,boxQty:1,pcsQty,netWeight,grossWeight,date:plDate,createdAt:inserted?.created_at||inserted?.createdAt||null,updatedAt:inserted?.updated_at||inserted?.updatedAt||null,timestamp:inserted?.timestamp||null});
   aisRegisterUndo(`Packing List • ${plNum} • ${crateNo}`,async()=>{await aisDeleteLatest('packing_list',{pl_number:newPl.pl_number,po_number:newPl.po_number,shipment_month:newPl.shipment_month,container:newPl.container,crate_no:newPl.crate_no,profile:newPl.profile,item_code:newPl.item_code,length:newPl.length,box_qty:newPl.box_qty,pcs_qty:newPl.pcs_qty,net_weight:newPl.net_weight,gross_weight:newPl.gross_weight,packing_date:newPl.packing_date});},'packingListTab');
   showToast(`${profile} added to ${crateNo}. You can add another profile to the same crate.`,'success');
 
@@ -9150,3 +9150,109 @@ ppSmartRenderContainer = function(){
   } catch(e) { console.warn('Side view visibility correction skipped:', e); }
   return result;
 };
+
+
+/* AIS Tracker safe UX patch: Enter-to-save + duplicate-submit guard.
+   Additive only: no database schema, records, or existing data are changed. */
+(function aisEnterAndDuplicateGuard(){
+  const formActions = [
+    ['rejectEntryForm', 'saveRejectEntry'],
+    ['rejectRecoverForm', 'saveRecoverEntry'],
+    ['recoverWrapForm', 'saveRecoverWrapEntry'],
+    ['dailyEntryForm', 'submitDailyEntry'],
+    ['poEntryForm', 'saveNewPO'],
+    ['packingListForm', 'savePackingListEntry'],
+    ['cardboardEntryForm', 'processCardboardTransaction'],
+    ['shipmentEntryForm', 'saveShipmentEntry'],
+    ['cardboardManualForm', 'saveCardboardManualData']
+  ];
+  const lastSubmissions = new Map();
+  const inFlight = new Set();
+
+  function formSignature(form, fnName, args) {
+    const values = Array.from(form.elements || [])
+      .filter(el => el.name || el.id)
+      .map(el => [el.name || el.id, el.type === 'checkbox' || el.type === 'radio' ? !!el.checked : String(el.value ?? '')]);
+    const safeArgs = (args || []).map(arg => {
+      if (arg && typeof arg === 'object') return { eventType: arg.type || '', eventTarget: arg.target && (arg.target.id || arg.target.tagName) || '' };
+      return arg;
+    });
+    return fnName + '|' + JSON.stringify(safeArgs) + '|' + JSON.stringify(values);
+  }
+
+  function installGuard(formId, fnName) {
+    const form = document.getElementById(formId);
+    const original = window[fnName];
+    if (!form || typeof original !== 'function' || original.__aisDuplicateGuarded) return;
+
+    const guarded = function(...args) {
+      const sig = formSignature(form, fnName, args);
+      const now = Date.now();
+      const previous = lastSubmissions.get(fnName);
+      if (inFlight.has(fnName)) {
+        if (typeof window.showToast === 'function') window.showToast('Save is already in progress. Please wait. / දත්ත සුරැකෙමින් පවතී. කරුණාකර රැඳී සිටින්න.', 'info');
+        return;
+      }
+      if (previous && previous.signature === sig && now - previous.time < 5000) {
+        if (typeof window.showToast === 'function') window.showToast('Same data was just submitted. Duplicate save prevented. / එකම දත්ත නැවත save කිරීම වැළැක්වුවා.', 'warning');
+        return;
+      }
+      inFlight.add(fnName);
+      const started = Date.now();
+      try {
+        const result = original.apply(this, args);
+        if (result && typeof result.then === 'function') {
+          return result.then(value => {
+            lastSubmissions.set(fnName, { signature: sig, time: Date.now() });
+            return value;
+          }).catch(err => {
+            throw err;
+          }).finally(() => { inFlight.delete(fnName); });
+        }
+        lastSubmissions.set(fnName, { signature: sig, time: Date.now() });
+        inFlight.delete(fnName);
+        return result;
+      } catch (err) {
+        inFlight.delete(fnName);
+        throw err;
+      }
+    };
+    guarded.__aisDuplicateGuarded = true;
+    window[fnName] = guarded;
+  }
+
+  function installEnterHandler(formId, fnName) {
+    const form = document.getElementById(formId);
+    if (!form || form.dataset.aisEnterSaveBound === '1') return;
+    form.dataset.aisEnterSaveBound = '1';
+    form.addEventListener('keydown', function(ev) {
+      if (ev.key !== 'Enter' || ev.isComposing || ev.shiftKey || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+      const target = ev.target;
+      if (!target || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+      if (target.tagName === 'BUTTON') return;
+      // Avoid hijacking Enter in multiline/editable areas; otherwise use the form's primary save action.
+      ev.preventDefault();
+      const buttons = Array.from(form.querySelectorAll('button'));
+      let button = null;
+      if (formId === 'packingListForm') {
+        // Enter adds the selected profile to the current crate; the second action remains available explicitly.
+        button = buttons.find(b => (b.getAttribute('onclick') || '').includes('savePackingListEntry(false)'));
+      } else if (formId === 'cardboardManualForm') {
+        button = form.querySelector('button[type="submit"]');
+      } else {
+        button = buttons.find(b => !b.disabled && /save|process|submit|shipment|movement|recovery|deduct stock/i.test((b.innerText || b.textContent || '') + ' ' + (b.getAttribute('onclick') || '')));
+      }
+      if (button && !button.disabled) button.click();
+      else if (typeof window[fnName] === 'function') window[fnName]();
+    });
+  }
+
+  function init() {
+    formActions.forEach(([formId, fnName]) => {
+      installGuard(formId, fnName);
+      installEnterHandler(formId, fnName);
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
+  else init();
+})();
