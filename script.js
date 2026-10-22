@@ -5,7 +5,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 
 let currentUserRole = null; let isAdminUnlocked = false; let isDarkMode = false; let isAppBusy = false;
-let masterChartInstance = null, overallPoChartInstance = null, overallPlChartInstance = null, plChartInstance = null, monthlyShiftChartInstance = null, poChartInstances = [], rejectDashChart = null, rejectProfileChartInstance = null;
+let masterChartInstance = null, overallPoChartInstance = null, overallPlChartInstance = null, plChartInstance = null, monthlyShiftChartInstance = null, monthlyTeamContributionChartInstance = null, poChartInstances = [], rejectDashChart = null, rejectProfileChartInstance = null;
 let cardboardStockList = [], cardboardManualData = [], dailyInstructionsList = [], masterData = [], historyLogs = [], poList = [], shipmentList = [], packingLists = [], rejectLogs = [], recoverLogs = [], recoveryCutLogs = [], recoveryWrapLogs = []; 
 let globalManualCrates = {};
 let stockResetInProgress = false;
@@ -289,7 +289,7 @@ window.exportShipmentsPdf=function(){
     exportDataToPdf(data,'AIS_Shipment_History','AIS Tracker - Shipment History','Shipment History');
 };
 window.exportHistoryPdf=function(){
-    const data=historyLogs.map(h=>({'Date':h.date,'Time':h.timestamp,'Shift':h.shift,'Profile':h.profile,'Length (mm)':h.length,'Cut Qty':h.cutQty,'Punch Qty':h.punchQty,'Wrap Qty':h.wrapQty,'Box Qty':h.boxQty,'Crate Qty':h.crateQty}));
+    const data=historyLogs.map(h=>({'Date':h.date,'Time':h.timestamp,'Shift':h.shift,'Team':h.team||'Unassigned','Profile':h.profile,'Length (mm)':h.length,'Cut Qty':h.cutQty,'Punch Qty':h.punchQty,'Wrap Qty':h.wrapQty,'Box Qty':h.boxQty,'Crate Qty':h.crateQty}));
     exportDataToPdf(data,'AIS_Production_History','AIS Tracker - Production History','History Logs');
 };
 window.exportRejectPdf=function(){
@@ -336,7 +336,7 @@ window.exportPoExcel = function() {
 };
 window.exportCardboardExcel = function() { const data = cardboardStockList.map(c => ({ "Date": c.date, "Transaction Type": c.type, "Incoming": c.incoming, "Consumed": c.used })); exportTableToExcel(data, "AIS_Cardboard_History", "Cardboard"); };
 window.exportShipmentsExcel = function() { const data = shipmentList.map(s => ({ "Shipment Date": s.date, "PO Number": s.poNumber, "Profile": s.profile, "Item Code": getShipmentMasterItemCode(s)||"-", "Length (mm)": s.length, "Container No": s.container, "Shipped Qty": s.shippedQty, "Remaining": s.remainingBalance })); exportTableToExcel(data, "AIS_Shipment_History", "Shipments"); };
-window.exportHistoryExcel = function() { const data = historyLogs.map(h => ({ "Date": h.date, "Time": h.timestamp, "Shift": h.shift, "Profile": h.profile, "Length (mm)": h.length, "Cut Qty": h.cutQty, "Punch Qty": h.punchQty, "Wrap Qty": h.wrapQty, "Box Qty": h.boxQty, "Crate Qty": h.crateQty })); exportTableToExcel(data, "AIS_Production_History", "History"); };
+window.exportHistoryExcel = function() { const data = historyLogs.map(h => ({ "Date": h.date, "Time": h.timestamp, "Shift": h.shift, "Team": h.team || 'Unassigned', "Profile": h.profile, "Length (mm)": h.length, "Cut Qty": h.cutQty, "Punch Qty": h.punchQty, "Wrap Qty": h.wrapQty, "Box Qty": h.boxQty, "Crate Qty": h.crateQty })); exportTableToExcel(data, "AIS_Production_History", "History"); };
 window.exportRejectExcel = function() { const data = rejectLogs.map(r => ({ "Date": r.reject_date, "Shift": r.shift, "Location": r.location, "Stage": r.stage, "Profile": r.profile, "Item Code": r.item_code, "Length (mm)": r.length, "Reject Qty": r.pcs, "Weight (kg)": r.weight })); exportTableToExcel(data, "AIS_Reject_History", "Rejects"); };
 window.exportRecoverExcel = function() {
   const cutData=recoveryCutLogs.map(r=>({"Date":r.cut_date,"Source Profile":r.source_profile,"Source Item Code":r.source_item_code,"Original Length":r.original_length,"New Profile":r.new_profile,"New Item Code":r.new_item_code,"New Length":r.new_length,"Cut Qty":r.cut_pcs,"Cut Weight (kg)":r.cut_weight}));
@@ -698,7 +698,7 @@ async function loadDataFromSupabase(isSilent = false) {
     }));
     shipmentList = shipData.map(item => ({ id: item.id, date: item.shipment_date, month: item.shipment_month, poNumber: item.po_number, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), container: item.container, shippedQty: item.shipped_qty, remainingBalance: item.remaining_balance }));
     packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate 1`, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date, createdAt: item.created_at || item.createdAt || null, updatedAt: item.updated_at || item.updatedAt || null, timestamp: item.timestamp || null }));
-    historyLogs = logData.map(item => ({ id: item.id, date: item.log_date, shift: item.shift, profile: item.profile, length: cleanLen(item.length), cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, timestamp: item.log_time || item.created_at || new Date().toISOString() }));
+    historyLogs = logData.map(item => ({ id: item.id, date: item.log_date, shift: item.shift, team: item.team || item.production_team || '', profile: item.profile, length: cleanLen(item.length), cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, timestamp: item.log_time || item.created_at || new Date().toISOString() }));
     rejectLogs = rjData; recoverLogs = rcData; dailyInstructionsList = (instData || []).map(normalizeDailyInstructionRow);
     nextPlStateLoaded = false; nextPlRestorePersistedState();
     recoveryCutLogs = (rCutData || []).map(r => ({id:r.id,cut_date:r.cut_date,source_profile:r.source_profile,source_item_code:r.source_item_code,original_length:cleanLen(r.original_length),new_profile:r.new_profile,new_item_code:r.new_item_code,new_length:cleanLen(r.new_length),cut_pcs:Number(r.cut_pcs)||0,cut_weight:Number(r.cut_weight)||0}));
@@ -3504,7 +3504,7 @@ function renderDashboard() {
           }
       }
   } catch(err) { console.error('Dashboard render error:', err); showToast('Dashboard script error: ' + (err?.message || err), 'error'); }
-  try { renderMonthlyShiftChart(); } catch (err) { console.error('Monthly dashboard chart error:', err); showToast('Dashboard chart error: ' + (err?.message || 'Unable to render monthly chart.'), 'error'); }
+  try { renderMonthlyShiftChart(); renderMonthlyTeamProductionChart(); } catch (err) { console.error('Monthly dashboard chart error:', err); showToast('Dashboard chart error: ' + (err?.message || 'Unable to render monthly chart.'), 'error'); }
   recoveryMonthReminder();
 }
 
@@ -3514,6 +3514,8 @@ function renderMonthlyShiftChart() {
     const now = new Date(); const key = dashboardSelectedMonth || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`; const [selectedYear, selectedMonthNum] = key.split('-').map(Number); const currentYear = selectedYear || now.getFullYear(); const currentMonth = (selectedMonthNum||now.getMonth()+1)-1;
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const labels = [], dayWrapData = [], nightWrapData = [], dayRejectData = [], nightRejectData = [], dayNetRejectData = [], nightNetRejectData = [];
+    const dailyCutStageData = [], dailyPunchStageData = [], dailyWrapStageData = [], dailyBoxStageData = [], dailyCrateStageData = [];
+    let monthPunchWeight = 0, monthBoxWeight = 0, monthCrateWeight = 0;
     const lookupMap = new Map();
     masterData.forEach(m => lookupMap.set(`${String(m.profile).trim()}_${cleanLen(m.length)}_${String(m.itemCode||'').trim().toLowerCase()}`, m));
 
@@ -3525,6 +3527,7 @@ function renderMonthlyShiftChart() {
         labels.push(`${d}`);
         const dateKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         let dayWrap=0, nightWrap=0, dayCut=0, nightCut=0, dayReject=0, nightReject=0, dayRecover=0, nightRecover=0, dayPcs=0, nightPcs=0;
+        let stageCutWt=0, stagePunchWt=0, stageWrapWt=0, stageBoxWt=0, stageCrateWt=0;
 
         historyLogs.filter(h => h.date === dateKey).forEach(log => {
             // Production output is measured from WRAPPING PCS, not by summing every stage.
@@ -3534,8 +3537,13 @@ function renderMonthlyShiftChart() {
             const uw = item ? (Number(item.unitWeight)||0) : 0;
             const wrapPcs = Number(log.wrapQty)||0;
             const cutPcs = Number(log.cutQty)||0;
+            const punchPcs = Number(log.punchQty)||0;
+            const boxPcs = Number(log.boxQty)||0;
+            const cratePcs = Number(log.crateQty)||0;
             const wrapWt = wrapPcs * uw;
             const cutWt = cutPcs * uw;
+            stageCutWt += cutWt; stagePunchWt += punchPcs * uw; stageWrapWt += wrapWt;
+            stageBoxWt += boxPcs * uw; stageCrateWt += cratePcs * uw;
             if(String(log.shift).toLowerCase().includes('night')) { nightWrap += wrapWt; nightCut += cutWt; nightPcs += wrapPcs; }
             else { dayWrap += wrapWt; dayCut += cutWt; dayPcs += wrapPcs; }
         });
@@ -3550,6 +3558,9 @@ function renderMonthlyShiftChart() {
 
         const dayNet=Math.max(0,dayReject-dayRecover), nightNet=Math.max(0,nightReject-nightRecover);
         dayWrapData.push(Number(dayWrap.toFixed(2))); nightWrapData.push(Number(nightWrap.toFixed(2)));
+        dailyCutStageData.push(Number(stageCutWt.toFixed(2))); dailyPunchStageData.push(Number(stagePunchWt.toFixed(2)));
+        dailyWrapStageData.push(Number(stageWrapWt.toFixed(2))); dailyBoxStageData.push(Number(stageBoxWt.toFixed(2))); dailyCrateStageData.push(Number(stageCrateWt.toFixed(2)));
+        monthPunchWeight += stagePunchWt; monthBoxWeight += stageBoxWt; monthCrateWeight += stageCrateWt;
         dayRejectData.push(Number(dayReject.toFixed(2))); nightRejectData.push(Number(nightReject.toFixed(2)));
         dayNetRejectData.push(Number(dayNet.toFixed(2))); nightNetRejectData.push(Number(nightNet.toFixed(2)));
         monthWrapWeight += dayWrap + nightWrap; monthCutWeight += dayCut + nightCut; monthWrapPcs += dayPcs + nightPcs;
@@ -3580,15 +3591,15 @@ function renderMonthlyShiftChart() {
     setText('dashMonthlyWrapEfficiencyPct', `${monthWrapEfficiencyPct.toFixed(1)}%`); setText('dashMonthlyNetRejectPct', `${monthNetRejectPct.toFixed(1)}%`); setText('dashMonthlyRecoveryPct', `${monthRecoveryPct.toFixed(1)}%`);
 
     const chartTitleNode = ctx.closest('.card').querySelector('h3');
-    if(chartTitleNode) chartTitleNode.innerHTML = `<i class="fa-solid fa-chart-simple"></i> Production Output: Wrapping Weight vs Reject / Net Reject`;
+    if(chartTitleNode) chartTitleNode.innerHTML = `<i class="fa-solid fa-chart-simple"></i> Monthly Daily Production by Stage (kg)`;
     let totalDisplaySpan = document.getElementById('monthlyTotalDisplay');
     if (!totalDisplaySpan) { totalDisplaySpan=document.createElement('div'); totalDisplaySpan.id='monthlyTotalDisplay'; totalDisplaySpan.style.cssText="font-size:13.5px;font-weight:800;color:#0369a1;background:#e0f2fe;padding:8px 15px;border-radius:8px;border:1px solid #bae6fd;margin-bottom:15px;width:100%;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;"; ctx.closest('.card').insertBefore(totalDisplaySpan,ctx.parentElement); }
-    totalDisplaySpan.innerHTML=`<span><i class="fa-solid fa-weight-scale"></i> ${now.toLocaleDateString('en-US',{month:'long',year:'numeric'})} Wrapping Production: <b style="font-size:16px;">${monthWrapWeight.toFixed(2)} kg</b> (${monthWrapPcs.toLocaleString()} Pcs)</span><span style="color:#9f1239;">Net Reject: <b>${monthNetRejectWeight.toFixed(2)} kg</b> • ${monthNetRejectPct.toFixed(1)}%</span>`;
+    totalDisplaySpan.innerHTML=`<span><i class="fa-solid fa-weight-scale"></i> ${new Date(currentYear,currentMonth,1).toLocaleDateString('en-US',{month:'long',year:'numeric'})} • Cut <b>${monthCutWeight.toFixed(2)} kg</b> · Punch <b>${monthPunchWeight.toFixed(2)} kg</b> · Wrap <b>${monthWrapWeight.toFixed(2)} kg</b> · Box <b>${monthBoxWeight.toFixed(2)} kg</b> · Crate <b>${monthCrateWeight.toFixed(2)} kg</b></span><span style="color:#9f1239;">Net Reject: <b>${monthNetRejectWeight.toFixed(2)} kg</b></span>`;
 
     // Update the dashboard heading target if it exists.
     const summaryCard = document.getElementById('monthlyProductionSummary');
     if(summaryCard) summaryCard.innerHTML = `
-      <div class="prod-summary-title"><i class="fa-solid fa-gauge-high"></i> Production Performance — ${now.toLocaleDateString('en-US',{month:'long',year:'numeric'})}</div>
+      <div class="prod-summary-title"><i class="fa-solid fa-gauge-high"></i> Production Performance — ${new Date(currentYear,currentMonth,1).toLocaleDateString('en-US',{month:'long',year:'numeric'})}</div>
       <div class="prod-summary-grid">
         <div class="prod-metric daily"><span>Today Wrapping</span><b id="dashDailyWrapWeight">${today.wrap.toFixed(2)} kg</b><small>${today.wrapPcs.toLocaleString()} Pcs • Wrap/Cut <span id="dashDailyWrapEfficiencyPct">${todayWrapEfficiencyPct.toFixed(1)}%</span></small></div>
         <div class="prod-metric monthly"><span id="dashMonthlyWrapLabel">Monthly Wrapping</span><b id="dashMonthlyWrapWeight">${monthWrapWeight.toFixed(2)} kg</b><small>${monthWrapPcs.toLocaleString()} Pcs • Wrap/Cut ${monthWrapEfficiencyPct.toFixed(1)}%</small></div>
@@ -3599,11 +3610,114 @@ function renderMonthlyShiftChart() {
 
     const chartCanvas=ctx.getContext('2d'), textColor=isDarkMode?'#f8fafc':'#0f172a', gridColor=isDarkMode?'rgba(255,255,255,0.08)':'rgba(0,0,0,0.06)';
     monthlyShiftChartInstance=new Chart(chartCanvas,{type:'bar',data:{labels,datasets:[
-      {label:'Wrapping Wt - Day',data:dayWrapData,backgroundColor:'#34d399',borderColor:'#10b981',borderWidth:1,borderRadius:4,barPercentage:.8,categoryPercentage:.8},
-      {label:'Wrapping Wt - Night',data:nightWrapData,backgroundColor:'#60a5fa',borderColor:'#2563eb',borderWidth:1,borderRadius:4,barPercentage:.8,categoryPercentage:.8},
-      {label:'Reject Wt',data:dayRejectData.map((v,i)=>Number((v+nightRejectData[i]).toFixed(2))),backgroundColor:'#f43f5e',borderColor:'#e11d48',borderWidth:1,borderRadius:4,barPercentage:.8,categoryPercentage:.8},
-      {label:'Net Reject Wt',data:dayNetRejectData.map((v,i)=>Number((v+nightNetRejectData[i]).toFixed(2))),backgroundColor:'#fb7185',borderColor:'#be123c',borderWidth:1,borderRadius:4,barPercentage:.8,categoryPercentage:.8}
-    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${Number(c.raw||0).toFixed(2)} kg`}}},scales:{x:{grid:{display:false},ticks:{color:textColor},title:{display:true,text:'Day of Month',color:textColor}},y:{min:0,suggestedMax:200,grid:{color:gridColor,borderDash:[4,4]},ticks:{color:textColor},title:{display:true,text:'Weight (kg)',color:textColor}}}}});
+      {label:'Cut',data:dailyCutStageData,backgroundColor:'#0ea5e9',borderColor:'#0284c7',borderWidth:1,borderRadius:3},
+      {label:'Punch',data:dailyPunchStageData,backgroundColor:'#f59e0b',borderColor:'#d97706',borderWidth:1,borderRadius:3},
+      {label:'Wrapping',data:dailyWrapStageData,backgroundColor:'#10b981',borderColor:'#059669',borderWidth:1,borderRadius:3},
+      {label:'Box',data:dailyBoxStageData,backgroundColor:'#8b5cf6',borderColor:'#7c3aed',borderWidth:1,borderRadius:3},
+      {label:'Crate',data:dailyCrateStageData,backgroundColor:'#64748b',borderColor:'#475569',borderWidth:1,borderRadius:3}
+    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:true,position:'bottom',labels:{color:textColor,usePointStyle:true,boxWidth:8,padding:10,font:{size:10}}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${Number(c.raw||0).toFixed(2)} kg`}}},scales:{x:{grid:{display:false},ticks:{color:textColor,maxTicksLimit:16,font:{size:9}},title:{display:true,text:'Day of Month',color:textColor,font:{size:10}}},y:{beginAtZero:true,grid:{color:gridColor,borderDash:[4,4]},ticks:{color:textColor,font:{size:9}},title:{display:true,text:'Stage Weight (kg)',color:textColor,font:{size:10}}}}}});
+
+}
+
+function renderMonthlyTeamProductionChart() {
+    const canvas = document.getElementById('monthlyTeamContributionChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    safeChartDestroy(monthlyTeamContributionChartInstance, 'monthlyTeamContributionChart');
+    const now = new Date();
+    const key = dashboardSelectedMonth || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    const [selectedYear, selectedMonthNum] = key.split('-').map(Number);
+    const year = selectedYear || now.getFullYear();
+    const month = (selectedMonthNum || now.getMonth()+1) - 1;
+    const monthPrefix = `${year}-${String(month+1).padStart(2,'0')}`;
+    const teamNames = ['Team A','Team B','Team C'];
+    const teamColors = ['#0f766e','#2563eb','#d97706'];
+    const teamTotals = Object.fromEntries(teamNames.map(team => [team,{cut:0,punch:0,wrap:0,box:0,total:0,records:0}]));
+    let unassignedLegacyCount = 0;
+    historyLogs.forEach(log => {
+        if (!String(log.date || '').startsWith(monthPrefix)) return;
+        const team = String(log.team || '').trim();
+        if (!teamNames.includes(team)) { unassignedLegacyCount++; return; }
+        const item = masterData.find(m => String(m.profile).trim() === String(log.profile).trim() && cleanLen(m.length) === cleanLen(log.length));
+        const unitWeight = item ? (Number(item.unitWeight) || 0) : 0;
+        const totals = teamTotals[team];
+        totals.cut += (Number(log.cutQty) || 0) * unitWeight;
+        totals.punch += (Number(log.punchQty) || 0) * unitWeight;
+        totals.wrap += (Number(log.wrapQty) || 0) * unitWeight;
+        // Existing history stores box_qty as pieces; convert it using Master Catalog unit weight.
+        totals.box += (Number(log.boxQty) || 0) * unitWeight;
+        totals.records++;
+    });
+    teamNames.forEach(team => {
+        const t = teamTotals[team];
+        // This is stage-activity contribution (Cut + Punch + Wrapping + Box), not unique finished-product weight.
+        totalsSafe(t);
+        t.total = t.cut + t.punch + t.wrap + t.box;
+    });
+    function totalsSafe(t) {
+        ['cut','punch','wrap','box'].forEach(k => { if (!Number.isFinite(t[k])) t[k] = 0; });
+    }
+    const monthlyTotal = teamNames.reduce((sum,team) => sum + (Number(teamTotals[team].total) || 0), 0);
+    const hasTeamData = monthlyTotal > 0;
+    const summary = document.getElementById('monthlyTeamContributionSummary');
+    if (summary) {
+        summary.innerHTML = teamNames.map((team,i) => {
+            const t = teamTotals[team];
+            const share = monthlyTotal > 0 ? (t.total / monthlyTotal * 100) : 0;
+            return `<div style="flex:1;min-width:115px;padding:7px 10px;border-radius:8px;border:1px solid ${teamColors[i]}33;background:${teamColors[i]}0d;font-size:10.5px;"><b style="color:${teamColors[i]}">${team}</b><div style="font-size:14px;font-weight:900;color:var(--text-color);margin-top:2px;">${t.total.toFixed(2)} kg <span style="font-size:10px;font-weight:700;">(${share.toFixed(1)}%)</span></div><small style="color:var(--text-muted);">Cut ${t.cut.toFixed(1)} · Punch ${t.punch.toFixed(1)} · Wrap ${t.wrap.toFixed(1)} · Box ${t.box.toFixed(1)} kg</small></div>`;
+        }).join('') + (!hasTeamData ? `<div style="width:100%;padding:8px 10px;border:1px dashed var(--border-color);border-radius:8px;background:var(--surface-color, rgba(148,163,184,.06));font-size:10.5px;color:var(--text-muted);"><b>No Team A/B/C production weight is available for this month yet.</b> Select Team A, Team B or Team C in Daily Production Entry and save a production record. The chart will update automatically; existing unassigned history is preserved.</div>` : '') + (unassignedLegacyCount ? `<div style="width:100%;font-size:10px;color:var(--text-muted);">${unassignedLegacyCount} record(s) for this month have no Team A/B/C assignment. They remain unchanged and are excluded from team totals.</div>` : '');
+    }
+    const textColor = isDarkMode ? '#f8fafc' : '#0f172a';
+    const centerTextPlugin = {
+        id: 'monthlyTeamCenterText',
+        afterDraw(chart) {
+            const {ctx, chartArea} = chart;
+            if (!chartArea) return;
+            const x = (chartArea.left + chartArea.right) / 2;
+            const y = (chartArea.top + chartArea.bottom) / 2;
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = textColor;
+            ctx.font = hasTeamData ? '700 10px sans-serif' : '700 9px sans-serif';
+            ctx.fillText(hasTeamData ? 'MONTH TOTAL' : 'NO TEAM DATA', x, y - 9);
+            ctx.font = '900 13px sans-serif';
+            ctx.fillText(`${monthlyTotal.toFixed(2)} kg`, x, y + 8);
+            ctx.restore();
+        }
+    };
+    const chartCtx = canvas.getContext('2d');
+    monthlyTeamContributionChartInstance = new Chart(chartCtx, {
+        type: 'doughnut',
+        data: {
+            labels: teamNames,
+            datasets: [{
+                label: 'Team contribution',
+                // Chart.js does not draw doughnut arcs when every value is zero.
+                // Use a neutral placeholder ring only for the no-data state; never imply team contributions.
+                data: hasTeamData ? teamNames.map(team => Number(teamTotals[team].total.toFixed(2))) : [1,1,1],
+                backgroundColor: hasTeamData ? teamColors : ['#e2e8f0','#cbd5e1','#94a3b8'],
+                borderColor: isDarkMode ? '#1e293b' : '#ffffff',
+                borderWidth: 2,
+                hoverOffset: 5
+            }]
+        },
+        plugins: [centerTextPlugin],
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '66%',
+            plugins: {
+                legend: {display:hasTeamData, position:'bottom', labels:{color:textColor,usePointStyle:true,boxWidth:8,padding:10,font:{size:10}}},
+                tooltip: {enabled:hasTeamData, callbacks: {
+                    label: c => {
+                        const value = Number(c.raw || 0);
+                        const pct = monthlyTotal > 0 ? (value / monthlyTotal * 100) : 0;
+                        return ` ${c.label}: ${value.toFixed(2)} kg (${pct.toFixed(1)}%)`;
+                    }
+                }}
+            }
+        }
+    });
 }
 
 function renderPoCharts() { const poContainer = document.getElementById('poChartsContainerTab'); if(!poContainer) return; poChartInstances.forEach(chart => chart.destroy()); poChartInstances = []; poContainer.innerHTML = ''; if (poList.length === 0) { poContainer.innerHTML = `<div style="padding:20px; color:var(--text-muted); font-weight:700; text-align:center; width:100%;">No Active Production Orders Available.</div>`; return; } const poGroups = {}; poList.forEach(po => { if(!poGroups[po.poNumber]) poGroups[po.poNumber] = { date: po.date, items: [] }; poGroups[po.poNumber].items.push(po); }); Object.keys(poGroups).forEach((poNumber, idx) => { const group = poGroups[poNumber]; let totalOrderWt = 0; let totalShippedWt = 0; let totalCompleteWt = 0; group.items.forEach(poItem => { const matchedItem = masterData.find(m => String(m.profile).trim() === String(poItem.profile).trim() && cleanLen(m.length) === cleanLen(poItem.length)); const uw = matchedItem ? (matchedItem.unitWeight || 0) : 0; const orderWt = poItem.orderQty * uw; totalOrderWt += orderWt; let shippedQty = 0; shipmentList.filter(s => String(s.poNumber).trim() === String(poNumber).trim() && String(s.profile).trim() === String(poItem.profile).trim() && cleanLen(s.length) === cleanLen(poItem.length)).forEach(s => shippedQty += s.shippedQty); const shippedWt = shippedQty * uw; totalShippedWt += shippedWt; const completeWt = Math.min(matchedItem ? (matchedItem.boxQty + matchedItem.crateQty) : 0, Math.max(0, poItem.orderQty - shippedQty)) * uw; totalCompleteWt += completeWt; }); const pendingWt = Math.max(0, totalOrderWt - totalShippedWt - totalCompleteWt); 
@@ -3978,15 +4092,15 @@ async function submitDailyEntry() {
   try {
     if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return;
     const raw = id => String(document.getElementById(id)?.value ?? '0').trim();
-    const dateVal=raw('entryDate'), shiftVal=raw('shift'),
+    const dateVal=raw('entryDate'), shiftVal=raw('shift'), teamVal=raw('productionTeam'),
       profileVal=raw('selectProfile'), itemCodeVal=raw('selectItemCode'),
       lengthVal=raw('selectLength');
     const cutQty=Number(raw('cutQty')||0), punchQty=Number(raw('punchQty')||0),
       wrapQty=Number(raw('wrapQty')||0), enteredBoxes=Number(raw('boxQty')||0),
       crateQty=Number(raw('crateQty')||0);
 
-    if(!dateVal||!profileVal||!itemCodeVal||!lengthVal)
-      return showToast('Please select date, profile, item code and length.','warning');
+    if(!dateVal||!shiftVal||!teamVal||!profileVal||!itemCodeVal||!lengthVal)
+      return showToast('Please select date, shift, team, profile, item code and length.','warning');
     const quantities=[['Cut',cutQty],['Punch',punchQty],['Wrapping',wrapQty],['Box',enteredBoxes],['Crate',crateQty]];
     const invalid=quantities.find(([label,value])=>!Number.isFinite(value)||value<0||!Number.isInteger(value));
     if(invalid) return showToast(`${invalid[0]} quantity must be a whole number greater than or equal to 0.`,'warning');
@@ -4039,7 +4153,7 @@ async function submitDailyEntry() {
     cardboardToDeduct=Math.min(enteredBoxes,availableCardboard);
     let shortageBoxes=Math.max(0,enteredBoxes-cardboardToDeduct);
 
-    newLog={log_date:dateVal,shift:shiftVal,profile:profileVal,length:cleanLen(lengthVal),cut_qty:cutQty,punch_qty:punchQty,wrap_qty:wrapQty,box_qty:boxPcs,crate_qty:crateQty,log_time:new Date().toLocaleTimeString()};
+    newLog={log_date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,length:cleanLen(lengthVal),cut_qty:cutQty,punch_qty:punchQty,wrap_qty:wrapQty,box_qty:boxPcs,crate_qty:crateQty,log_time:new Date().toLocaleTimeString()};
 
     // If the catalog display combines duplicate DB rows, consolidate the displayed
     // total into the canonical row while zeroing only the matching duplicate stock
@@ -4080,11 +4194,11 @@ async function submitDailyEntry() {
 
     aisRegisterUndo(`Daily Production • ${profileVal} / ${lengthVal} • ${dateVal}`, async()=>{
       for(const row of updatedRows) await dbUpdate('master_catalog',previousToDb(row.before),row.id,'Production undo failed');
-      await aisDeleteLatest('history_logs',{log_date:newLog.log_date,shift:newLog.shift,profile:newLog.profile,length:newLog.length,cut_qty:newLog.cut_qty,punch_qty:newLog.punch_qty,wrap_qty:newLog.wrap_qty,box_qty:newLog.box_qty,crate_qty:newLog.crate_qty,log_time:newLog.log_time});
+      await aisDeleteLatest('history_logs',{log_date:newLog.log_date,shift:newLog.shift,team:newLog.team,profile:newLog.profile,length:newLog.length,cut_qty:newLog.cut_qty,punch_qty:newLog.punch_qty,wrap_qty:newLog.wrap_qty,box_qty:newLog.box_qty,crate_qty:newLog.crate_qty,log_time:newLog.log_time});
       if(cardboardDeducted) await aisDeleteLatest('cardboard_stock',{cb_date:cardboardDeducted.date,cb_type:cardboardDeducted.type,incoming:0,used:cardboardDeducted.used});
     },'adminEntryTab');
 
-    historyLogs.unshift({id:insertedLog.id || -Date.now(),date:dateVal,shift:shiftVal,profile:profileVal,length:cleanLen(lengthVal),cutQty,punchQty,wrapQty,boxQty:boxPcs,crateQty,timestamp:insertedLog.log_time||insertedLog.created_at});
+    historyLogs.unshift({id:insertedLog.id || -Date.now(),date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,length:cleanLen(lengthVal),cutQty,punchQty,wrapQty,boxQty:boxPcs,crateQty,timestamp:insertedLog.log_time||insertedLog.created_at});
     renderDashboard(); renderProfileSummaryTable(); renderHistoryData(); checkDateStatus(); renderCardboardStock(); renderBalanceWorkTable();
     ['cutQty','punchQty','wrapQty','boxQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
     updateProductionCardboardAvailability();
@@ -5982,12 +6096,12 @@ window.saveManualProfileToCrate=async function(){
 function renderHistoryData() { 
     try {
         const dateVal = document.getElementById('historyDateSelect').value; const tbody = document.getElementById('historyTableBody'); tbody.innerHTML = ''; const filtered = historyLogs.filter(h => h.date === dateVal); 
-        if (filtered.length === 0) { tbody.innerHTML = `<tr><td colspan="11" style="color:#888; text-align:center;">No logs for ${dateVal}.</td></tr>`; return; } 
+        if (filtered.length === 0) { tbody.innerHTML = `<tr><td colspan="12" style="color:#888; text-align:center;">No logs for ${dateVal}.</td></tr>`; return; } 
         let html = '';
         filtered.forEach(log => { 
             const matched = masterData.find(m => String(m.profile).trim() === String(log.profile).trim() && cleanLen(m.length) === cleanLen(log.length));
             const iCode = matched && matched.itemCode ? matched.itemCode : '-'; const uWt = matched && matched.unitWeight ? matched.unitWeight.toFixed(3) + ' kg' : '-';
-            html += `<tr><td><b>${log.timestamp || ''}</b> <span style="font-size:11px;color:var(--text-muted);">(${log.shift})</span></td><td><b>${log.profile}</b></td><td><span style="color:var(--info-color); font-weight:600;">${iCode}</span></td><td>${log.length} mm</td><td><span style="font-weight:700;">${uWt}</span></td><td><span class="stock-badge bg-cut">${log.cutQty}</span></td><td><span class="stock-badge bg-punch">${log.punchQty}</span></td><td><span class="stock-badge bg-wrap">${log.wrapQty}</span></td><td><span class="stock-badge bg-box">${log.boxQty}</span></td><td><span class="stock-badge bg-crate">${log.crateQty}</span></td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="openGenericEdit('history_logs', ${log.id}, {cut_qty: '${log.cutQty}', punch_qty: '${log.punchQty}', wrap_qty: '${log.wrapQty}', box_qty: '${log.boxQty}', crate_qty: '${log.crateQty}'})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteHistoryLog(${log.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; 
+            html += `<tr><td><b>${log.timestamp || ''}</b> <span style="font-size:11px;color:var(--text-muted);">(${log.shift})</span></td><td><b>${log.team || 'Unassigned'}</b></td><td><b>${log.profile}</b></td><td><span style="color:var(--info-color); font-weight:600;">${iCode}</span></td><td>${log.length} mm</td><td><span style="font-weight:700;">${uWt}</span></td><td><span class="stock-badge bg-cut">${log.cutQty}</span></td><td><span class="stock-badge bg-punch">${log.punchQty}</span></td><td><span class="stock-badge bg-wrap">${log.wrapQty}</span></td><td><span class="stock-badge bg-box">${log.boxQty}</span></td><td><span class="stock-badge bg-crate">${log.crateQty}</span></td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="openGenericEdit('history_logs', ${log.id}, {cut_qty: '${log.cutQty}', punch_qty: '${log.punchQty}', wrap_qty: '${log.wrapQty}', box_qty: '${log.boxQty}', crate_qty: '${log.crateQty}'})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteHistoryLog(${log.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; 
         }); 
         tbody.innerHTML = html;
     } catch(e) {}
@@ -9286,4 +9400,129 @@ ppSmartRenderContainer = function(){
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
   else init();
+})();
+
+/* AIS Crate Planner reliability patch (2026-10-22)
+   Keep the crate builder selectors in sync with Next PL quantity selections.
+   UI-only refresh; no database schema or saved records are modified. */
+(function aisCratePlannerSyncPatch(){
+  if (window.__aisCratePlannerSyncPatchInstalled) return;
+  window.__aisCratePlannerSyncPatchInstalled = true;
+
+  function ensureStatusNode(){
+    const panel = document.querySelector('#ppMultiPoCrateBuilder .pp-new-panel');
+    if (!panel) return null;
+    let node = document.getElementById('ppNewSourceStatus');
+    if (!node) {
+      node = document.createElement('div');
+      node.id = 'ppNewSourceStatus';
+      node.className = 'pp-new-hint';
+      node.style.margin = '8px 0';
+      const table = panel.querySelector('.pp-new-po-table-wrap');
+      if (table) panel.insertBefore(node, table);
+      else panel.appendChild(node);
+    }
+    return node;
+  }
+
+  function updateSourceStatus(){
+    const node = ensureStatusNode();
+    if (!node) return;
+    const selected = Array.isArray(ppCrateNextRows) ? ppCrateNextRows : [];
+    let candidates = [];
+    try {
+      candidates = typeof nextPlGetRows === 'function'
+        ? nextPlGetRows().filter(r => Number(r.pendingQty || 0) > 0 && !r.excluded)
+        : [];
+    } catch (e) { candidates = []; }
+    if (selected.length) {
+      node.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${selected.length} selected Next PL PO line(s) loaded. Choose Profile, Item Code and Length to allocate PCS.`;
+      node.style.borderColor = '#86efac';
+      node.style.background = '#f0fdf4';
+      return;
+    }
+    const go = `<button type="button" class="btn btn-sm" style="margin-left:8px" onclick="switchTab('nextPlPlanningTab',null)">Open Next PL Planning</button>`;
+    if (candidates.length) {
+      node.innerHTML = `<i class="fa-solid fa-circle-info"></i> No PCS quantities are selected in Next PL yet. ${candidates.length} eligible PO line(s) are available. Open Next PL Planning, enter/select the PCS quantities, then return here. ${go}`;
+    } else {
+      node.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> No eligible pending PO lines were found. Check Production Orders, Master Catalog matching, shipment balance and Next PL selections. ${go}`;
+    }
+    node.style.borderColor = '#fbbf24';
+    node.style.background = '#fffbeb';
+  }
+
+  const originalProfileRefresh = window.ppNewRefreshProfileOptions || (typeof ppNewRefreshProfileOptions === 'function' ? ppNewRefreshProfileOptions : null);
+  if (originalProfileRefresh) {
+    const wrappedProfileRefresh = function(...args){
+      const result = originalProfileRefresh.apply(this, args);
+      try { updateSourceStatus(); } catch (e) { console.warn('Crate planner status update:', e); }
+      return result;
+    };
+    wrappedProfileRefresh.__aisSourceStatusWrapped = true;
+    window.ppNewRefreshProfileOptions = wrappedProfileRefresh;
+    ppNewRefreshProfileOptions = wrappedProfileRefresh;
+  }
+
+  function refreshCratePlanner(){
+    try {
+      if (typeof ppRefreshNextPlLines === 'function') ppRefreshNextPlLines();
+      else if (typeof ppNewRefreshProfileOptions === 'function') ppNewRefreshProfileOptions();
+      if (typeof ppNewRefreshCrateOptions === 'function') ppNewRefreshCrateOptions();
+      if (typeof ppNewUpdateCreateDimensions === 'function') ppNewUpdateCreateDimensions();
+      updateSourceStatus();
+    } catch (e) { console.warn('Crate planner refresh after Next PL change:', e); }
+  }
+
+  // Next PL quantities are changed in-place; explicitly refresh the dependent crate selectors.
+  ['nextPlSetQty','nextPlToggleExclude','nextPlClearSelection','nextPlAddManual','nextPlQuickAdd','nextPlAutoBuild'].forEach(name => {
+    const original = window[name];
+    if (typeof original !== 'function' || original.__aisCrateRefreshWrapped) return;
+    const wrapped = function(...args){
+      const result = original.apply(this, args);
+      setTimeout(refreshCratePlanner, 40);
+      if (result && typeof result.then === 'function') result.finally(() => setTimeout(refreshCratePlanner, 80));
+      return result;
+    };
+    wrapped.__aisCrateRefreshWrapped = true;
+    window[name] = wrapped;
+  });
+
+  // Refresh when returning to Crate Planning 2D, including after asynchronous data loads.
+  const originalSwitchTab = window.switchTab;
+  if (typeof originalSwitchTab === 'function' && !originalSwitchTab.__aisCrateRefreshWrapped) {
+    const wrappedSwitchTab = function(tabId, btn){
+      const result = originalSwitchTab.apply(this, arguments);
+      if (tabId === 'packingPlannerTab' || tabId === 'nextPlPlanningTab') {
+        setTimeout(refreshCratePlanner, 80);
+        setTimeout(refreshCratePlanner, 450);
+      }
+      return result;
+    };
+    wrappedSwitchTab.__aisCrateRefreshWrapped = true;
+    window.switchTab = wrappedSwitchTab;
+    switchTab = wrappedSwitchTab;
+  }
+
+  // Avoid accidentally creating a new empty crate when no Next PL line is selected.
+  const originalCreateCrates = window.ppNewCreateCrates || (typeof ppNewCreateCrates === 'function' ? ppNewCreateCrates : null);
+  if (originalCreateCrates && !originalCreateCrates.__aisRequireNextPlLine) {
+    const guardedCreateCrates = function(...args){
+      const selectedLines = typeof ppNewSelectedLines === 'function' ? ppNewSelectedLines() : [];
+      if (!selectedLines.length) {
+        alert('Before creating a crate, select a Profile, Item Code and Length from a selected Next Planning PL line. If the list is empty, open Next PL Planning and select PCS quantities first.');
+        return;
+      }
+      return originalCreateCrates.apply(this, args);
+    };
+    guardedCreateCrates.__aisRequireNextPlLine = true;
+    window.ppNewCreateCrates = guardedCreateCrates;
+    ppNewCreateCrates = guardedCreateCrates;
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { setTimeout(refreshCratePlanner, 120); setTimeout(refreshCratePlanner, 700); }, {once:true});
+  } else {
+    setTimeout(refreshCratePlanner, 120);
+    setTimeout(refreshCratePlanner, 700);
+  }
 })();
