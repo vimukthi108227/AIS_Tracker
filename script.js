@@ -2666,23 +2666,7 @@ async function dbInsert(table, row, action) {
   // Do NOT request the inserted row back here. With Supabase RLS, INSERT may be
   // allowed while SELECT/RETURNING is not. Using .select() made a successful
   // write look like a failed write and could trigger a rollback in production.
-  let result = await supabaseClient.from(table).insert([row]);
-  if (result.error && table === 'history_logs' && row && row.team != null) {
-    const msg = String(result.error.message || result.error.details || '');
-    // Older deployments may use production_team rather than team. Only retry
-    // when Supabase explicitly rejects the team column; never retry arbitrary
-    // failures, so normal network/RLS errors cannot create duplicate records.
-    if (/could not find the ['\"]?team['\"]? column of ['\"]?history_logs['\"]? in the schema cache/i.test(msg)) {
-      const legacyRow = { ...row, production_team: row.team };
-      delete legacyRow.team;
-      result = await supabaseClient.from(table).insert([legacyRow]);
-      if (!result.error) return { ...legacyRow, team: row.team, id: null };
-      const legacyMsg = String(result.error.message || result.error.details || '');
-      if (/could not find the ['\"]?production_team['\"]? column|column .*production_team.* does not exist/i.test(legacyMsg)) {
-        throw new Error(`${action || 'Save failed'}: Supabase is missing the Team column. No production history was saved, and stock changes were rolled back. In Supabase SQL Editor, run the file supabase_add_team_to_history_logs.sql from the website ZIP, then retry.`);
-      }
-    }
-  }
+  const result = await supabaseClient.from(table).insert([row]);
   if (result.error) throw new Error(dbErrorMessage(result.error, action));
   return { ...row, id: null };
 }
@@ -3628,7 +3612,8 @@ function renderMonthlyShiftChart() {
     monthlyShiftChartInstance=new Chart(chartCanvas,{type:'bar',data:{labels,datasets:[
       {label:'Cut',data:dailyCutStageData,backgroundColor:'#0ea5e9',borderColor:'#0284c7',borderWidth:1,borderRadius:3},
       {label:'Punch',data:dailyPunchStageData,backgroundColor:'#f59e0b',borderColor:'#d97706',borderWidth:1,borderRadius:3},
-      {label:'Wrapping',data:dailyWrapStageData,backgroundColor:'#10b981',borderColor:'#059669',borderWidth:1,borderRadius:3},
+      {label:'Day Wrapping',data:dayWrapData,backgroundColor:'#10b981',borderColor:'#059669',borderWidth:1,borderRadius:3},
+      {label:'Night Wrapping',data:nightWrapData,backgroundColor:'#14b8a6',borderColor:'#0f766e',borderWidth:1,borderRadius:3},
       {label:'Box',data:dailyBoxStageData,backgroundColor:'#8b5cf6',borderColor:'#7c3aed',borderWidth:1,borderRadius:3},
       {label:'Crate',data:dailyCrateStageData,backgroundColor:'#64748b',borderColor:'#475569',borderWidth:1,borderRadius:3}
     ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:true,position:'bottom',labels:{color:textColor,usePointStyle:true,boxWidth:8,padding:10,font:{size:10}}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${Number(c.raw||0).toFixed(2)} kg`}}},scales:{x:{grid:{display:false},ticks:{color:textColor,maxTicksLimit:16,font:{size:9}},title:{display:true,text:'Day of Month',color:textColor,font:{size:10}}},y:{beginAtZero:true,grid:{color:gridColor,borderDash:[4,4]},ticks:{color:textColor,font:{size:9}},title:{display:true,text:'Stage Weight (kg)',color:textColor,font:{size:10}}}}}});
