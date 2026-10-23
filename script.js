@@ -2666,7 +2666,23 @@ async function dbInsert(table, row, action) {
   // Do NOT request the inserted row back here. With Supabase RLS, INSERT may be
   // allowed while SELECT/RETURNING is not. Using .select() made a successful
   // write look like a failed write and could trigger a rollback in production.
-  const result = await supabaseClient.from(table).insert([row]);
+  let result = await supabaseClient.from(table).insert([row]);
+  if (result.error && table === 'history_logs' && row && row.team != null) {
+    const msg = String(result.error.message || result.error.details || '');
+    // Older deployments may use production_team rather than team. Only retry
+    // when Supabase explicitly rejects the team column; never retry arbitrary
+    // failures, so normal network/RLS errors cannot create duplicate records.
+    if (/could not find the ['\"]?team['\"]? column of ['\"]?history_logs['\"]? in the schema cache/i.test(msg)) {
+      const legacyRow = { ...row, production_team: row.team };
+      delete legacyRow.team;
+      result = await supabaseClient.from(table).insert([legacyRow]);
+      if (!result.error) return { ...legacyRow, team: row.team, id: null };
+      const legacyMsg = String(result.error.message || result.error.details || '');
+      if (/could not find the ['\"]?production_team['\"]? column|column .*production_team.* does not exist/i.test(legacyMsg)) {
+        throw new Error(`${action || 'Save failed'}: Supabase is missing the Team column. No production history was saved, and stock changes were rolled back. In Supabase SQL Editor, run the file supabase_add_team_to_history_logs.sql from the website ZIP, then retry.`);
+      }
+    }
+  }
   if (result.error) throw new Error(dbErrorMessage(result.error, action));
   return { ...row, id: null };
 }
@@ -3633,12 +3649,20 @@ function renderMonthlyTeamProductionChart() {
     const teamColors = ['#0f766e','#2563eb','#d97706'];
     const teamTotals = Object.fromEntries(teamNames.map(team => [team,{cut:0,punch:0,wrap:0,box:0,total:0,records:0}]));
     let unassignedLegacyCount = 0;
+    let unresolvedWeightCount = 0;
     historyLogs.forEach(log => {
         if (!String(log.date || '').startsWith(monthPrefix)) return;
         const team = String(log.team || '').trim();
         if (!teamNames.includes(team)) { unassignedLegacyCount++; return; }
-        const item = masterData.find(m => String(m.profile).trim() === String(log.profile).trim() && cleanLen(m.length) === cleanLen(log.length));
-        const unitWeight = item ? (Number(item.unitWeight) || 0) : 0;
+        // history_logs currently stores profile + length but not item_code. Avoid silently
+        // choosing the wrong unit weight if the Master Catalog has ambiguous matches.
+        const matches = masterData.filter(m => String(m.profile).trim() === String(log.profile).trim() && cleanLen(m.length) === cleanLen(log.length));
+        const distinctWeights = [...new Set(matches.map(m => Number(m.unitWeight) || 0))];
+        if (!matches.length || distinctWeights.length !== 1 || !(distinctWeights[0] > 0)) {
+            unresolvedWeightCount++;
+            return;
+        }
+        const unitWeight = distinctWeights[0];
         const totals = teamTotals[team];
         totals.cut += (Number(log.cutQty) || 0) * unitWeight;
         totals.punch += (Number(log.punchQty) || 0) * unitWeight;
@@ -3664,7 +3688,7 @@ function renderMonthlyTeamProductionChart() {
             const t = teamTotals[team];
             const share = monthlyTotal > 0 ? (t.total / monthlyTotal * 100) : 0;
             return `<div style="flex:1;min-width:115px;padding:7px 10px;border-radius:8px;border:1px solid ${teamColors[i]}33;background:${teamColors[i]}0d;font-size:10.5px;"><b style="color:${teamColors[i]}">${team}</b><div style="font-size:14px;font-weight:900;color:var(--text-color);margin-top:2px;">${t.total.toFixed(2)} kg <span style="font-size:10px;font-weight:700;">(${share.toFixed(1)}%)</span></div><small style="color:var(--text-muted);">Cut ${t.cut.toFixed(1)} · Punch ${t.punch.toFixed(1)} · Wrap ${t.wrap.toFixed(1)} · Box ${t.box.toFixed(1)} kg</small></div>`;
-        }).join('') + (!hasTeamData ? `<div style="width:100%;padding:8px 10px;border:1px dashed var(--border-color);border-radius:8px;background:var(--surface-color, rgba(148,163,184,.06));font-size:10.5px;color:var(--text-muted);"><b>No Team A/B/C production weight is available for this month yet.</b> Select Team A, Team B or Team C in Daily Production Entry and save a production record. The chart will update automatically; existing unassigned history is preserved.</div>` : '') + (unassignedLegacyCount ? `<div style="width:100%;font-size:10px;color:var(--text-muted);">${unassignedLegacyCount} record(s) for this month have no Team A/B/C assignment. They remain unchanged and are excluded from team totals.</div>` : '');
+        }).join('') + (!hasTeamData ? `<div style="width:100%;padding:8px 10px;border:1px dashed var(--border-color);border-radius:8px;background:var(--surface-color, rgba(148,163,184,.06));font-size:10.5px;color:var(--text-muted);"><b>No Team A/B/C production weight is available for this month yet.</b> Select Team A, Team B or Team C in Daily Production Entry and save a production record. The chart will update automatically; existing unassigned history is preserved.</div>` : '') + (unassignedLegacyCount ? `<div style="width:100%;font-size:10px;color:var(--text-muted);">${unassignedLegacyCount} record(s) for this month have no Team A/B/C assignment. They remain unchanged and are excluded from team totals.</div>` : '') + (unresolvedWeightCount ? `<div style="width:100%;font-size:10px;color:var(--text-muted);">${unresolvedWeightCount} Team-assigned record(s) could not be weighted safely because the matching Master Catalog unit weight is missing or ambiguous. These records are excluded rather than assigned an estimated weight.</div>` : '');
     }
     const textColor = isDarkMode ? '#f8fafc' : '#0f172a';
     const centerTextPlugin = {
