@@ -22,3 +22,12 @@ Safety/checks
 - JavaScript syntax check passed.
 - ZIP integrity checked.
 - Live GitHub/Supabase end-to-end test was not performed.
+
+
+Full static audit follow-up (2026-10-23)
+- Updated the CSS and JavaScript query-string versions in index.html so browsers request the newly deployed files instead of reusing the older cached script. This matches the reported screenshot where the old chart-center label still appeared.
+- Verified all static HTML IDs are unique, inline event-handler function references resolve to functions in script.js, JavaScript parses, CSS braces balance, and the ZIP archive integrity is valid.
+- This remains a static/source audit only. Live Supabase writes, chart values against production data, and GitHub Pages deployment/cache behavior must be verified in the live site.
+- After deploying, perform a hard refresh (Ctrl+F5) once.
+
+- The chart now excludes and reports Team-assigned history rows when the matching Master Catalog unit weight is missing or ambiguous (same profile/length maps to multiple different weights), instead of silently guessing a weight.
