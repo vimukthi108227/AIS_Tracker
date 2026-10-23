@@ -2666,7 +2666,23 @@ async function dbInsert(table, row, action) {
   // Do NOT request the inserted row back here. With Supabase RLS, INSERT may be
   // allowed while SELECT/RETURNING is not. Using .select() made a successful
   // write look like a failed write and could trigger a rollback in production.
-  const result = await supabaseClient.from(table).insert([row]);
+  let result = await supabaseClient.from(table).insert([row]);
+  if (result.error && table === 'history_logs' && row && row.team != null) {
+    const msg = String(result.error.message || result.error.details || '');
+    // Older deployments may use production_team rather than team. Only retry
+    // when Supabase explicitly rejects the team column; never retry arbitrary
+    // failures, so normal network/RLS errors cannot create duplicate records.
+    if (/could not find the ['\"]?team['\"]? column of ['\"]?history_logs['\"]? in the schema cache/i.test(msg)) {
+      const legacyRow = { ...row, production_team: row.team };
+      delete legacyRow.team;
+      result = await supabaseClient.from(table).insert([legacyRow]);
+      if (!result.error) return { ...legacyRow, team: row.team, id: null };
+      const legacyMsg = String(result.error.message || result.error.details || '');
+      if (/could not find the ['\"]?production_team['\"]? column|column .*production_team.* does not exist/i.test(legacyMsg)) {
+        throw new Error(`${action || 'Save failed'}: Supabase is missing the Team column. No production history was saved, and stock changes were rolled back. In Supabase SQL Editor, run the file supabase_add_team_to_history_logs.sql from the website ZIP, then retry.`);
+      }
+    }
+  }
   if (result.error) throw new Error(dbErrorMessage(result.error, action));
   return { ...row, id: null };
 }
@@ -5311,7 +5327,7 @@ window.packToCrate = async function(profile,itemCode,length,qtyToPack){
   }catch(e){console.error(e);showToast(e.message||'Packing to crate failed.','error');}finally{isAppBusy=false;}
 };
 
-function renderPackingListTable() { 
+function renderPackingListTableCore() { 
     try {
         const tabCard = document.querySelector('#packingListTab .card:last-child');
         if(!tabCard) return;
@@ -5467,6 +5483,256 @@ function renderPackingListTable() {
         const rawTbody = document.getElementById('packingListTableBody'); if (rawTbody) rawTbody.innerHTML = rawHTML || '<tr><td colspan="12" style="text-align:center; color:var(--text-muted);">No logs</td></tr>';
     } catch(e) { console.error('Packing list render error:', e); const body=document.getElementById('packingListTableBody'); if(body) body.innerHTML='<tr><td colspan=12 style="text-align:center;color:#e11d48;font-weight:700;">Packing List could not be rendered. Check browser console for details.</td></tr>'; }
 }
+
+function switchPackingListView(view, button){
+  const main=document.getElementById('plMainContent');
+  const balance=document.getElementById('plBalanceView');
+  const mainBtn=document.getElementById('plViewMainBtn');
+  const balanceBtn=document.getElementById('plViewBalanceBtn');
+  if(!main||!balance)return;
+  const showBalance=view==='balance';
+  main.style.display=showBalance?'none':'block';
+  balance.style.display=showBalance?'block':'none';
+  if(mainBtn)mainBtn.classList.toggle('active',!showBalance);
+  if(balanceBtn)balanceBtn.classList.toggle('active',showBalance);
+  if(showBalance)renderCurrentPlShipmentBalanceTable();
+}
+window.switchPackingListView=switchPackingListView;
+
+function normalizeCurrentPlPoNumber(value){
+  // Production Orders may store "PO 363760" while Packing List stores "363760".
+  // Normalize only for matching; preserve the original displayed PO number.
+  return String(value||'').trim().replace(/^PO[\s\-:#]*/i,'').replace(/\s+/g,'').toUpperCase();
+}
+function currentPlBalanceKey(po,profile,itemCode,length){
+  return [normalizeCurrentPlPoNumber(po),String(profile||'').trim().toUpperCase(),String(itemCode||'').trim().toUpperCase(),cleanLen(length)].join('||');
+}
+function currentPlBalanceEscape(value){
+  return String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function getCurrentPlBalanceData(){
+  ensurePackingSelection();
+  const active=getActivePackingListSelection();
+  const currentRows=getPackingContainerRecords(active.month,active.container);
+  const plMap=new Map();
+
+  // The report is deliberately based only on lines in the active/current Packing List.
+  // Older containers and PO lines not present in the current PL are not added.
+  currentRows.forEach(pl=>{
+    const po=String(pl.poNumber||'').trim();
+    const profile=String(pl.profile||'').trim();
+    const length=cleanLen(pl.length);
+    const itemCode=String(pl.itemCode||'').trim() || (typeof resolveMasterItemCode==='function'?resolveMasterItemCode(profile,length,''):'');
+    const key=currentPlBalanceKey(po,profile,itemCode,length);
+    const row=plMap.get(key)||{poNumber:po,profile,itemCode,length,plQty:0,plRows:0};
+    row.plQty+=Math.max(0,Number(pl.pcsQty)||0);
+    row.plRows++;
+    plMap.set(key,row);
+  });
+
+  const poMap=new Map();
+  poList.forEach(po=>{
+    const poNumber=String(po.poNumber||'').trim();
+    const profile=String(po.profile||'').trim();
+    const length=cleanLen(po.length);
+    const itemCode=String(po.itemCode||'').trim() || (typeof resolveMasterItemCode==='function'?resolveMasterItemCode(profile,length,''):'');
+    if(!poNumber||!profile||!length||!itemCode)return;
+    const key=currentPlBalanceKey(poNumber,profile,itemCode,length);
+    const row=poMap.get(key)||{poNumber,profile,itemCode,length,requiredQty:0,shippedQty:0,shipmentBalance:0,poRows:0};
+    row.requiredQty+=Math.max(0,Number(po.orderQty)||0);
+    row.poRows++;
+    poMap.set(key,row);
+  });
+
+  // Aggregate recorded shipments by the same PO + profile + Master Catalog item + length.
+  shipmentList.forEach(sh=>{
+    const poNumber=String(sh.poNumber||'').trim();
+    const profile=String(sh.profile||'').trim();
+    const length=cleanLen(sh.length);
+    const explicitItem=String(sh.itemCode||'').trim();
+    const itemCode=explicitItem || (typeof resolveMasterItemCode==='function'?resolveMasterItemCode(profile,length,''):'');
+    if(!poNumber||!profile||!length||!itemCode)return;
+    const key=currentPlBalanceKey(poNumber,profile,itemCode,length);
+    const row=poMap.get(key);
+    if(row)row.shippedQty+=Math.max(0,Number(sh.shippedQty)||0);
+  });
+  poMap.forEach(row=>{row.shipmentBalance=Math.max(0,row.requiredQty-row.shippedQty);});
+
+  // Return ONLY current PL lines, enriched with PO/shipment balance where a match exists.
+  const rows=[...plMap.entries()].map(([key,pl])=>{
+    const po=poMap.get(key);
+    if(!po)return {...pl,requiredQty:0,shippedQty:0,shipmentBalance:0,poRows:0,unmatchedPo:true};
+    return {...po,poNumber:pl.poNumber,profile:pl.profile,itemCode:pl.itemCode,length:pl.length,plQty:pl.plQty,plRows:pl.plRows,unmatchedPo:false};
+  }).sort((a,b)=>
+    a.poNumber.localeCompare(b.poNumber,undefined,{numeric:true,sensitivity:'base'}) ||
+    a.profile.localeCompare(b.profile,undefined,{numeric:true,sensitivity:'base'}) ||
+    a.itemCode.localeCompare(b.itemCode,undefined,{numeric:true,sensitivity:'base'}) ||
+    (parseFloat(a.length)||0)-(parseFloat(b.length)||0)
+  );
+  return {active,rows};
+}
+function populateCurrentPlBalanceFilters(rows){
+  const definitions=[
+    ['plBalancePoFilter','poNumber','All POs'],
+    ['plBalanceProfileFilter','profile','All Profiles'],
+    ['plBalanceItemFilter','itemCode','All Item Codes']
+  ];
+  definitions.forEach(([id,key,placeholder])=>{
+    const select=document.getElementById(id); if(!select)return;
+    const current=select.value;
+    const values=[...new Set(rows.map(r=>String(r[key]||'').trim()).filter(Boolean))]
+      .sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
+    select.innerHTML=`<option value="">${placeholder}</option>`+values.map(v=>`<option value="${currentPlBalanceEscape(v)}">${currentPlBalanceEscape(v)}</option>`).join('');
+    if(values.includes(current))select.value=current;
+  });
+}
+function renderCurrentPlShipmentBalanceTable(){
+  const body=document.getElementById('plCurrentBalanceTableBody'); if(!body)return;
+  try{
+    const {active,rows}=getCurrentPlBalanceData();
+    populateCurrentPlBalanceFilters(rows);
+    const poFilter=document.getElementById('plBalancePoFilter')?.value||'';
+    const profileFilter=document.getElementById('plBalanceProfileFilter')?.value||'';
+    const itemFilter=document.getElementById('plBalanceItemFilter')?.value||'';
+    const search=(document.getElementById('plBalanceSearch')?.value||'').trim().toLowerCase();
+    const filtered=rows.filter(r=>
+      (!poFilter||r.poNumber===poFilter)&&(!profileFilter||r.profile===profileFilter)&&(!itemFilter||r.itemCode===itemFilter)&&
+      (!search||[r.poNumber,r.profile,r.itemCode,r.length].join(' ').toLowerCase().includes(search))
+    );
+    currentPlBalanceVisibleRows=filtered;
+    const subtitle=document.getElementById('plCurrentBalanceSubtitle');
+    if(subtitle)subtitle.textContent=`Active Packing List: ${active.month} • ${active.container}. Shipment balance is derived from Production Orders minus recorded shipments.`;
+    const status=document.getElementById('plCurrentBalanceStatus');
+    const noTeam=filtered.filter(r=>r.unmatchedPo).length;
+    if(status)status.textContent=`${filtered.length} current Packing List PO / Profile / Item / Length lines shown • ${active.month} ${active.container} • ${noTeam} current PL line(s) have no matching Production Order line.`;
+    const totals=filtered.reduce((a,r)=>{
+      a.pl+=Number(r.plQty)||0;a.ship+=Number(r.shipmentBalance)||0;a.after+=(Number(r.shipmentBalance)||0)-(Number(r.plQty)||0);return a;
+    },{pl:0,ship:0,after:0});
+    const setText=(id,val)=>{const el=document.getElementById(id);if(el)el.textContent=val;};
+    setText('plBalKpiCurrent',`${totals.pl.toLocaleString()} Pcs`);
+    setText('plBalKpiShipment',`${totals.ship.toLocaleString()} Pcs`);
+    setText('plBalKpiAfter',`${totals.after.toLocaleString()} Pcs`);
+    setText('plBalKpiLines',filtered.length.toLocaleString());
+    body.innerHTML=filtered.length?filtered.map(r=>{
+      const after=(Number(r.shipmentBalance)||0)-(Number(r.plQty)||0);
+      const over=after<0;
+      const statusLabel=r.unmatchedPo?'No matching PO':over?`Over by ${Math.abs(after).toLocaleString()} Pcs`:r.plQty===0?'Not in current PL':'Within balance';
+      const pillClass=r.unmatchedPo?'pending':over?'over':r.plQty===0?'pending':'ok';
+      return `<tr class="${over?'pl-bal-over':r.plQty>0?'pl-bal-ok':''}">
+        <td><b>${currentPlBalanceEscape(r.poNumber||'-')}</b></td>
+        <td>${currentPlBalanceEscape(r.profile||'-')}</td>
+        <td><b>${currentPlBalanceEscape(r.itemCode||'-')}</b></td>
+        <td>${currentPlBalanceEscape(r.length||'-')}</td>
+        <td>${Number(r.requiredQty||0).toLocaleString()}</td>
+        <td>${Number(r.shippedQty||0).toLocaleString()}</td>
+        <td><button type="button" class="pl-shipment-balance-link" onclick="showCurrentPlShipmentDetails(${filtered.indexOf(r)})" title="Click to see shipment quantities by month and container" aria-label="Show shipment details for PO ${currentPlBalanceEscape(r.poNumber)}">${Number(r.shipmentBalance||0).toLocaleString()}</button></td>
+        <td><b style="color:#0369a1">${Number(r.plQty||0).toLocaleString()}</b></td>
+        <td><b style="color:${over?'#be123c':'#047857'}">${after.toLocaleString()}</b></td>
+        <td><span class="pl-balance-pill ${pillClass}">${statusLabel}</span></td>
+      </tr>`;
+    }).join(''):'<tr><td colspan="10" class="pl-balance-empty">No current Packing List / Production Order lines match these filters.</td></tr>';
+    const foot=document.getElementById('plCurrentBalanceTableFoot');
+    if(foot)foot.innerHTML=filtered.length?`<tr><td colspan="6">TOTAL — FILTERED LINES</td><td>${totals.ship.toLocaleString()}</td><td>${totals.pl.toLocaleString()}</td><td>${totals.after.toLocaleString()}</td><td>${filtered.length} lines</td></tr>`:'';
+  }catch(e){
+    console.error('Current PL shipment balance render failed:',e);
+    body.innerHTML='<tr><td colspan="10" class="pl-balance-empty">Could not calculate balances safely. Check Production Orders, Shipments, Master Catalog and browser console.</td></tr>';
+  }
+}
+
+let currentPlBalanceVisibleRows=[];
+let currentPlShipmentDetailContext=null;
+function showCurrentPlShipmentDetails(index){
+  const panel=document.getElementById('plShipmentDetailPanel');
+  const body=document.getElementById('plShipmentDetailTableBody');
+  if(!panel||!body)return;
+  const row=currentPlBalanceVisibleRows[Number(index)];
+  if(!row)return;
+  currentPlShipmentDetailContext=row;
+  const matches=shipmentList.filter(sh=>{
+    const po=String(sh.poNumber||'').trim();
+    const profile=String(sh.profile||'').trim();
+    const length=cleanLen(sh.length);
+    const explicitItem=String(sh.itemCode||'').trim();
+    const itemCode=explicitItem||(typeof resolveMasterItemCode==='function'?resolveMasterItemCode(profile,length,''):'');
+    return normalizeCurrentPlPoNumber(po)===normalizeCurrentPlPoNumber(row.poNumber) &&
+      profile===String(row.profile||'').trim() &&
+      length===cleanLen(row.length) &&
+      itemCode===String(row.itemCode||'').trim();
+  });
+  const grouped=new Map();
+  matches.forEach(sh=>{
+    const month=String(sh.month||'').trim() || (sh.date?new Date(sh.date+'T00:00:00').toLocaleString('en-US',{month:'long',year:'numeric'}):'Unknown month');
+    const container=String(sh.container||'').trim()||'Container not recorded';
+    const key=month+'||'+container;
+    const g=grouped.get(key)||{month,container,qty:0,dates:new Set(),records:0};
+    g.qty+=Math.max(0,Number(sh.shippedQty)||0);
+    if(sh.date)g.dates.add(String(sh.date));
+    g.records++;
+    grouped.set(key,g);
+  });
+  const groups=[...grouped.values()].sort((a,b)=>{
+    const monthCmp=(new Date(a.month+' 1').getTime()||0)-(new Date(b.month+' 1').getTime()||0);
+    if(monthCmp!==0)return monthCmp;
+    const ca=(String(a.container).match(/\d+/)||['99'])[0];
+    const cb=(String(b.container).match(/\d+/)||['99'])[0];
+    return Number(ca)-Number(cb);
+  });
+  const title=document.getElementById('plShipmentDetailTitle');
+  const subtitle=document.getElementById('plShipmentDetailSubtitle');
+  if(title)title.textContent=`Shipment Breakdown — PO ${row.poNumber}`;
+  if(subtitle)subtitle.textContent=`Profile ${row.profile} • Item ${row.itemCode} • Length ${row.length} mm • Total already shipped: ${Number(row.shippedQty||0).toLocaleString()} Pcs`;
+  body.innerHTML=groups.length?groups.map(g=>`<tr>
+    <td>${currentPlBalanceEscape(g.month)}</td>
+    <td><b>${currentPlBalanceEscape(g.container)}</b></td>
+    <td>${currentPlBalanceEscape([...g.dates].sort().join(', ')||'—')}</td>
+    <td><b>${g.qty.toLocaleString()}</b></td>
+    <td>${g.records}</td>
+  </tr>`).join(''):'<tr><td colspan="5" class="pl-balance-empty">No saved shipment records match this PO / profile / item code / length.</td></tr>';
+  const total=groups.reduce((sum,g)=>sum+g.qty,0);
+  const foot=document.getElementById('plShipmentDetailTableFoot');
+  if(foot)foot.innerHTML=`<tr><td colspan="3">TOTAL ALREADY SHIPPED</td><td>${total.toLocaleString()} Pcs</td><td>${matches.length} records</td></tr>`;
+  panel.style.display='block';
+  panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+window.showCurrentPlShipmentDetails=showCurrentPlShipmentDetails;
+window.closeCurrentPlShipmentDetails=function(){const p=document.getElementById('plShipmentDetailPanel');if(p)p.style.display='none';};
+window.printCurrentPlShipmentDetail=function(){
+  const panel=document.getElementById('plShipmentDetailPanel');
+  if(!panel||panel.style.display==='none')return;
+  const row=currentPlShipmentDetailContext;
+  const title=row?`PO ${row.poNumber} — ${row.profile} — ${row.itemCode} — ${row.length} mm`:'Shipment Details';
+  const win=window.open('','_blank');
+  if(!win){if(typeof showToast==='function')showToast('Allow pop-ups to print shipment details.','warning');return;}
+  win.document.write(`<html><head><title>Shipment Breakdown</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#123}h2{margin-bottom:5px}p{font-size:12px;color:#475569}table{width:100%;border-collapse:collapse;font-size:11px;margin-top:14px}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}th{background:#164e63;color:#fff}tfoot td{font-weight:bold;background:#e0f2fe}@media print{body{padding:0}}</style></head><body><h2>AIS Tracker — Shipment Breakdown</h2><p>${currentPlBalanceEscape(title)}</p><p>${currentPlBalanceEscape(document.getElementById('plShipmentDetailSubtitle')?.textContent||'')}</p>${document.getElementById('plShipmentDetailTable').outerHTML}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  win.document.close();
+};
+
+window.renderCurrentPlShipmentBalanceTable=renderCurrentPlShipmentBalanceTable;
+window.exportCurrentPlShipmentBalanceExcel=function(){
+  const table=document.getElementById('plCurrentBalanceTable');
+  if(!table)return;
+  if(typeof XLSX==='undefined')return showToast('Excel export library is not available.','error');
+  try{
+    const wb=XLSX.utils.table_to_book(table,{sheet:'Current PL Balance'});
+    XLSX.writeFile(wb,`AIS_Current_PL_Shipment_Balance_${new Date().toISOString().slice(0,10)}.xlsx`);
+  }catch(e){console.error(e);showToast('Could not export current PL balance to Excel.','error');}
+};
+window.printCurrentPlShipmentBalance=function(){
+  const table=document.getElementById('plCurrentBalanceTable');
+  if(!table)return;
+  const active=getActivePackingListSelection();
+  const win=window.open('','_blank');
+  if(!win)return showToast('Allow pop-ups to print this table.','warning');
+  win.document.write(`<html><head><title>Current PL vs Shipment Balance</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#123}h2{margin-bottom:5px}p{font-size:12px;color:#475569}table{width:100%;border-collapse:collapse;font-size:10px;margin-top:14px}th,td{border:1px solid #cbd5e1;padding:6px;text-align:left}th{background:#0f4c64;color:#fff}tfoot td{font-weight:bold;background:#e0f2fe}@media print{body{padding:0}}</style></head><body><h2>AIS Tracker — Current PL vs Shipment Balance</h2><p>${active.month} • ${active.container}</p>${table.outerHTML}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  win.document.close();
+};
+
+
+function renderPackingListTable(){
+  renderPackingListTableCore();
+  renderCurrentPlShipmentBalanceTable();
+}
+
 // Convert an in-memory Packing List row back to the existing Supabase schema.
 // Deliberately omit the old primary key when restoring; Supabase assigns a fresh ID.
 function packingListSnapshotToDbRow(item) {

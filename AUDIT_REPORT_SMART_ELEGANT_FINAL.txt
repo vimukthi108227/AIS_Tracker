@@ -1,0 +1,25 @@
+AIS Tracker — Full Static Recheck + Smart Elegant Typography Update
+
+Visual update:
+- Applied consistent Inter / Plus Jakarta Sans typography with system-font fallbacks.
+- Improved font weight hierarchy, compact letter spacing, numeric alignment and form/table readability.
+- Removed cursive typography from business content.
+- Added visible keyboard focus styles and reduced-motion support.
+- Updated CSS/JS cache versions for deployment.
+
+Preserved features checked in source:
+- Current PL-only shipment balance view.
+- PO number prefix normalization for PO matching.
+- Clickable shipment detail breakdown and print.
+- Monthly Day/Night Wrapping chart datasets.
+- Existing files, data structures, and SQL migration files included from the previous safe package.
+
+Static validation:
+- JavaScript syntax: PASSED.
+- ZIP integrity: pending package step.
+- Duplicate HTML IDs: None found.
+- Missing local src/href files: None found.
+
+Limitations:
+- Static checks do not verify runtime behavior against live Supabase or GitHub Pages.
+- No database schema, records, or business calculations were intentionally changed by this typography update.

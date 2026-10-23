@@ -2894,3 +2894,114 @@ tbody tr:hover{background:rgba(94,187,78,.055)!important}
   #plReadyToPackTableBody tr.crate-card-row>td>div{box-shadow:none!important;transform:none!important}
   #plReadyToPackTableBody button,#plReadyToPackTableBody input[type=checkbox]{display:none!important}
 }
+
+
+/* Current Packing List vs Shipment Balance view */
+.pl-view-nav{display:flex;gap:9px;flex-wrap:wrap;margin:0 0 14px;padding:8px;background:rgba(255,255,255,.7);border:1px solid var(--emerald-border);border-radius:12px}
+.pl-view-tab{border:1px solid #cbd5e1;border-radius:9px;padding:10px 14px;background:#fff;color:#334155;font-weight:800;cursor:pointer;display:inline-flex;gap:8px;align-items:center}
+.pl-view-tab.active{background:#0f4c64;color:#fff;border-color:#0f4c64;box-shadow:0 4px 12px rgba(15,76,100,.15)}
+.pl-current-balance-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.pl-current-balance-head h3{margin:0;color:#075b63}
+.pl-current-balance-head p{margin:6px 0 0;color:#64748b;font-size:12px}
+.pl-current-balance-actions{display:flex;gap:7px;flex-wrap:wrap}
+.pl-current-balance-filters{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin:16px 0 10px}
+.pl-current-balance-filters .form-group{margin:0}
+.pl-current-balance-status{font-size:12px;color:#475569;font-weight:700;margin:8px 0;min-height:16px}
+.pl-current-balance-kpis{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px;margin:12px 0}
+.pl-current-balance-kpis>div{border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;padding:12px}
+.pl-current-balance-kpis span{display:block;color:#64748b;font-size:11px;font-weight:800;margin-bottom:5px}
+.pl-current-balance-kpis strong{display:block;color:#0f4c64;font-size:19px;font-weight:900}
+.pl-current-balance-table-wrap{max-height:62vh;overflow:auto;border:1px solid #dbe4ec;border-radius:9px}
+#plCurrentBalanceTable{width:100%;border-collapse:separate;border-spacing:0;min-width:1180px;font-size:12px}
+#plCurrentBalanceTable th{position:sticky;top:0;z-index:2;background:#0f4c64;color:#fff;padding:10px 9px;text-align:left;white-space:nowrap}
+#plCurrentBalanceTable td{padding:9px;border-bottom:1px solid #e2e8f0;color:#334155;white-space:nowrap}
+#plCurrentBalanceTable tbody tr:nth-child(even){background:#f8fafc}
+#plCurrentBalanceTable tbody tr.pl-bal-over{background:#fff1f2}
+#plCurrentBalanceTable tbody tr.pl-bal-ok{background:#f0fdf4}
+#plCurrentBalanceTable tfoot td{position:sticky;bottom:0;background:#e0f2fe;font-weight:900;border-top:2px solid #93c5fd}
+.pl-balance-empty{text-align:center!important;padding:25px!important;color:#64748b!important;font-weight:700}
+.pl-balance-pill{display:inline-block;border-radius:999px;padding:4px 8px;font-weight:900;font-size:11px}
+.pl-balance-pill.ok{background:#dcfce7;color:#166534}
+.pl-balance-pill.over{background:#ffe4e6;color:#be123c}
+.pl-balance-pill.pending{background:#fef3c7;color:#92400e}
+.pl-current-balance-note{margin:12px 0 0;padding:10px 12px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;color:#245b60;font-size:11px;line-height:1.6}
+@media(max-width:900px){.pl-current-balance-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.pl-current-balance-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.pl-current-balance-filters,.pl-current-balance-kpis{grid-template-columns:1fr}.pl-view-tab{width:100%;justify-content:flex-start}.pl-current-balance-actions{width:100%}.pl-current-balance-actions .btn{flex:1}}
+
+/* Clickable shipment balance and shipment-by-container detail panel */
+.pl-shipment-balance-link{border:0;background:transparent;padding:2px 0;color:#0369a1;font:inherit;font-weight:900;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;cursor:pointer}
+.pl-shipment-balance-link:hover,.pl-shipment-balance-link:focus{color:#0f766e;text-decoration-style:solid;outline:2px solid #99f6e4;outline-offset:3px;border-radius:3px}
+.pl-shipment-detail-panel{margin-top:16px;border:1px solid #93c5fd;border-radius:11px;padding:14px;background:#f8fbff}
+.pl-shipment-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.pl-shipment-detail-head h4{margin:0;color:#075b63;font-size:15px}
+.pl-shipment-detail-head p{margin:5px 0 0;color:#64748b;font-size:12px}
+.pl-shipment-detail-table-wrap{max-height:38vh;overflow:auto;border:1px solid #dbe4ec;border-radius:8px}
+#plShipmentDetailTable{width:100%;border-collapse:separate;border-spacing:0;min-width:680px;font-size:12px}
+#plShipmentDetailTable th{position:sticky;top:0;background:#164e63;color:#fff;padding:9px;text-align:left}
+#plShipmentDetailTable td{padding:9px;border-bottom:1px solid #e2e8f0;color:#334155}
+#plShipmentDetailTable tbody tr:nth-child(even){background:#fff}
+#plShipmentDetailTable tfoot td{background:#e0f2fe;font-weight:900}
+@media print{
+  body.pl-shipment-detail-printing *{visibility:hidden!important}
+  body.pl-shipment-detail-printing #plShipmentDetailPanel,
+  body.pl-shipment-detail-printing #plShipmentDetailPanel *{visibility:visible!important}
+  body.pl-shipment-detail-printing #plShipmentDetailPanel{display:block!important;position:absolute;left:0;top:0;width:100%;border:0;background:#fff}
+}
+
+
+/* AIS Tracker — smart, elegant, enterprise typography polish (safe visual-only override) */
+:root{
+  --ais-font-ui: "Inter", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  --ais-font-numeric: "Inter", "Segoe UI", Arial, sans-serif;
+}
+html, body, body *:not(i):not(.fa):not([class^="fa-"]):not([class*=" fa-"]){
+  font-family:var(--ais-font-ui)!important;
+  font-synthesis:none;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+}
+body{font-size:13px;line-height:1.48;letter-spacing:-.08px;}
+h1,h2,h3,h4,h5,h6,.card-title,.section-title,.header-titles h1{
+  font-family:var(--ais-font-ui)!important;
+  font-weight:750;
+  letter-spacing:-.38px;
+  text-wrap:pretty;
+}
+h1{letter-spacing:-.65px;}
+button, input, select, textarea, option, label, summary{
+  font-family:var(--ais-font-ui)!important;
+  letter-spacing:-.08px;
+}
+button,.btn,.tab-btn,.smart-category,.pl-view-tab{
+  font-weight:650;
+  letter-spacing:-.12px;
+  -webkit-font-smoothing:antialiased;
+}
+input,select,textarea{
+  font-size:13px;
+  font-weight:500;
+  line-height:1.45;
+}
+input::placeholder,textarea::placeholder{font-weight:400;opacity:.72;}
+table,table th,table td,.kpi-value,.stat-value,.metric-value,.balance-work-table .bw-badge{
+  font-family:var(--ais-font-numeric)!important;
+  font-variant-numeric:tabular-nums lining-nums;
+}
+table th{font-weight:700;letter-spacing:-.08px;}
+table td{letter-spacing:-.06px;}
+small,.small,.helper-text,.form-text,.text-muted,.muted{letter-spacing:0;}
+.card,.panel,.section-card{letter-spacing:-.06px;}
+/* Keep handwriting/cursive out of business forms and labels for a consistent professional look. */
+.inst-body{font-family:var(--ais-font-ui)!important;}
+:where(button,input,select,textarea,a,[tabindex]):focus-visible{
+  outline:2px solid #0d9488;
+  outline-offset:2px;
+}
+@media(max-width:700px){
+  body{font-size:12.5px;}
+  h1{letter-spacing:-.35px;}
+  table th,table td{letter-spacing:0;}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;}
+}
