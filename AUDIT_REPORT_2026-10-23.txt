@@ -1,0 +1,31 @@
+AIS TRACKER — FULL STATIC SOURCE AUDIT
+Date: 2026-10-23
+Package basis: AIS_Tracker_Production_Save_Error_Fix_Final.zip
+
+SCOPE
+Reviewed index.html, script.js, style.css, local asset references, chart logic, production save/rollback path, Team schema handling, and deployment instructions. This is a static source review, not a live browser/database test.
+
+CHECKS RUN
+- ZIP archive integrity: PASS
+- `node --check script.js`: PASS
+- `node --check` for each non-empty inline JavaScript block: PASS
+- HTML IDs: 488 checked; no duplicate IDs
+- Inline event handler names: 255 handlers reviewed; the only names not declared as standalone functions are exportStockExcel/exportStockPdf aliases assigned to window.exportDashboardExcel/window.exportDashboardPdf in script.js
+- Local asset references: PASS; no missing local script, stylesheet, or image paths found
+- CSS parse using tinycss2: no top-level parse errors; opening/closing brace counts match
+- Supabase migration reviewed: only adds `public.history_logs.team` if missing and requests a PostgREST schema-cache reload; no DELETE/UPDATE of historical rows
+
+ISSUES / RISKS FOUND
+1. The production save error in the screenshot is a database schema mismatch: `history_logs.team` is missing from the Supabase schema cache. The website cannot permanently solve this by uploading frontend files alone. Run `supabase_add_team_to_history_logs.sql` in Supabase SQL Editor once if the column is missing, wait briefly, hard refresh the published site, and test one entry.
+2. The monthly Team A/B/C chart cannot safely assign older history rows that have no Team value. Those rows are deliberately excluded and left unchanged.
+3. The chart calculates stage-activity weight (Cut + Punch + Wrapping + Box). The same pieces may appear in more than one stage, so this is not unique finished-product weight.
+4. The history_logs schema currently does not persist item_code in the production history row. The chart matches profile + length to Master Catalog; if that match has missing or ambiguous unit weights, it excludes those records and reports a warning rather than guessing.
+5. The screenshot supplied earlier shows a local `file:///.../index.html` path, not the published GitHub Pages URL. A local-file test is not a substitute for testing the deployed page and Supabase integration.
+6. The live GitHub Pages site and Supabase database were not accessed or changed in this audit. Login/roles, CRUD, shipment and packing workflows, PDF/Excel exports, and crate/container planning have not been verified end-to-end.
+
+DATA SAFETY
+- No existing production history records were migrated, deleted, or rewritten by this audit.
+- The website source retains a rollback path for stock changes when the history insert fails; however, frontend multi-request writes are not a database transaction, so the live database must still be tested.
+
+DEPLOYMENT
+Back up the current repository and database. Extract the ZIP and upload its contents (not the ZIP file) to the root of the existing AIS_Tracker GitHub repository. Run the SQL migration only if the Team column is absent. Then use the published GitHub Pages URL, Ctrl+F5, and test one small production entry before normal use.
