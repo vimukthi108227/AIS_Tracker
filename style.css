@@ -2907,7 +2907,7 @@ tbody tr:hover{background:rgba(94,187,78,.055)!important}
 .pl-current-balance-filters{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin:16px 0 10px}
 .pl-current-balance-filters .form-group{margin:0}
 .pl-current-balance-status{font-size:12px;color:#475569;font-weight:700;margin:8px 0;min-height:16px}
-.pl-current-balance-kpis{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px;margin:12px 0}
+.pl-current-balance-kpis{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:10px;margin:12px 0}
 .pl-current-balance-kpis>div{border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;padding:12px}
 .pl-current-balance-kpis span{display:block;color:#64748b;font-size:11px;font-weight:800;margin-bottom:5px}
 .pl-current-balance-kpis strong{display:block;color:#0f4c64;font-size:19px;font-weight:900}
@@ -2948,60 +2948,434 @@ tbody tr:hover{background:rgba(94,187,78,.055)!important}
   body.pl-shipment-detail-printing #plShipmentDetailPanel{display:block!important;position:absolute;left:0;top:0;width:100%;border:0;background:#fff}
 }
 
+/* Full PO shipment balance with PCS and weight columns */
+.pl-current-balance-table-wrap{overflow-x:auto}
+#plCurrentBalanceTable{min-width:1550px;font-variant-numeric:tabular-nums}
+#plCurrentBalanceTable th,#plCurrentBalanceTable td{white-space:nowrap}
+#plCurrentBalanceTable td:nth-child(7),#plCurrentBalanceTable td:nth-child(9),#plCurrentBalanceTable td:nth-child(11),#plCurrentBalanceTable td:nth-child(13),#plCurrentBalanceTable td:nth-child(15){font-weight:750}
+@media(max-width:900px){.pl-current-balance-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.pl-current-balance-kpis{grid-template-columns:1fr}}
 
-/* AIS Tracker — smart, elegant, enterprise typography polish (safe visual-only override) */
-:root{
-  --ais-font-ui: "Inter", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
-  --ais-font-numeric: "Inter", "Segoe UI", Arial, sans-serif;
+
+/* AIS Tracker — refined professional typography and Current PL filter controls */
+#plBalanceView .pl-current-balance-card{
+  border:1px solid #d7e4eb;
+  border-radius:16px;
+  box-shadow:0 8px 28px rgba(15,55,72,.07);
+  background:linear-gradient(180deg,#ffffff 0%,#fbfdff 100%);
 }
-html, body, body *:not(i):not(.fa):not([class^="fa-"]):not([class*=" fa-"]){
-  font-family:var(--ais-font-ui)!important;
-  font-synthesis:none;
+#plBalanceView .pl-current-balance-head h3{
+  letter-spacing:-.025em;
+  font-weight:800;
+  color:#075b68;
+}
+#plBalanceView .pl-current-balance-head p,
+#plBalanceView .pl-current-balance-status{
+  color:#60758a;
+  line-height:1.55;
+}
+#plBalanceView .pl-current-balance-filters{
+  gap:12px;
+  align-items:end;
+}
+#plBalanceView .pl-current-balance-filters .form-group label{
+  display:block;
+  margin-bottom:7px;
+  color:#426477;
+  font-size:12px;
+  font-weight:750;
+  letter-spacing:.01em;
+}
+#plBalanceView .pl-current-balance-filters select,
+#plBalanceView .pl-current-balance-filters input{
+  min-height:42px;
+  border:1px solid #cbd9e5;
+  border-radius:10px;
+  background-color:#fbfdff;
+  color:#243b53;
+  font:inherit;
+  font-size:13px;
+  transition:border-color .18s ease,box-shadow .18s ease,background-color .18s ease;
+}
+#plBalanceView .pl-current-balance-filters select:hover,
+#plBalanceView .pl-current-balance-filters input:hover{
+  border-color:#8db8c6;
+  background-color:#fff;
+}
+#plBalanceView .pl-current-balance-filters select:focus-visible,
+#plBalanceView .pl-current-balance-filters input:focus-visible{
+  outline:none;
+  border-color:#0f8b8d;
+  box-shadow:0 0 0 3px rgba(15,139,141,.14);
+}
+#plBalanceView .pl-current-balance-kpis>div{
+  border:1px solid #d6e2ec;
+  border-radius:12px;
+  background:linear-gradient(145deg,#ffffff,#f5f9fc);
+  box-shadow:0 3px 10px rgba(20,60,80,.035);
+}
+#plBalanceView .pl-current-balance-kpis span{
+  color:#718096;
+  font-weight:750;
+  letter-spacing:.01em;
+}
+#plBalanceView .pl-current-balance-kpis strong{
+  color:#164e63;
+  font-weight:850;
+  letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;
+}
+#plBalanceView .pl-current-balance-table-wrap{
+  border:1px solid #d8e3ec;
+  border-radius:12px;
+  box-shadow:0 2px 9px rgba(15,55,72,.035);
+}
+#plBalanceView #plCurrentBalanceTable{
+  font-variant-numeric:tabular-nums;
+}
+#plBalanceView #plCurrentBalanceTable thead th{
+  letter-spacing:.005em;
+  font-weight:800;
+}
+#plBalanceView #plCurrentBalanceTable tbody td{
+  line-height:1.45;
+}
+#plBalanceView #plCurrentBalanceTable tbody tr:hover{
+  filter:brightness(.985);
+}
+#plBalanceView .pl-current-balance-actions .btn{
+  border-radius:10px;
+  font-weight:750;
+  box-shadow:0 3px 8px rgba(15,55,72,.10);
+}
+@media(max-width:760px){
+  #plBalanceView .pl-current-balance-filters{gap:9px}
+  #plBalanceView .pl-current-balance-filters .form-group{min-width:100%}
+  #plBalanceView .pl-current-balance-head{gap:12px}
+}
+
+
+/* Compact balance-first table — readable at normal desktop widths */
+#plBalanceView .pl-current-balance-table-wrap{
+  overflow-x:auto;
+  border-radius:12px;
+  border:1px solid #d5e2eb;
+  background:#fff;
+}
+#plBalanceView #plCurrentBalanceTable{
+  width:100%;
+  min-width:1040px;
+  table-layout:auto;
+  border-collapse:separate;
+  border-spacing:0;
+  font-size:12px;
+  color:#334155;
+  font-variant-numeric:tabular-nums;
+}
+#plBalanceView #plCurrentBalanceTable th{
+  padding:10px 11px;
+  white-space:normal;
+  line-height:1.25;
+  vertical-align:middle;
+  background:linear-gradient(180deg,#155e75,#0f4c5c);
+  color:#fff;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.01em;
+  border-right:1px solid rgba(255,255,255,.12);
+}
+#plBalanceView #plCurrentBalanceTable td{
+  padding:9px 11px;
+  white-space:nowrap;
+  line-height:1.35;
+  border-right:1px solid #e1eaf0;
+  border-bottom:1px solid #e1eaf0;
+}
+#plBalanceView #plCurrentBalanceTable tbody tr:nth-child(even){background:#f7fafc}
+#plBalanceView #plCurrentBalanceTable tbody tr.pl-bal-ok{background:#effaf5}
+#plBalanceView #plCurrentBalanceTable tbody tr.pl-bal-over{background:#fff1f2}
+#plBalanceView #plCurrentBalanceTable tbody tr:hover{filter:brightness(.985)}
+#plBalanceView #plCurrentBalanceTable .pl-bal-number{text-align:right;font-variant-numeric:tabular-nums}
+#plBalanceView #plCurrentBalanceTable .pl-bal-po{font-weight:750;color:#334155}
+#plBalanceView #plCurrentBalanceTable .pl-bal-item{font-weight:750;color:#164e63}
+#plBalanceView #plCurrentBalanceTable .pl-bal-weight{
+  background:#e8f7f4;
+  color:#075e54;
+  font-weight:850;
+  border-left:1px solid #b6e4da;
+  border-right:1px solid #b6e4da;
+}
+#plBalanceView #plCurrentBalanceTable .pl-bal-weight-head{
+  background:linear-gradient(180deg,#0f766e,#115e59);
+  min-width:145px;
+}
+#plBalanceView #plCurrentBalanceTable .pl-shipment-balance-link{
+  color:#0369a1;
+  font-weight:850;
+  padding:1px 2px;
+}
+#plBalanceView #plCurrentBalanceTable tfoot td{
+  padding:10px 11px;
+  background:#e2f2fb;
+  color:#164e63;
+  font-weight:850;
+  border-top:2px solid #93c5fd;
+  border-bottom:0;
+}
+#plBalanceView #plCurrentBalanceTable tfoot td:nth-child(8){
+  background:#cceee7;
+  color:#075e54;
+  font-size:12px;
+}
+#plBalanceView .pl-current-balance-kpis>div{
+  padding:12px 14px;
+  min-width:0;
+}
+#plBalanceView .pl-current-balance-kpis strong{
+  font-size:clamp(17px,1.3vw,22px);
+  line-height:1.25;
+}
+@media(max-width:900px){
+  #plBalanceView #plCurrentBalanceTable{min-width:1000px}
+  #plBalanceView #plCurrentBalanceTable th,
+  #plBalanceView #plCurrentBalanceTable td{padding:8px 9px}
+}
+@media print{
+  #plBalanceView #plCurrentBalanceTable{min-width:0;font-size:9px}
+  #plBalanceView #plCurrentBalanceTable th,
+  #plBalanceView #plCurrentBalanceTable td{padding:5px 6px;white-space:normal}
+}
+
+
+/* Raw Packing List Logs — elegant, searchable admin table */
+#packingListTab .pl-raw-logs-card{
+  border:1px solid #d5e3ea;
+  border-radius:16px;
+  background:linear-gradient(180deg,#fff 0%,#fbfdff 100%);
+  box-shadow:0 8px 24px rgba(15,55,72,.055);
+  overflow:hidden;
+}
+#packingListTab .pl-raw-logs-card h3{
+  color:#075b68;
+  font-size:16px;
+  font-weight:800;
+  letter-spacing:-.025em;
+}
+#packingListTab .pl-crate-toggle{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  min-height:30px;padding:6px 10px;border:1px solid #b9dcd7;border-radius:9px;
+  background:linear-gradient(135deg,#ffffff,#eaf8f5);color:#0f6670;
+  font:inherit;font-size:11px;font-weight:850;white-space:nowrap;cursor:pointer;
+  box-shadow:0 2px 5px rgba(15,78,99,.06);
+  transition:transform .18s ease,box-shadow .18s ease,background .18s ease;
+}
+#packingListTab .pl-crate-toggle:hover{transform:translateY(-1px);box-shadow:0 5px 12px rgba(15,78,99,.13);background:#dff6ef}
+#packingListTab .pl-crate-details{animation:plCrateDetailsIn .22s ease both;transform-origin:top}
+@keyframes plCrateDetailsIn{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:1100px){#packingListTab .pl-crate-summary-grid{grid-template-columns:repeat(4,minmax(120px,1fr))!important}}
+@media(max-width:650px){#packingListTab .pl-crate-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}#packingListTab .pl-crate-summary-grid>div:last-child{grid-column:1/-1}}
+#packingListTab .pl-raw-logs-count{
+  display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid #bfe4de;border-radius:999px;
+  background:#effaf7;color:#0f766e;
+  padding:6px 10px;font-size:11px;font-weight:800;
+  font-variant-numeric:tabular-nums;
+}
+#packingListTab .pl-raw-logs-filters{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(130px,1fr)) auto;
+  gap:12px;
+  align-items:end;
+  padding:14px;
+  margin:0 0 14px;
+  border:1px solid #d9e7ef;
+  border-radius:12px;
+  background:linear-gradient(135deg,#f4fafc,#f0fdfa);
+}
+#packingListTab .pl-raw-logs-filters .form-group{margin:0;min-width:0}
+#packingListTab .pl-raw-logs-filters label{
+  display:block;margin:0 0 6px;color:#426477;
+  font-size:11px;font-weight:800;letter-spacing:.015em;
+}
+#packingListTab .pl-raw-logs-filters input,
+#packingListTab .pl-raw-logs-filters select{
+  width:100%;min-height:40px;padding:9px 12px;
+  border:1px solid #cbdce6;border-radius:9px;
+  background:#fff;color:#243b53;font:inherit;font-size:12px;
+  transition:border-color .15s ease,box-shadow .15s ease;
+}
+#packingListTab .pl-raw-logs-filters input:focus,
+#packingListTab .pl-raw-logs-filters select:focus{
+  outline:none;border-color:#0f8b8d;
+  box-shadow:0 0 0 3px rgba(15,139,141,.12);
+}
+#packingListTab .pl-raw-clear-btn{
+  min-height:40px;padding:9px 13px;
+  border-radius:9px;background:#164e63;color:#fff;
+  font-size:11px;font-weight:800;white-space:nowrap;
+}
+#packingListTab .pl-raw-logs-table-wrap{
+  max-width:100%;overflow:auto;border:1px solid #d8e4eb;border-radius:12px;
+}
+#packingListTab #plRawPackingListTable{
+  width:100%;min-width:1050px;border-collapse:separate;border-spacing:0;
+  font-size:12px;color:#334155;font-variant-numeric:tabular-nums;
+}
+#packingListTab #plRawPackingListTable thead th{
+  position:sticky;top:0;z-index:1;
+  padding:11px 12px;white-space:nowrap;
+  background:linear-gradient(180deg,#155e75,#0f4c5c);
+  color:#fff;font-size:11px;font-weight:800;letter-spacing:.01em;
+  border-right:1px solid rgba(255,255,255,.12);
+}
+#packingListTab #plRawPackingListTable thead th.pl-raw-crate-head{
+  background:linear-gradient(180deg,#b45309,#d97706);
+}
+#packingListTab #plRawPackingListTable tbody td{
+  padding:9px 12px;white-space:nowrap;line-height:1.45;
+  border-right:1px solid #e0e9ef;border-bottom:1px solid #e0e9ef;
+}
+#packingListTab #plRawPackingListTable tbody tr:nth-child(even){background:#f6fafc}
+#packingListTab #plRawPackingListTable tbody tr:hover{background:#ecf8f7}
+#packingListTab #plRawPackingListTable tbody td:nth-child(2),
+#packingListTab #plRawPackingListTable tbody td:nth-child(3),
+#packingListTab #plRawPackingListTable tbody td:nth-child(7){font-weight:750;color:#334e68}
+#packingListTab #plRawPackingListTable tbody td:nth-child(8){font-weight:750;color:#087b91}
+#packingListTab #plRawPackingListTable tbody td:nth-child(10){font-weight:850;color:#155e75}
+#packingListTab #plRawPackingListTable .pl-raw-empty{
+  padding:24px;text-align:center;color:#64748b;font-weight:700;
+}
+@media(max-width:1100px){
+  #packingListTab .pl-raw-logs-filters{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #packingListTab .pl-raw-clear-btn{width:100%}
+}
+@media(max-width:560px){
+  #packingListTab .pl-raw-logs-filters{grid-template-columns:1fr}
+}
+@media print{
+  #packingListTab .pl-raw-logs-filters,#packingListTab .pl-raw-logs-count{display:none!important}
+  #packingListTab #plRawPackingListTable{min-width:0;font-size:9px}
+  #packingListTab #plRawPackingListTable thead th,
+  #packingListTab #plRawPackingListTable tbody td{padding:5px 6px;white-space:normal}
+}
+
+
+/* AIS Tracker — final typography polish and stable table hover behavior */
+:root{
+  --ais-font-ui: "Inter", "Segoe UI", Roboto, Arial, sans-serif;
+  --ais-font-data: "Inter", "Segoe UI", Roboto, Arial, sans-serif;
+}
+html,body,button,input,select,textarea{
+  font-family:var(--ais-font-ui);
+  font-kerning:normal;
+  text-rendering:optimizeLegibility;
+}
+body{
   -webkit-font-smoothing:antialiased;
   -moz-osx-font-smoothing:grayscale;
 }
-body{font-size:13px;line-height:1.48;letter-spacing:-.08px;}
-h1,h2,h3,h4,h5,h6,.card-title,.section-title,.header-titles h1{
-  font-family:var(--ais-font-ui)!important;
-  font-weight:750;
-  letter-spacing:-.38px;
-  text-wrap:pretty;
-}
-h1{letter-spacing:-.65px;}
-button, input, select, textarea, option, label, summary{
-  font-family:var(--ais-font-ui)!important;
-  letter-spacing:-.08px;
-}
-button,.btn,.tab-btn,.smart-category,.pl-view-tab{
+button,.btn,.tab-btn,.smart-category,.pl-ship-tab,.nav-tab,.main-tab{
+  font-family:var(--ais-font-ui);
   font-weight:650;
-  letter-spacing:-.12px;
-  -webkit-font-smoothing:antialiased;
+  letter-spacing:.005em;
 }
-input,select,textarea{
-  font-size:13px;
-  font-weight:500;
-  line-height:1.45;
+.tab-btn,.smart-category,.pl-ship-tab{
+  transition:background-color .16s ease,color .16s ease,border-color .16s ease,box-shadow .16s ease!important;
 }
-input::placeholder,textarea::placeholder{font-weight:400;opacity:.72;}
-table,table th,table td,.kpi-value,.stat-value,.metric-value,.balance-work-table .bw-badge{
-  font-family:var(--ais-font-numeric)!important;
-  font-variant-numeric:tabular-nums lining-nums;
+.tab-btn:hover,.smart-category:hover,.pl-ship-tab:hover{
+  transform:none!important;
 }
-table th{font-weight:700;letter-spacing:-.08px;}
-table td{letter-spacing:-.06px;}
-small,.small,.helper-text,.form-text,.text-muted,.muted{letter-spacing:0;}
-.card,.panel,.section-card{letter-spacing:-.06px;}
-/* Keep handwriting/cursive out of business forms and labels for a consistent professional look. */
-.inst-body{font-family:var(--ais-font-ui)!important;}
-:where(button,input,select,textarea,a,[tabindex]):focus-visible{
-  outline:2px solid #0d9488;
+.tab-btn:focus-visible,.smart-category:focus-visible,.pl-ship-tab:focus-visible,
+button:focus-visible,a:focus-visible{
+  outline:2px solid #3cae91;
   outline-offset:2px;
 }
-@media(max-width:700px){
-  body{font-size:12.5px;}
-  h1{letter-spacing:-.35px;}
-  table th,table td{letter-spacing:0;}
+table{
+  font-family:var(--ais-font-data);
+  font-variant-numeric:tabular-nums;
+}
+table thead th{
+  font-weight:750;
+  letter-spacing:.005em;
+}
+table tbody td{
+  transition:background-color .12s ease,color .12s ease!important;
+}
+/* Prevent hover styles from changing cell size, row position, or text width. */
+table tbody tr,
+table tbody tr:hover,
+table tbody tr:focus-within{
+  transform:none!important;
+  filter:none!important;
+  position:static;
+  z-index:auto!important;
+  box-shadow:none!important;
+}
+table tbody tr:hover td,
+table tbody tr:hover th,
+table tbody td:hover{
+  transform:none!important;
+  scale:none!important;
+  font-weight:inherit;
+  letter-spacing:inherit;
+  box-shadow:none!important;
+}
+table tbody tr:hover td{
+  background-color:rgba(15,118,110,.045);
+}
+/* Specific override for the Current PL vs Shipment Balance table. */
+#plBalanceView #plCurrentBalanceTable tbody tr,
+#plBalanceView #plCurrentBalanceTable tbody tr:hover,
+#plBalanceView #plCurrentBalanceTable tbody tr:hover td{
+  transform:none!important;
+  filter:none!important;
+  box-shadow:none!important;
+}
+#plBalanceView #plCurrentBalanceTable tbody tr:hover td{
+  font-weight:inherit;
+}
+#plBalanceView #plCurrentBalanceTable .pl-bal-weight{
+  font-weight:850!important;
+}
+#plBalanceView #plCurrentBalanceTable .pl-bal-item,
+#plBalanceView #plCurrentBalanceTable .pl-bal-po{
+  font-weight:750!important;
+}
+/* Specific override for Raw Packing List Logs. */
+#packingListTab #plRawPackingListTable tbody tr,
+#packingListTab #plRawPackingListTable tbody tr:hover,
+#packingListTab #plRawPackingListTable tbody tr:hover td{
+  transform:none!important;
+  filter:none!important;
+  box-shadow:none!important;
+}
+#packingListTab #plRawPackingListTable tbody tr:hover td{
+  font-weight:inherit;
+}
+#packingListTab #plRawPackingListTable tbody td:nth-child(2),
+#packingListTab #plRawPackingListTable tbody td:nth-child(3),
+#packingListTab #plRawPackingListTable tbody td:nth-child(7){
+  font-weight:750!important;
+}
+#packingListTab #plRawPackingListTable tbody td:nth-child(8){
+  font-weight:750!important;
+}
+#packingListTab #plRawPackingListTable tbody td:nth-child(10){
+  font-weight:850!important;
+}
+/* Keep crate list hover states calm; use color/shadow, not movement. */
+#packingListTab .pl-crate-toggle:hover,
+#packingListTab .pl-crate-toggle:active,
+.crate-card:hover,
+.next-pl-kpi:hover,
+.next-pl-table tbody tr:hover{
+  transform:none!important;
 }
 @media(prefers-reduced-motion:reduce){
-  *,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;}
+  *,*::before,*::after{
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important;
+    scroll-behavior:auto!important;
+    transition-duration:.01ms!important;
+  }
 }

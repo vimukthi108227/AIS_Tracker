@@ -1,0 +1,29 @@
+AIS Tracker — Final Static Audit
+Date: 2026-10-25
+
+Feature reviewed
+- Current PL vs Shipment Balance now lists all open/pending Production Order lines and any active Current PL lines that do not match a Production Order.
+- Each PO/Profile/Item Code/Length line displays unit weight, PO required PCS/kg, shipped PCS/kg, pending shipment balance PCS/kg, current active PL PCS/kg, and balance after Current PL PCS/kg.
+- Shipment balance PCS remains clickable to show saved shipment breakdown by month/container.
+- Current PL quantity is scoped to the selected active month/container; previous/completed PLs are excluded.
+- Unit weight is sourced from Master Catalog. Weight = PCS × unit weight.
+- PO-number normalization remains enabled for values such as “PO 363760” and “363760”.
+- No database schema or records are changed by this read-only report update.
+
+Static checks
+- Main JavaScript syntax: PASS
+- Inline JavaScript syntax: PASS (5 blocks)
+- CSS parse: PASS
+- Duplicate HTML IDs: none found
+- Missing local asset references: none found
+- ZIP integrity: PASS
+- Balance calculation logic smoke test: PASS (including prefixed PO number, shipped qty, current PL qty, and Master Catalog weight)
+
+Not performed
+- Live GitHub Pages browser validation
+- Live Supabase end-to-end validation with the user's production database
+
+Deployment note
+- Back up current website files before uploading.
+- Upload the extracted website-root files to the GitHub repository root.
+- Hard refresh the site (Ctrl+F5) and compare a few known POs against Production Orders, Shipment Tracker, Master Catalog, and the active Packing List.
