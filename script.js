@@ -5157,6 +5157,7 @@ function renderPlAnalytics(filteredPls) {
                     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 15px; gap: 10px;"> 
                         <div style="display: flex; align-items: center; gap: 12px;">
                             <h4 style="color: ${isManualComplete ? '#059669' : 'var(--primary-dark)'}; margin: 0; font-size: 16px; font-weight: 900;"><i class="fa-solid fa-box-open" style="color: #f59e0b;"></i> ${crateId}</h4>
+                            ${currentUserRole === 'Admin' ? `<button type="button" class="btn ais-crate-rename-btn" style="padding:4px 8px;font-size:11px;border-radius:7px;background:#e0f2fe;color:#075985;border:1px solid #bae6fd;" title="Edit crate number" onclick="window.renamePackingCrate(${JSON.stringify(crateId)})"><i class="fa-solid fa-pen"></i> Edit No.</button>` : ''}
                             <span style="background: ${isManualComplete ? '#dcfce7' : 'rgba(0,0,0,0.05)'}; color: ${isManualComplete ? '#059669' : stageColor}; padding: 4px 10px; border-radius: 20px; font-size: 10.5px; font-weight: 800; letter-spacing: 0.5px; border: 1px solid ${isManualComplete ? '#a7f3d0' : 'transparent'};"><i class="fa-solid ${icon}"></i> ${stageName}</span>
                         </div>
                         <div style="display:flex; gap:15px; align-items:center;"> 
@@ -5176,6 +5177,96 @@ function renderPlAnalytics(filteredPls) {
     } catch(e) {}
 }
 
+
+window.renamePackingCrate = async function(oldCrateNo) {
+    if (currentUserRole !== 'Admin') return showToast('Only Admin can edit crate numbers.', 'error');
+    if (isAppBusy) return showToast('Another operation is in progress. Please try again.', 'warning');
+
+    const oldNo = String(oldCrateNo || '').trim();
+    if (!oldNo) return showToast('Crate number is missing.', 'error');
+
+    const proposed = window.prompt(`Enter the new crate number for ${oldNo}:`, oldNo);
+    if (proposed === null) return;
+    const newNo = String(proposed).trim();
+    if (!newNo) return showToast('Crate number cannot be empty.', 'warning');
+    if (newNo === oldNo) return;
+    if (newNo.length > 80) return showToast('Crate number is too long (maximum 80 characters).', 'warning');
+
+    const month = String(activePackingMonth || '').trim();
+    const container = String(activePackingContainer || '').trim();
+    const rows = getPackingContainerRecords(month, container)
+        .filter(p => String(p.crateNo || '').trim() === oldNo);
+    if (!rows.length) return showToast(`No Packing List rows found for crate ${oldNo}.`, 'warning');
+
+    const collision = getPackingContainerRecords(month, container)
+        .some(p => String(p.crateNo || '').trim() === newNo && String(p.crateNo || '').trim() !== oldNo);
+    if (collision) return showToast(`Crate number "${newNo}" already exists in this shipment. Choose a unique number.`, 'warning');
+
+    const oldStateKey = manualCrateKey(oldNo, activePackingContainer, activePackingMonth);
+    const newStateKey = manualCrateKey(newNo, activePackingContainer, activePackingMonth);
+    const hadManualState = Object.prototype.hasOwnProperty.call(globalManualCrates, oldStateKey);
+    const savedManualState = hadManualState ? JSON.parse(JSON.stringify(globalManualCrates[oldStateKey])) : null;
+
+    isAppBusy = true;
+    try {
+        const { error } = await supabaseClient
+            .from('packing_list')
+            .update({ crate_no: newNo })
+            .eq('shipment_month', month)
+            .eq('container', container)
+            .eq('crate_no', oldNo);
+        if (error) throw new Error(`Could not update Packing List crate number: ${error.message}`);
+
+        // Update the in-memory records only after the database update succeeds.
+        packingLists.forEach(p => {
+            if (String(p.month || '').trim() === month &&
+                String(p.container || '').trim() === container &&
+                String(p.crateNo || '').trim() === oldNo) {
+                p.crateNo = newNo;
+            }
+        });
+
+        if (hadManualState) {
+            delete globalManualCrates[oldStateKey];
+            globalManualCrates[newStateKey] = {
+                ...savedManualState,
+                crateNo: newNo,
+                month,
+                container
+            };
+            const stateSaved = await window.saveManualCratesToDB();
+            if (!stateSaved) {
+                // Best-effort rollback of the crate label and completion-state key.
+                const rollback = await supabaseClient.from('packing_list')
+                    .update({ crate_no: oldNo })
+                    .eq('shipment_month', month)
+                    .eq('container', container)
+                    .eq('crate_no', newNo);
+                packingLists.forEach(p => {
+                    if (String(p.month || '').trim() === month &&
+                        String(p.container || '').trim() === container &&
+                        String(p.crateNo || '').trim() === newNo) p.crateNo = oldNo;
+                });
+                delete globalManualCrates[newStateKey];
+                globalManualCrates[oldStateKey] = savedManualState;
+                if (rollback.error) console.error('Crate number rollback failed:', rollback.error);
+                throw new Error('Could not save completed-crate reference. The crate number was rolled back where possible.');
+            }
+        }
+
+        showToast(`Crate number changed from ${oldNo} to ${newNo}. All matching Packing List views will refresh.`, 'success');
+        renderPackingListTable();
+        renderDashboard();
+        renderProfileSummaryTable();
+        renderBalanceWorkTable();
+    } catch (e) {
+        console.error('Crate rename failed:', e);
+        showToast(e.message || 'Could not change crate number safely.', 'error');
+    } finally {
+        isAppBusy = false;
+    }
+};
+
 window.toggleManualCrate = async function(crateId, isChecked) {
     if (currentUserRole !== 'Admin') return showToast('Only Admin can mark crates as complete!', 'error');
     if (isAppBusy) return showToast('Another stock operation is in progress. Please try again.', 'warning');
@@ -5183,7 +5274,6 @@ window.toggleManualCrate = async function(crateId, isChecked) {
     const stateKey = manualCrateKey(crateId, activePackingContainer, activePackingMonth);
     const previous = globalManualCrates[stateKey] ? JSON.parse(JSON.stringify(globalManualCrates[stateKey])) : null;
     const changedCatalog = [];
-    const stockColumns = {boxQty:'box_qty',wrapQty:'wrap_qty',crateQty:'crate_qty'};
 
     const findCatalogItem = (line) => masterData.find(m =>
         String(m.profile||'').trim() === String(line.profile||'').trim() &&
@@ -5196,13 +5286,14 @@ window.toggleManualCrate = async function(crateId, isChecked) {
         if (!cat || !cat.db_id) throw new Error(`Master Catalog item missing for ${movement.profile} / ${movement.itemCode} / ${movement.length}.`);
         const deltaBox = Number(movement.boxDeducted)||0;
         const deltaWrap = Number(movement.wrapDeducted)||0;
+        const deltaPunch = Number(movement.punchDeducted)||0;
+        const deltaCut = Number(movement.cutDeducted)||0;
         const deltaCrate = Number(movement.crateAdded)||0;
 
-        // Re-read the latest database quantities before writing so stale browser data
-        // cannot overwrite a newer production/shipment stock update.
+        // Re-read all relevant stage quantities from Supabase before changing stock.
         const {data:live,error:readError} = await supabaseClient
             .from('master_catalog')
-            .select('id,box_qty,wrap_qty,crate_qty')
+            .select('id,box_qty,wrap_qty,punch_qty,cut_qty,crate_qty')
             .eq('id', cat.db_id)
             .maybeSingle();
         if (readError) throw new Error(`Could not verify live stock for ${movement.itemCode}: ${readError.message}`);
@@ -5210,31 +5301,60 @@ window.toggleManualCrate = async function(crateId, isChecked) {
 
         const liveBox = Math.max(0, Number(live.box_qty)||0);
         const liveWrap = Math.max(0, Number(live.wrap_qty)||0);
+        const livePunch = Math.max(0, Number(live.punch_qty)||0);
+        const liveCut = Math.max(0, Number(live.cut_qty)||0);
         const liveCrate = Math.max(0, Number(live.crate_qty)||0);
         let next;
         if (direction === 'add-to-crate') {
-            if (liveBox + liveWrap < Number(movement.qty)) {
-                throw new Error(`${movement.profile} / ${movement.itemCode}: Box + Wrapping stock changed. Available now: ${liveBox + liveWrap} Pcs; required: ${movement.qty} Pcs. Refresh and try again.`);
+            const qty = Math.max(0, Number(movement.qty)||0);
+            const available = liveBox + liveWrap + livePunch + liveCut;
+            if (available < qty) {
+                throw new Error(`${movement.profile} / ${movement.itemCode}: not enough stock across Box, Wrapping, Punching and Cutting. Available: ${available} Pcs; required: ${qty} Pcs. No partial crate completion was applied.`);
             }
-            const boxTake = Math.min(liveBox, Number(movement.qty));
-            const wrapTake = Number(movement.qty) - boxTake;
-            next = {box_qty:liveBox-boxTake,wrap_qty:liveWrap-wrapTake,crate_qty:liveCrate+Number(movement.qty)};
+            // Consume in the requested order: Box -> Wrapping -> Punching -> Cutting.
+            let remaining = qty;
+            const boxTake = Math.min(liveBox, remaining); remaining -= boxTake;
+            const wrapTake = Math.min(liveWrap, remaining); remaining -= wrapTake;
+            const punchTake = Math.min(livePunch, remaining); remaining -= punchTake;
+            const cutTake = Math.min(liveCut, remaining); remaining -= cutTake;
+            if (remaining > 0) throw new Error(`Could not allocate ${remaining} Pcs for ${movement.itemCode}. No partial crate completion was applied.`);
+            next = {
+                box_qty:liveBox-boxTake,
+                wrap_qty:liveWrap-wrapTake,
+                punch_qty:livePunch-punchTake,
+                cut_qty:liveCut-cutTake,
+                crate_qty:liveCrate+qty
+            };
             movement.boxDeducted = boxTake;
             movement.wrapDeducted = wrapTake;
-            movement.crateAdded = Number(movement.qty);
+            movement.punchDeducted = punchTake;
+            movement.cutDeducted = cutTake;
+            movement.crateAdded = qty;
         } else {
-            // A crate may have already been shipped. Do not reverse a completion
-            // if its quantity is no longer available in Crate Stage.
+            // If crate stock has already been shipped/consumed, refuse to create negative stock.
             if (liveCrate < deltaCrate) {
-                throw new Error(`${movement.profile} / ${movement.itemCode}: cannot unmark this crate safely. Crate Stage has ${liveCrate} Pcs but ${deltaCrate} Pcs must be returned.`);
+                throw new Error(`${movement.profile} / ${movement.itemCode}: cannot unmark safely. Crate Stage has ${liveCrate} Pcs but ${deltaCrate} Pcs must be returned.`);
             }
-            next = {box_qty:liveBox+deltaBox,wrap_qty:liveWrap+deltaWrap,crate_qty:liveCrate-deltaCrate};
+            next = {
+                box_qty:liveBox+deltaBox,
+                wrap_qty:liveWrap+deltaWrap,
+                punch_qty:livePunch+deltaPunch,
+                cut_qty:liveCut+deltaCut,
+                crate_qty:liveCrate-deltaCrate
+            };
         }
 
         const {error:writeError} = await supabaseClient.from('master_catalog').update(next).eq('id',cat.db_id);
         if (writeError) throw new Error(`Stock update failed for ${movement.itemCode}: ${writeError.message}`);
-        changedCatalog.push({cat, before:{boxQty:liveBox,wrapQty:liveWrap,crateQty:liveCrate}, after:{boxQty:next.box_qty,wrapQty:next.wrap_qty,crateQty:next.crate_qty}});
-        Object.assign(cat,{boxQty:next.box_qty,wrapQty:next.wrap_qty,crateQty:next.crate_qty});
+        changedCatalog.push({
+            cat,
+            before:{boxQty:liveBox,wrapQty:liveWrap,punchQty:livePunch,cutQty:liveCut,crateQty:liveCrate},
+            after:{boxQty:next.box_qty,wrapQty:next.wrap_qty,punchQty:next.punch_qty,cutQty:next.cut_qty,crateQty:next.crate_qty}
+        });
+        Object.assign(cat,{
+            boxQty:next.box_qty,wrapQty:next.wrap_qty,punchQty:next.punch_qty,
+            cutQty:next.cut_qty,crateQty:next.crate_qty
+        });
     };
 
     try {
@@ -5291,7 +5411,11 @@ window.toggleManualCrate = async function(crateId, isChecked) {
         for (const changed of changedCatalog.reverse()) {
             try {
                 const {error} = await supabaseClient.from('master_catalog').update({
-                    box_qty:changed.before.boxQty,wrap_qty:changed.before.wrapQty,crate_qty:changed.before.crateQty
+                    box_qty:changed.before.boxQty,
+                    wrap_qty:changed.before.wrapQty,
+                    punch_qty:changed.before.punchQty,
+                    cut_qty:changed.before.cutQty,
+                    crate_qty:changed.before.crateQty
                 }).eq('id',changed.cat.db_id);
                 if (error) console.error('Stock rollback failed:',error);
                 else Object.assign(changed.cat,changed.before);

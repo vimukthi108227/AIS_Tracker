@@ -3379,3 +3379,21 @@ table tbody tr:hover td{
     transition-duration:.01ms!important;
   }
 }
+
+
+/* AIS Tracker: crate number edit control */
+.ais-crate-rename-btn{
+  white-space:nowrap;
+  line-height:1.25;
+  transition:background-color .15s ease,border-color .15s ease,color .15s ease;
+}
+.ais-crate-rename-btn:hover{
+  background:#bae6fd!important;
+  border-color:#7dd3fc!important;
+  color:#0c4a6e!important;
+  transform:none!important;
+}
+.ais-crate-rename-btn:focus-visible{
+  outline:2px solid #0284c7;
+  outline-offset:2px;
+}
