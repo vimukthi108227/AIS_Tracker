@@ -3397,3 +3397,142 @@ table tbody tr:hover td{
   outline:2px solid #0284c7;
   outline-offset:2px;
 }
+
+
+/* Safe crate-number edit and undo controls */
+.ais-crate-rename-btn,
+.ais-crate-rename-undo-btn{
+  white-space:nowrap;
+  line-height:1.25;
+  transition:background-color .15s ease,border-color .15s ease,color .15s ease;
+}
+.ais-crate-rename-btn:hover{
+  background:#bae6fd!important;
+  border-color:#7dd3fc!important;
+  color:#0c4a6e!important;
+  transform:none!important;
+}
+.ais-crate-rename-undo-btn:not(:disabled):hover{
+  background:#e2e8f0!important;
+  border-color:#94a3b8!important;
+  color:#0f172a!important;
+  transform:none!important;
+}
+.ais-crate-rename-undo-btn:disabled{
+  opacity:.55;
+  cursor:not-allowed;
+}
+.ais-crate-rename-btn:focus-visible,
+.ais-crate-rename-undo-btn:focus-visible{
+  outline:2px solid #0284c7;
+  outline-offset:2px;
+}
+
+/* AIS Tracker V2.20 — refined enterprise visual layer (presentation only) */
+:root{
+  --ais-ink:#17324a;
+  --ais-muted:#62768a;
+  --ais-teal:#0f6672;
+  --ais-teal-deep:#104b5a;
+  --ais-green:#0f9b72;
+  --ais-line:#d7e4ec;
+  --ais-panel:#ffffff;
+  --ais-soft:#f4f8fb;
+  --ais-focus:rgba(15,155,114,.18);
+  --ais-shadow:0 8px 26px rgba(22,54,77,.065);
+}
+html{scroll-behavior:smooth;scroll-padding-top:18px}
+body{
+  font-family:"Inter","Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif!important;
+  color:var(--ais-ink);
+  letter-spacing:.002em;
+  line-height:1.45;
+}
+body,button,input,select,textarea{font-kerning:normal;text-rendering:optimizeLegibility}
+button,input,select,textarea{font-size:13px}
+input,select,textarea{
+  border-color:#cfdee8;
+  border-radius:10px;
+  min-height:38px;
+}
+input:focus,select:focus,textarea:focus{
+  transform:none!important;
+  box-shadow:0 0 0 3px var(--ais-focus)!important;
+  border-color:var(--ais-green)!important;
+  z-index:2;
+}
+label,.form-group label{color:#456176;font-weight:700;letter-spacing:.005em}
+h1,h2,h3,h4,h5{font-family:"Inter","Plus Jakarta Sans",system-ui,sans-serif;letter-spacing:-.025em;line-height:1.25}
+.card{
+  border-color:rgba(189,214,224,.8);
+  box-shadow:var(--ais-shadow);
+  background:rgba(255,255,255,.96);
+  animation:aisPanelIn .32s ease-out both;
+}
+.card:hover{border-color:rgba(15,155,114,.32)}
+/* A card containing a data table must never jump when the pointer enters it. */
+.card:has(table):hover,.card:has(.table-container):hover,.card:has(.balance-work-container):hover{
+  transform:none!important;
+  box-shadow:var(--ais-shadow)!important;
+}
+@keyframes aisPanelIn{from{opacity:.0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+.btn,button.btn,button:not(.tab-btn):not(.smart-category){
+  font-family:inherit;
+  font-weight:700;
+  letter-spacing:.002em;
+}
+.btn{border-radius:10px;box-shadow:0 2px 5px rgba(20,48,66,.06)}
+.btn:hover{filter:brightness(1.025);box-shadow:0 5px 12px rgba(20,48,66,.10)}
+.btn:active{filter:brightness(.98)}
+.tab-btn,.smart-category,.smart-submenu .tab-btn,.pl-ship-tab{
+  font-family:inherit!important;
+  letter-spacing:0!important;
+}
+.tab-btn:focus-visible,.smart-category:focus-visible,.pl-ship-tab:focus-visible,
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
+  outline:2px solid #20a77d!important;outline-offset:2px;
+}
+/* Table stability: hover changes colour only, never geometry or font metrics. */
+.table-container,.balance-work-container,.pl-raw-logs-table-wrap{
+  max-width:100%;
+  border-color:var(--ais-line);
+  box-shadow:0 2px 8px rgba(19,52,73,.035);
+}
+table{font-family:inherit;font-variant-numeric:tabular-nums}
+table thead th{letter-spacing:0!important;font-weight:750}
+table tbody tr,table tbody tr:hover,table tbody tr:focus-within,
+table tbody td,table tbody td:hover,table tbody th:hover{
+  transform:none!important;scale:none!important;filter:none!important;
+  box-shadow:none!important;letter-spacing:inherit!important;
+}
+table tbody tr:hover td,table tbody tr:hover th{
+  transition:background-color .12s ease!important;
+}
+/* Consistent focus and feedback without changing table layout. */
+.table-container,table{max-width:100%}
+.table-container{scrollbar-color:#9bb9c8 #edf3f6;scrollbar-width:thin}
+.table-container::-webkit-scrollbar,.balance-work-container::-webkit-scrollbar{height:9px;width:9px}
+.table-container::-webkit-scrollbar-thumb,.balance-work-container::-webkit-scrollbar-thumb{background:#a9c1ce;border:2px solid #edf3f6;border-radius:99px}
+.table-container::-webkit-scrollbar-track,.balance-work-container::-webkit-scrollbar-track{background:#edf3f6;border-radius:99px}
+.badge,.status-badge{letter-spacing:.005em}
+hr,.divider{border-color:#e0eaf0}
+::selection{background:rgba(15,155,114,.18);color:#12334a}
+body.dark-mode .card{background:rgba(15,27,42,.96);border-color:#2a4558;box-shadow:0 8px 28px rgba(0,0,0,.16)}
+body.dark-mode label,body.dark-mode .form-group label{color:#b9cedb}
+body.dark-mode input,body.dark-mode select,body.dark-mode textarea{border-color:#385266}
+body.dark-mode table tbody tr:hover td,body.dark-mode table tbody tr:hover th{background-color:rgba(52,211,153,.08)}
+@media(max-width:900px){
+  .card{padding:16px;border-radius:14px}
+  .card h3{font-size:16px;gap:8px}
+  .btn{min-height:36px}
+  table thead th{white-space:nowrap}
+}
+@media(max-width:560px){
+  .card{padding:12px;margin-bottom:14px}
+  input,select,textarea{font-size:16px;min-height:42px}
+  .smart-category{max-width:100%;white-space:normal}
+}
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .card{animation:none!important}
+}

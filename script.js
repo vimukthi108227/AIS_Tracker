@@ -5158,6 +5158,7 @@ function renderPlAnalytics(filteredPls) {
                         <div style="display: flex; align-items: center; gap: 12px;">
                             <h4 style="color: ${isManualComplete ? '#059669' : 'var(--primary-dark)'}; margin: 0; font-size: 16px; font-weight: 900;"><i class="fa-solid fa-box-open" style="color: #f59e0b;"></i> ${crateId}</h4>
                             ${currentUserRole === 'Admin' ? `<button type="button" class="btn ais-crate-rename-btn" style="padding:4px 8px;font-size:11px;border-radius:7px;background:#e0f2fe;color:#075985;border:1px solid #bae6fd;" title="Edit crate number" onclick="window.renamePackingCrate(${JSON.stringify(crateId)})"><i class="fa-solid fa-pen"></i> Edit No.</button>` : ''}
+                            ${currentUserRole === 'Admin' ? `<button type="button" id="aisUndoCrateRenameBtn" class="btn ais-crate-rename-undo-btn" style="padding:4px 8px;font-size:11px;border-radius:7px;background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;" onclick="window.undoLastCrateRename()" disabled><i class="fa-solid fa-rotate-left"></i> Undo Crate No. Edit</button>` : ''}
                             <span style="background: ${isManualComplete ? '#dcfce7' : 'rgba(0,0,0,0.05)'}; color: ${isManualComplete ? '#059669' : stageColor}; padding: 4px 10px; border-radius: 20px; font-size: 10.5px; font-weight: 800; letter-spacing: 0.5px; border: 1px solid ${isManualComplete ? '#a7f3d0' : 'transparent'};"><i class="fa-solid ${icon}"></i> ${stageName}</span>
                         </div>
                         <div style="display:flex; gap:15px; align-items:center;"> 
@@ -5184,86 +5185,314 @@ window.renamePackingCrate = async function(oldCrateNo) {
 
     const oldNo = String(oldCrateNo || '').trim();
     if (!oldNo) return showToast('Crate number is missing.', 'error');
-
-    const proposed = window.prompt(`Enter the new crate number for ${oldNo}:`, oldNo);
-    if (proposed === null) return;
-    const newNo = String(proposed).trim();
+    const input = window.prompt(
+        `Rename crate ${oldNo}?\n\nIf this crate is manually completed, its PCS will be moved from Crate Stage back to Box Stage and the manual-complete tick will be cleared.\nAll profile/item rows remain together.\n\nNew crate number:`,
+        oldNo
+    );
+    if (input === null) return;
+    let newNo = String(input).trim();
     if (!newNo) return showToast('Crate number cannot be empty.', 'warning');
-    if (newNo === oldNo) return;
     if (newNo.length > 80) return showToast('Crate number is too long (maximum 80 characters).', 'warning');
+    if (/^crate\s+/i.test(oldNo) && /^\d+(?:[-\s].*)?$/.test(newNo)) newNo = `Crate ${newNo}`;
+    if (newNo === oldNo) return;
 
     const month = String(activePackingMonth || '').trim();
     const container = String(activePackingContainer || '').trim();
-    const rows = getPackingContainerRecords(month, container)
-        .filter(p => String(p.crateNo || '').trim() === oldNo);
-    if (!rows.length) return showToast(`No Packing List rows found for crate ${oldNo}.`, 'warning');
+    const allRows = getPackingContainerRecords(month, container);
+    const rows = allRows.filter(p => String(p.crateNo || '').trim() === oldNo);
+    if (!rows.length) return showToast(`No Packing List records were found for crate ${oldNo}.`, 'warning');
 
-    const collision = getPackingContainerRecords(month, container)
-        .some(p => String(p.crateNo || '').trim() === newNo && String(p.crateNo || '').trim() !== oldNo);
-    if (collision) return showToast(`Crate number "${newNo}" already exists in this shipment. Choose a unique number.`, 'warning');
+    const canonical = value => String(value || '').trim().replace(/^crate\s+/i, '').replace(/\s+/g, '').toLowerCase();
+    const newCanonical = canonical(newNo);
+    if (allRows.some(p => canonical(p.crateNo) === newCanonical && canonical(p.crateNo) !== canonical(oldNo))) {
+        return showToast(`Crate "${newNo}" already exists in this shipment. Choose a unique number.`, 'warning');
+    }
 
-    const oldStateKey = manualCrateKey(oldNo, activePackingContainer, activePackingMonth);
-    const newStateKey = manualCrateKey(newNo, activePackingContainer, activePackingMonth);
+    const rowsWithIds = rows.filter(p => p.id !== null && p.id !== undefined && String(p.id).trim() !== '');
+    if (rowsWithIds.length !== rows.length) {
+        return showToast('One or more Packing List rows have no database ID. Nothing was changed.', 'error');
+    }
+
+    const oldStateKey = manualCrateKey(oldNo, container, month);
+    const newStateKey = manualCrateKey(newNo, container, month);
     const hadManualState = Object.prototype.hasOwnProperty.call(globalManualCrates, oldStateKey);
     const savedManualState = hadManualState ? JSON.parse(JSON.stringify(globalManualCrates[oldStateKey])) : null;
+    if (hadManualState && Object.prototype.hasOwnProperty.call(globalManualCrates, newStateKey)) {
+        return showToast(`A saved completion state already exists for ${newNo}. Nothing was changed.`, 'warning');
+    }
+
+    const undoEntry = {
+        id: `crate-rename-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        month, container, oldNo, newNo,
+        rows: rowsWithIds.map(row => ({ id: row.id, oldCrateNo: String(row.crateNo || oldNo) })),
+        manualState: hadManualState ? savedManualState : null,
+        stockTransfers: [],
+        createdAt: new Date().toISOString()
+    };
+    const changedCatalog = [];
+    const updatedRowIds = [];
+
+    const getCatalogForLine = line => masterData.find(m =>
+        String(m.profile || '').trim() === String(line.profile || '').trim() &&
+        String(m.itemCode || '').trim() === String(line.itemCode || '').trim() &&
+        cleanLen(m.length) === cleanLen(line.length)
+    );
+
+    // For a completed crate, move its exact PCS from Crate Stage to Box Stage,
+    // grouped by every profile/item/length. Do not collapse multi-profile crates.
+    const buildTransferItems = () => {
+        const grouped = new Map();
+        const savedMovements = Array.isArray(savedManualState?.stockMovements) ? savedManualState.stockMovements : [];
+        if (savedMovements.length) {
+            for (const movement of savedMovements) {
+                const qty = Math.max(0, Number(movement.crateAdded ?? movement.qty) || 0);
+                if (!qty) continue;
+                const cat = masterData.find(m => String(m.db_id) === String(movement.dbId)) ||
+                    masterData.find(m =>
+                        String(m.profile || '').trim() === String(movement.profile || '').trim() &&
+                        String(m.itemCode || '').trim() === String(movement.itemCode || '').trim() &&
+                        cleanLen(m.length) === cleanLen(movement.length)
+                    );
+                if (!cat || !cat.db_id) throw new Error(`Master Catalog match missing for ${movement.profile} / ${movement.itemCode} / ${movement.length}.`);
+                const key = String(cat.db_id);
+                if (!grouped.has(key)) grouped.set(key, {cat, qty: 0});
+                grouped.get(key).qty += qty;
+            }
+        } else {
+            // Legacy manual-complete entries may not contain movement details.
+            // Rebuild quantities from all rows in this crate, retaining each catalog item separately.
+            for (const line of rows) {
+                const qty = Math.max(0, Number(line.pcsQty) || 0);
+                if (!qty) continue;
+                const cat = getCatalogForLine(line);
+                if (!cat || !cat.db_id) throw new Error(`Master Catalog match missing for ${line.profile} / ${line.itemCode} / ${line.length}.`);
+                const key = String(cat.db_id);
+                if (!grouped.has(key)) grouped.set(key, {cat, qty: 0});
+                grouped.get(key).qty += qty;
+            }
+        }
+        return [...grouped.values()];
+    };
 
     isAppBusy = true;
     try {
-        const { error } = await supabaseClient
-            .from('packing_list')
-            .update({ crate_no: newNo })
-            .eq('shipment_month', month)
-            .eq('container', container)
-            .eq('crate_no', oldNo);
-        if (error) throw new Error(`Could not update Packing List crate number: ${error.message}`);
-
-        // Update the in-memory records only after the database update succeeds.
-        packingLists.forEach(p => {
-            if (String(p.month || '').trim() === month &&
-                String(p.container || '').trim() === container &&
-                String(p.crateNo || '').trim() === oldNo) {
-                p.crateNo = newNo;
+        // First validate all stock rows before changing any of them.
+        const transferItems = hadManualState ? buildTransferItems() : [];
+        for (const item of transferItems) {
+            const {data:live, error} = await supabaseClient
+                .from('master_catalog')
+                .select('id,box_qty,crate_qty')
+                .eq('id', item.cat.db_id)
+                .maybeSingle();
+            if (error) throw new Error(`Could not verify stock for ${item.cat.profile} / ${item.cat.itemCode}: ${error.message}`);
+            if (!live) throw new Error(`Master Catalog row not found for ${item.cat.profile} / ${item.cat.itemCode}.`);
+            const box = Math.max(0, Number(live.box_qty) || 0);
+            const crate = Math.max(0, Number(live.crate_qty) || 0);
+            if (crate < item.qty) {
+                throw new Error(`${item.cat.profile} / ${item.cat.itemCode}: Crate Stage has ${crate} Pcs, but ${item.qty} Pcs must be returned. Nothing was changed.`);
             }
-        });
-
-        if (hadManualState) {
-            delete globalManualCrates[oldStateKey];
-            globalManualCrates[newStateKey] = {
-                ...savedManualState,
-                crateNo: newNo,
-                month,
-                container
-            };
-            const stateSaved = await window.saveManualCratesToDB();
-            if (!stateSaved) {
-                // Best-effort rollback of the crate label and completion-state key.
-                const rollback = await supabaseClient.from('packing_list')
-                    .update({ crate_no: oldNo })
-                    .eq('shipment_month', month)
-                    .eq('container', container)
-                    .eq('crate_no', newNo);
-                packingLists.forEach(p => {
-                    if (String(p.month || '').trim() === month &&
-                        String(p.container || '').trim() === container &&
-                        String(p.crateNo || '').trim() === newNo) p.crateNo = oldNo;
-                });
-                delete globalManualCrates[newStateKey];
-                globalManualCrates[oldStateKey] = savedManualState;
-                if (rollback.error) console.error('Crate number rollback failed:', rollback.error);
-                throw new Error('Could not save completed-crate reference. The crate number was rolled back where possible.');
-            }
+            item.before = {boxQty: box, crateQty: crate};
+            item.after = {boxQty: box + item.qty, crateQty: crate - item.qty};
         }
 
-        showToast(`Crate number changed from ${oldNo} to ${newNo}. All matching Packing List views will refresh.`, 'success');
+        // Update each matching row by ID; never update/merge by crate number alone.
+        for (const row of rowsWithIds) {
+            const {data, error} = await supabaseClient
+                .from('packing_list')
+                .update({crate_no: newNo})
+                .eq('id', row.id)
+                .eq('shipment_month', month)
+                .eq('container', container)
+                .eq('crate_no', oldNo)
+                .select('id');
+            if (error) throw new Error(`Could not update Packing List row ${row.id}: ${error.message}`);
+            if (!Array.isArray(data) || data.length !== 1) throw new Error(`Update was not confirmed for Packing List row ${row.id}.`);
+            updatedRowIds.push(row.id);
+        }
+
+        // Transfer Crate Stage -> Box Stage only for the manually completed crate being renamed.
+        for (const item of transferItems) {
+            const {error} = await supabaseClient.from('master_catalog')
+                .update({box_qty: item.after.boxQty, crate_qty: item.after.crateQty})
+                .eq('id', item.cat.db_id);
+            if (error) throw new Error(`Could not return ${item.qty} Pcs to Box Stage for ${item.cat.itemCode}: ${error.message}`);
+            changedCatalog.push(item);
+            Object.assign(item.cat, {boxQty: item.after.boxQty, crateQty: item.after.crateQty});
+            undoEntry.stockTransfers.push({
+                dbId: item.cat.db_id, profile: item.cat.profile, itemCode: item.cat.itemCode,
+                length: cleanLen(item.cat.length), qty: item.qty,
+                before: item.before, after: item.after
+            });
+        }
+
+        // A renamed manually completed crate is now a fresh, not-yet-packed crate.
+        if (hadManualState) {
+            delete globalManualCrates[oldStateKey];
+            if (!await window.saveManualCratesToDB()) throw new Error('Could not save the updated manual-completion state.');
+        }
+
+        // Refresh in-memory rows only after all persisted updates succeeded.
+        rows.forEach(row => { row.crateNo = newNo; });
+        if (!Array.isArray(window.__aisCrateRenameUndoStack)) window.__aisCrateRenameUndoStack = [];
+        window.__aisCrateRenameUndoStack.push(undoEntry);
+        window.__aisCrateRenameUndoStack = window.__aisCrateRenameUndoStack.slice(-30);
+        updateCrateRenameUndoButton();
+
+        showToast(hadManualState
+            ? `Crate renamed. ${undoEntry.stockTransfers.reduce((s, m) => s + m.qty, 0).toLocaleString()} Pcs moved from Crate Stage to Box Stage; the manual-complete tick was cleared.`
+            : `Crate number changed. All ${rows.length} profile/item rows were retained.`, 'success');
         renderPackingListTable();
         renderDashboard();
         renderProfileSummaryTable();
         renderBalanceWorkTable();
     } catch (e) {
-        console.error('Crate rename failed:', e);
-        showToast(e.message || 'Could not change crate number safely.', 'error');
+        console.error('Crate rename / stock transfer failed:', e);
+
+        // Best-effort rollback: restore saved completion state, stock values, and crate labels.
+        if (hadManualState) {
+            globalManualCrates[oldStateKey] = savedManualState;
+            try { await window.saveManualCratesToDB(); } catch (stateErr) { console.error('Manual state rollback failed:', stateErr); }
+        }
+        for (const item of changedCatalog.slice().reverse()) {
+            try {
+                const {error} = await supabaseClient.from('master_catalog')
+                    .update({box_qty: item.before.boxQty, crate_qty: item.before.crateQty})
+                    .eq('id', item.cat.db_id);
+                if (error) console.error('Stock rollback failed:', error);
+                else Object.assign(item.cat, {boxQty: item.before.boxQty, crateQty: item.before.crateQty});
+            } catch (rollbackError) { console.error('Stock rollback failed:', rollbackError); }
+        }
+        for (const id of updatedRowIds.slice().reverse()) {
+            try {
+                const {error} = await supabaseClient.from('packing_list')
+                    .update({crate_no: oldNo})
+                    .eq('id', id)
+                    .eq('shipment_month', month)
+                    .eq('container', container)
+                    .eq('crate_no', newNo);
+                if (error) console.error('Packing List rollback failed:', error);
+            } catch (rollbackError) { console.error('Packing List rollback failed:', rollbackError); }
+        }
+        try { await loadDataFromSupabase(true); } catch (reloadError) { console.error('Reload after rename rollback failed:', reloadError); }
+        showToast(e.message || 'Crate rename failed. The system attempted to roll back all changes.', 'error');
     } finally {
         isAppBusy = false;
+        updateCrateRenameUndoButton();
+    }
+};
+
+function updateCrateRenameUndoButton() {
+    const button = document.getElementById('aisUndoCrateRenameBtn');
+    if (!button) return;
+    const stack = Array.isArray(window.__aisCrateRenameUndoStack) ? window.__aisCrateRenameUndoStack : [];
+    button.disabled = stack.length === 0 || isAppBusy;
+    button.innerHTML = `<i class="fa-solid fa-rotate-left"></i> Undo Crate No. Edit${stack.length ? ` (${stack.length})` : ''}`;
+    button.title = stack.length
+        ? `Undo the latest crate edit (${stack[stack.length - 1].newNo} → ${stack[stack.length - 1].oldNo})`
+        : 'No crate number changes to undo in this browser session';
+}
+
+window.undoLastCrateRename = async function() {
+    if (currentUserRole !== 'Admin') return showToast('Only Admin can undo crate number edits.', 'error');
+    if (isAppBusy) return showToast('Another operation is in progress. Please try again.', 'warning');
+    const stack = Array.isArray(window.__aisCrateRenameUndoStack) ? window.__aisCrateRenameUndoStack : [];
+    const entry = stack[stack.length - 1];
+    if (!entry) return showToast('There are no crate number edits to undo in this browser session.', 'warning');
+
+    if (!window.confirm(
+        `Undo the last crate edit?\n\nCrate: ${entry.newNo} → ${entry.oldNo}\n` +
+        `${entry.rows.length} Packing List row(s) will be restored.` +
+        (entry.stockTransfers?.length ? `\n${entry.stockTransfers.reduce((s,m)=>s+(Number(m.qty)||0),0).toLocaleString()} Pcs will move from Box Stage back to Crate Stage and the previous manual-complete tick will be restored.` : '') +
+        `\nNo profile/item/length/PCS/weight fields will be changed.`
+    )) return;
+
+    isAppBusy = true;
+    const restoredRows = [];
+    const reversedTransfers = [];
+    let manualStateChanged = false;
+    const oldStateKey = manualCrateKey(entry.oldNo, entry.container, entry.month);
+    const newStateKey = manualCrateKey(entry.newNo, entry.container, entry.month);
+    try {
+        // Guard every row so undo never renames a crate that has since been changed elsewhere.
+        for (const row of entry.rows) {
+            const {data, error} = await supabaseClient.from('packing_list')
+                .update({crate_no: row.oldCrateNo})
+                .eq('id', row.id)
+                .eq('shipment_month', entry.month)
+                .eq('container', entry.container)
+                .eq('crate_no', entry.newNo)
+                .select('id');
+            if (error) throw new Error(`Could not restore Packing List row ${row.id}: ${error.message}`);
+            if (!Array.isArray(data) || data.length !== 1) throw new Error(`Row ${row.id} no longer has the expected crate number. Undo stopped to protect unrelated data.`);
+            restoredRows.push(row);
+        }
+
+        for (const transfer of (entry.stockTransfers || [])) {
+            const {data:live, error:readError} = await supabaseClient.from('master_catalog')
+                .select('id,box_qty,crate_qty').eq('id', transfer.dbId).maybeSingle();
+            if (readError) throw new Error(`Could not verify stock for ${transfer.itemCode}: ${readError.message}`);
+            if (!live) throw new Error(`Master Catalog row not found for ${transfer.itemCode}.`);
+            const box = Math.max(0, Number(live.box_qty) || 0);
+            const crate = Math.max(0, Number(live.crate_qty) || 0);
+            if (box < transfer.qty) throw new Error(`${transfer.itemCode}: Box Stage now has ${box} Pcs; ${transfer.qty} Pcs are needed to undo. No negative stock will be created.`);
+            const next = {box_qty: box - transfer.qty, crate_qty: crate + transfer.qty};
+            const {error} = await supabaseClient.from('master_catalog').update(next).eq('id', transfer.dbId);
+            if (error) throw new Error(`Could not reverse stock transfer for ${transfer.itemCode}: ${error.message}`);
+            reversedTransfers.push({transfer, before:{boxQty:box,crateQty:crate}, after:{boxQty:next.box_qty,crateQty:next.crate_qty}});
+            const cat = masterData.find(m => String(m.db_id) === String(transfer.dbId));
+            if (cat) Object.assign(cat, {boxQty:next.box_qty,crateQty:next.crate_qty});
+        }
+
+        if (entry.manualState) {
+            if (globalManualCrates[oldStateKey]) throw new Error(`A completion state already exists for ${entry.oldNo}; undo stopped to avoid overwriting it.`);
+            globalManualCrates[oldStateKey] = JSON.parse(JSON.stringify(entry.manualState));
+            manualStateChanged = true;
+            if (!await window.saveManualCratesToDB()) throw new Error('Could not restore the previous manual-complete state.');
+        }
+
+        const activeRows = getPackingContainerRecords(entry.month, entry.container);
+        activeRows.forEach(p => {
+            const match = entry.rows.find(r => String(r.id) === String(p.id));
+            if (match) p.crateNo = match.oldCrateNo;
+        });
+        stack.pop();
+        updateCrateRenameUndoButton();
+        showToast(entry.stockTransfers?.length
+            ? `Crate edit undone. ${entry.stockTransfers.reduce((s,m)=>s+(Number(m.qty)||0),0).toLocaleString()} Pcs returned to Crate Stage and the previous manual-complete tick restored.`
+            : `Crate number restored to ${entry.oldNo}.`, 'success');
+        renderPackingListTable();
+        renderDashboard();
+        renderProfileSummaryTable();
+        renderBalanceWorkTable();
+    } catch (e) {
+        console.error('Undo crate edit failed:', e);
+        if (manualStateChanged) {
+            delete globalManualCrates[oldStateKey];
+            try { await window.saveManualCratesToDB(); } catch (stateErr) { console.error('Manual-state undo rollback failed:', stateErr); }
+        }
+        for (const item of reversedTransfers.slice().reverse()) {
+            try {
+                const {error} = await supabaseClient.from('master_catalog')
+                    .update({box_qty:item.before.boxQty,crate_qty:item.before.crateQty})
+                    .eq('id',item.transfer.dbId);
+                if (error) console.error('Stock undo rollback failed:', error);
+                const cat = masterData.find(m => String(m.db_id) === String(item.transfer.dbId));
+                if (!error && cat) Object.assign(cat, {boxQty:item.before.boxQty,crateQty:item.before.crateQty});
+            } catch (rollbackError) { console.error('Stock undo rollback failed:', rollbackError); }
+        }
+        for (const row of restoredRows.slice().reverse()) {
+            try {
+                const {error} = await supabaseClient.from('packing_list')
+                    .update({crate_no:entry.newNo})
+                    .eq('id',row.id).eq('shipment_month',entry.month).eq('container',entry.container).eq('crate_no',row.oldCrateNo);
+                if (error) console.error('Packing List undo rollback failed:',error);
+            } catch (rollbackError) { console.error('Packing List undo rollback failed:',rollbackError); }
+        }
+        try { await loadDataFromSupabase(true); } catch (reloadError) { console.error('Reload after undo rollback failed:', reloadError); }
+        showToast(e.message || 'Undo failed safely. Refresh and verify stock and crate records.', 'error');
+    } finally {
+        isAppBusy = false;
+        updateCrateRenameUndoButton();
     }
 };
 

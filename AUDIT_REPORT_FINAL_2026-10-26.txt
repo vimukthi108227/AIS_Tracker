@@ -1,0 +1,32 @@
+AIS TRACKER — FINAL STATIC AUDIT REPORT
+Date: 2026-10-26
+Package: Professional UI + existing crate rename/stock transfer/undo source
+
+SOURCE CHECKS
+- Main JavaScript `node --check`: PASS
+- Inline JavaScript blocks: 5 checked individually with Node; PASS
+- HTML IDs: 518 unique IDs; no duplicates
+- Inline event-handler function references: reviewed; stock export aliases exist
+- CSS parser (tinycss2): 0 top-level parse errors and 0 recursive token errors
+- CSS brace balance: PASS
+- Local relative HTML asset references: PASS
+- ZIP integrity: PASS
+- Required source files/assets retained: PASS
+
+UI / PRESENTATION UPDATES
+- Updated stylesheet and script cache-busting query strings.
+- Updated page title to AIS Tracker Production & Shipment Control V2.20.
+- Standardized font family with Inter / Plus Jakarta Sans fallback.
+- Improved visual hierarchy, form focus feedback, button states, navigation transitions, table readability and scrollbars.
+- Added subtle panel entrance animation and respects prefers-reduced-motion.
+- Prevented card/table hover from moving the table container or changing row geometry/font metrics.
+- No database schema migration or data rewrite performed by the visual changes.
+
+KNOWN DEPLOYMENT DEPENDENCY
+The Monthly Team A/B/C contribution chart requires `public.history_logs.team`. If absent, run the included `supabase_add_team_to_history_logs.sql` once in Supabase SQL Editor. It adds the column only if missing and asks PostgREST to reload its schema cache; it does not delete or rewrite existing rows. Existing historical rows without a Team remain unassigned rather than being guessed.
+
+LIMITATIONS
+- This is a static source/package audit, not a live application certification.
+- Live Supabase CRUD, authentication/roles, production stock movement, packing/shipment balances, PDF/Excel export and crate/container planning were not exercised against the actual deployment database.
+- A headless screenshot attempt could not complete in the isolated environment due to browser/network startup; visual checks are based on source/CSS inspection, not a successful live-browser screenshot.
+- Back up the GitHub repository and Supabase database before deployment; test the important workflows with non-critical data first.
