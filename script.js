@@ -257,7 +257,7 @@ window.exportDashboardPdf=function(){
 };
 window.exportStockPdf=window.exportDashboardPdf;
 window.exportPoPdf=function(){
-    const data=poList.map(po=>{
+    const data=sortProductionOrderRows(poList).map(po=>{
         const requiredQty = Math.max(0, Number(po.orderQty)||0);
         const shippedQty = shipmentList
           .filter(s => String(s.poNumber||'').trim()===String(po.poNumber||'').trim()
@@ -307,7 +307,7 @@ window.exportRecoverPdf=function(){
 window.exportDashboardExcel = function() { const data = masterData.map(item => ({ "Profile": item.profile, "Item Code": item.itemCode, "Length (mm)": item.length, "Unit Wt": item.unitWeight, "Cut Qty": item.cutQty, "Punch Qty": item.punchQty, "Wrap Qty": item.wrapQty, "Box Qty": item.boxQty, "Crate Qty": item.crateQty, "Total Stock (Pcs)": (item.cutQty||0) + (item.punchQty||0) + (item.wrapQty||0) + (item.boxQty||0) + (item.crateQty||0) })); exportTableToExcel(data, "AIS_Dashboard_Stock", "Stock Summary"); };
 window.exportStockExcel = window.exportDashboardExcel;
 window.exportPoExcel = function() {
-    const data = poList.map(po => {
+    const data = sortProductionOrderRows(poList).map(po => {
         const requiredQty = Math.max(0, Number(po.orderQty)||0);
         const shippedQty = shipmentList
           .filter(s => String(s.poNumber||'').trim()===String(po.poNumber||'').trim()
@@ -3749,7 +3749,7 @@ function renderMonthlyTeamProductionChart() {
     });
 }
 
-function renderPoCharts() { const poContainer = document.getElementById('poChartsContainerTab'); if(!poContainer) return; poChartInstances.forEach(chart => chart.destroy()); poChartInstances = []; poContainer.innerHTML = ''; if (poList.length === 0) { poContainer.innerHTML = `<div style="padding:20px; color:var(--text-muted); font-weight:700; text-align:center; width:100%;">No Active Production Orders Available.</div>`; return; } const poGroups = {}; poList.forEach(po => { if(!poGroups[po.poNumber]) poGroups[po.poNumber] = { date: po.date, items: [] }; poGroups[po.poNumber].items.push(po); }); Object.keys(poGroups).forEach((poNumber, idx) => { const group = poGroups[poNumber]; let totalOrderWt = 0; let totalShippedWt = 0; let totalCompleteWt = 0; group.items.forEach(poItem => { const matchedItem = masterData.find(m => String(m.profile).trim() === String(poItem.profile).trim() && cleanLen(m.length) === cleanLen(poItem.length)); const uw = matchedItem ? (matchedItem.unitWeight || 0) : 0; const orderWt = poItem.orderQty * uw; totalOrderWt += orderWt; let shippedQty = 0; shipmentList.filter(s => String(s.poNumber).trim() === String(poNumber).trim() && String(s.profile).trim() === String(poItem.profile).trim() && cleanLen(s.length) === cleanLen(poItem.length)).forEach(s => shippedQty += s.shippedQty); const shippedWt = shippedQty * uw; totalShippedWt += shippedWt; const completeWt = Math.min(matchedItem ? (matchedItem.boxQty + matchedItem.crateQty) : 0, Math.max(0, poItem.orderQty - shippedQty)) * uw; totalCompleteWt += completeWt; }); const pendingWt = Math.max(0, totalOrderWt - totalShippedWt - totalCompleteWt); 
+function renderPoCharts() { const poContainer = document.getElementById('poChartsContainerTab'); if(!poContainer) return; poChartInstances.forEach(chart => chart.destroy()); poChartInstances = []; poContainer.innerHTML = ''; if (poList.length === 0) { poContainer.innerHTML = `<div style="padding:20px; color:var(--text-muted); font-weight:700; text-align:center; width:100%;">No Active Production Orders Available.</div>`; return; } const poGroups = {}; sortProductionOrderRows(poList).forEach(po => { if(!poGroups[po.poNumber]) poGroups[po.poNumber] = { date: po.date, items: [] }; if(productionOrderDateRank(po.date)>productionOrderDateRank(poGroups[po.poNumber].date)) poGroups[po.poNumber].date=po.date; poGroups[po.poNumber].items.push(po); }); Object.keys(poGroups).sort((a,b)=>productionOrderDateRank(poGroups[b].date)-productionOrderDateRank(poGroups[a].date)).forEach((poNumber, idx) => { const group = poGroups[poNumber]; let totalOrderWt = 0; let totalShippedWt = 0; let totalCompleteWt = 0; group.items.forEach(poItem => { const matchedItem = masterData.find(m => String(m.profile).trim() === String(poItem.profile).trim() && cleanLen(m.length) === cleanLen(poItem.length)); const uw = matchedItem ? (matchedItem.unitWeight || 0) : 0; const orderWt = poItem.orderQty * uw; totalOrderWt += orderWt; let shippedQty = 0; shipmentList.filter(s => String(s.poNumber).trim() === String(poNumber).trim() && String(s.profile).trim() === String(poItem.profile).trim() && cleanLen(s.length) === cleanLen(poItem.length)).forEach(s => shippedQty += s.shippedQty); const shippedWt = shippedQty * uw; totalShippedWt += shippedWt; const completeWt = Math.min(matchedItem ? (matchedItem.boxQty + matchedItem.crateQty) : 0, Math.max(0, poItem.orderQty - shippedQty)) * uw; totalCompleteWt += completeWt; }); const pendingWt = Math.max(0, totalOrderWt - totalShippedWt - totalCompleteWt); 
 if(pendingWt <= 0 && totalCompleteWt <= 0) return; 
 poContainer.insertAdjacentHTML('beforeend', `<div class="po-chart-item"><h5 style="margin:0 0 10px 0; font-size:13.5px; color:var(--primary-dark); font-weight:900; width:100%; text-align:center; border-bottom:1px dashed var(--border-color); padding-bottom:5px;">${poNumber}</h5><div style="width: 110px; height: 110px; position:relative; margin-bottom:12px;"><canvas id="poChartTab_idx_${idx}"></canvas></div><div style="font-size:11.5px; width:100%; display:flex; flex-direction:column; gap:6px; font-weight:700;"><div style="display:flex; justify-content:space-between; color:#3b82f6;"><span>Shipped:</span> <span>${totalShippedWt.toFixed(1)} kg</span></div><div style="display:flex; justify-content:space-between; color:#10b981;"><span>Ready:</span> <span>${totalCompleteWt.toFixed(1)} kg</span></div><div style="display:flex; justify-content:space-between; color:#fb7185;"><span>Pending:</span> <span>${pendingWt.toFixed(1)} kg</span></div></div></div>`); if (typeof Chart !== 'undefined') { try { const ctxPo = document.getElementById(`poChartTab_idx_${idx}`).getContext('2d'); poChartInstances.push(new Chart(ctxPo, { type: 'doughnut', data: { labels: ['Shipped', 'Ready', 'Pending'], datasets: [{ data: [Number(totalShippedWt.toFixed(2))||0, Number(totalCompleteWt.toFixed(2))||0, Number(pendingWt.toFixed(2))||0], backgroundColor: ['#3b82f6', '#10b981', '#fb7185'], borderWidth: isDarkMode ? 2 : 1, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { display: false } } } })); } catch(e){} } }); }
 function isPunchBypassed(profile, length) { const bypassProfiles = ['1041', '1042', '1043', '1047', '1048', '1090']; return bypassProfiles.includes(String(profile).trim()) || (String(profile).trim() === '1038' && String(length).trim() === '2438.4'); }
@@ -7073,6 +7073,33 @@ function enforceProductionCardboardQty(){
   if(!input) return;
   updateProductionCardboardAvailability();
 }
+function productionOrderDateRank(value){
+  const raw=String(value??'').trim();
+  if(!raw)return 0;
+  let normalized=raw;
+  if(/^\d{4}-\d{2}-\d{2}$/.test(raw)) normalized=raw+'T00:00:00Z';
+  const parsed=Date.parse(normalized);
+  return Number.isFinite(parsed)?parsed:0;
+}
+function sortProductionOrderRows(rows){
+  return rows.map((row,index)=>({row,index,rank:productionOrderDateRank(row.date)}))
+    .sort((a,b)=>(b.rank-a.rank)||(a.index-b.index))
+    .map(entry=>entry.row);
+}
+function sortProductionOrderFilterValues(rows, field, resolver){
+  const grouped=new Map();
+  rows.forEach((row,index)=>{
+    let value=resolver?resolver(row):row[field];
+    value=String(value??'').trim();
+    if(!value)return;
+    const rank=productionOrderDateRank(row.date);
+    const prior=grouped.get(value);
+    if(!prior || rank>prior.rank) grouped.set(value,{value,rank,index});
+  });
+  return [...grouped.values()]
+    .sort((a,b)=>(b.rank-a.rank)||(a.index-b.index)||a.value.localeCompare(b.value,undefined,{numeric:true,sensitivity:'base'}))
+    .map(entry=>entry.value);
+}
 function onPoFilterProfileChange(){
   updatePoFilters();
   renderPoDetailsTable();
@@ -7081,23 +7108,27 @@ function updatePoFilters(){
   const pn=document.getElementById('filterPoNumber'), pf=document.getElementById('filterPoProfile'), pi=document.getElementById('filterPoItemCode');
   if(!pn||!pf||!pi)return;
   const oldN=pn.value,oldP=pf.value,oldI=pi.value;
-  const sortVals=arr=>[...new Set(arr.map(v=>String(v??'').trim()).filter(Boolean))]
-    .sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
-  const fill=(sel,label,vals,old)=>{sel.innerHTML='';sel.appendChild(new Option(label,''));vals.forEach(v=>sel.appendChild(new Option(v,v)));if(vals.includes(old))sel.value=old;};
-  fill(pn,'All PO Numbers',sortVals(poList.map(p=>p.poNumber)),oldN);
+  const fill=(sel,label,vals,old)=>{
+    sel.innerHTML='';
+    sel.appendChild(new Option(label,''));
+    vals.forEach(v=>sel.appendChild(new Option(v,v)));
+    if(vals.includes(old))sel.value=old;
+  };
+  fill(pn,'All PO Numbers',sortProductionOrderFilterValues(poList,'poNumber'),oldN);
   const poRows=pn.value?poList.filter(p=>String(p.poNumber||'').trim()===pn.value):poList;
-  fill(pf,'All Profiles',sortVals(poRows.map(p=>p.profile)),oldP);
+  fill(pf,'All Profiles',sortProductionOrderFilterValues(poRows,'profile'),oldP);
   const profileRows=pf.value?poRows.filter(p=>String(p.profile||'').trim()===pf.value):poRows;
-  const itemCodes=sortVals(profileRows.map(p=>{
+  const itemCodes=sortProductionOrderFilterValues(profileRows,'itemCode',p=>{
     const ic=(typeof resolveMasterItemCode==='function'?resolveMasterItemCode(p.profile,p.length,p.itemCode):p.itemCode)||'';
-    p.itemCode=ic;return ic;
-  }));
+    p.itemCode=ic;
+    return ic;
+  });
   fill(pi,'All Item Codes',itemCodes,oldI);
 }
 function renderPoDetailsTable(){
   const body=document.getElementById('poDetailsTableBody'); if(!body)return;
   const pn=document.getElementById('filterPoNumber')?.value||'', pf=document.getElementById('filterPoProfile')?.value||'', pi=document.getElementById('filterPoItemCode')?.value||'';
-  const rows=poList.filter(p=>(!pn||p.poNumber===pn)&&(!pf||String(p.profile).trim()===pf)&&(!pi||String(p.itemCode||'').trim()===pi));
+  const rows=sortProductionOrderRows(poList.filter(p=>(!pn||p.poNumber===pn)&&(!pf||String(p.profile).trim()===pf)&&(!pi||String(p.itemCode||'').trim()===pi)));
   body.innerHTML=rows.length?rows.map((po)=>{
     const idx=poList.indexOf(po);
     const itemCode=(typeof resolveMasterItemCode==='function'?resolveMasterItemCode(po.profile,po.length,po.itemCode):po.itemCode)||'';
