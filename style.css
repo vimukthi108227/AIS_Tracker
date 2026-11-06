@@ -3536,3 +3536,60 @@ body.dark-mode table tbody tr:hover td,body.dark-mode table tbody tr:hover th{ba
   html{scroll-behavior:auto}
   .card{animation:none!important}
 }
+
+/* Extrusion module: isolated styles; existing page styles are untouched */
+.extrusion-hero{display:flex;align-items:center;justify-content:space-between;gap:20px;background:linear-gradient(120deg,#103b52 0%,#0f766e 62%,#10a37f 100%);color:#fff;border:0!important;overflow:hidden}.extrusion-hero h2{margin:5px 0 8px;color:#fff;font-size:clamp(21px,2vw,29px);letter-spacing:-.025em}.extrusion-hero p{margin:0;color:#d8f3ef;max-width:820px;font-size:13px}.extrusion-eyebrow{font-size:10px;font-weight:900;letter-spacing:.15em;color:#a7f3d0}.extrusion-hero-mark{width:78px;height:78px;flex:0 0 78px;border-radius:24px;background:#ffffff18;border:1px solid #ffffff38;display:grid;place-items:center;font-size:36px;color:#d1fae5;transform:rotate(-5deg)}.extrusion-subnav{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px;padding:8px;border:1px solid #cfe5e4;background:#f4fbfa;border-radius:14px}.extrusion-sub-btn{border:1px solid #d5e4ed;background:#fff;color:#37556a;border-radius:10px;padding:10px 15px;font:700 12px inherit;cursor:pointer;transition:transform .18s,background .18s,box-shadow .18s}.extrusion-sub-btn:hover{transform:translateY(-1px);box-shadow:0 5px 14px #0f766e15}.extrusion-sub-btn.active{background:#10485b;color:white;border-color:#10485b;box-shadow:0 5px 13px #10485b24}.ex-section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}.ex-section-title h3{margin:0 0 6px;color:#0f6471;font-size:16px}.ex-section-title p{margin:0;max-width:900px;color:#647b8c;font-size:11px;line-height:1.5}.ex-actions{display:flex;gap:7px;flex-wrap:wrap}.ex-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}.ex-kpis>div{background:linear-gradient(135deg,#f8fbff,#effaf8);border:1px solid #d7e6ef;border-radius:12px;padding:13px 15px;display:flex;flex-direction:column;gap:6px}.ex-kpis span{font-size:11px;color:#667c91;font-weight:700}.ex-kpis b{font-size:23px;color:#104e63;font-variant-numeric:tabular-nums}.ex-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0 14px;padding:12px;background:#f1f9f8;border:1px solid #d5e9e7;border-radius:12px}.ex-filters label,.ex-receipt-grid label{display:flex;flex-direction:column;gap:6px;font-size:11px;font-weight:800;color:#426174}.ex-filters input,.ex-filters select,.ex-receipt-grid input,.ex-receipt-grid select{width:100%;min-width:0;border:1px solid #cbdce7;border-radius:9px;padding:10px 11px;background:#fff;color:#243b53;font:500 12px inherit;outline:none}.ex-filters input:focus,.ex-filters select:focus,.ex-receipt-grid input:focus,.ex-receipt-grid select:focus{border-color:#0f9b8e;box-shadow:0 0 0 3px #0f9b8e18}.ex-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;min-width:740px}.ex-table th{background:#124f60;color:#fff;padding:11px 12px;text-align:left;white-space:nowrap;font-weight:800}.ex-table th:first-child{border-radius:8px 0 0 0}.ex-table th:last-child{border-radius:0 8px 0 0}.ex-table td{padding:10px 12px;border-bottom:1px solid #dce7ed;color:#344e63;font-variant-numeric:tabular-nums}.ex-table tbody tr:nth-child(even){background:#f6fafc}.ex-table tbody tr:hover{background:#eaf8f5}.ex-table .ex-status{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:900;white-space:nowrap}.ex-status.complete{background:#d1fae5;color:#047857}.ex-status.short{background:#fff0d5;color:#a16207}.ex-status.extra{background:#dbeafe;color:#1d4ed8}.ex-receipt-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.ex-form-actions{grid-column:1/-1;display:flex;gap:8px}.ex-footnote{margin:12px 0 3px;padding:12px 14px;border:1px solid #cfe5e4;border-radius:10px;background:#f3fbf9;color:#557181;font-size:11px}.ex-footnote code{color:#0f766e;font-weight:800}@media(max-width:900px){.ex-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ex-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.ex-receipt-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:560px){.extrusion-hero-mark{display:none}.ex-filters,.ex-receipt-grid{grid-template-columns:1fr}.ex-kpis b{font-size:19px}}
+
+/* PO cards: compact, selectable, date ordered, and animated */
+.ex-po-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0 12px;padding:12px;background:#f2faf8;border:1px solid #d3e9e5;border-radius:12px}.ex-po-toolbar label{font-size:11px;font-weight:800;color:#426174}.ex-po-toolbar input{flex:1;min-width:220px;border:1px solid #cbdce7;border-radius:9px;padding:10px 12px;background:#fff;color:#243b53;font:500 12px inherit}.ex-po-count{border-radius:999px;padding:6px 10px;background:#dff7ef;color:#087f68;font-size:11px;font-weight:900;white-space:nowrap}.ex-po-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:10px 0 18px}.ex-po-card{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 16px;align-items:center;padding:15px;border:1px solid #d5e5ed;border-left:4px solid #0f9b8e;border-radius:14px;background:linear-gradient(130deg,#fff 0%,#f4fbfa 100%);box-shadow:0 3px 12px #163c4a0a;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;animation:exPoCardIn .25s ease both}.ex-po-card:hover{transform:translateY(-2px);box-shadow:0 9px 22px #123f5017;border-color:#7dd3c7}.ex-po-card.selected{border-color:#0f9b8e;background:linear-gradient(130deg,#e7fbf4,#f5fbff);box-shadow:0 0 0 2px #0f9b8e20}.ex-po-date{font-size:10px;font-weight:800;color:#71879a}.ex-po-card h4{margin:4px 0;color:#104e63;font-size:16px;letter-spacing:-.02em}.ex-po-card p{margin:0;color:#60788b;font-size:11px;line-height:1.5}.ex-po-card-metrics{display:flex;gap:8px}.ex-po-card-metrics span{display:flex;flex-direction:column;gap:4px;min-width:80px;padding:8px 10px;border-radius:10px;background:#eaf5f6}.ex-po-card-metrics small{font-size:9px;color:#647b8c;font-weight:800}.ex-po-card-metrics b{font-size:16px;color:#10566b}.ex-po-card-metrics b.is-short{color:#b45309}.ex-po-complete-btn{grid-column:1/-1;justify-self:end;border:1px solid #bde8d9;background:#e8faf2;color:#087f68;border-radius:8px;padding:7px 10px;font-size:10px;font-weight:900;cursor:pointer;transition:background .18s,transform .18s}.ex-po-complete-btn:hover{background:#c9f3e2;transform:translateY(-1px)}.ex-po-details{border:1px solid #d6e7ed;border-radius:13px;padding:13px;background:#fff}.ex-po-details-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px}.ex-po-details-head h4{margin:0;color:#10566b;font-size:15px}.ex-po-details-head span{font-size:11px;color:#647b8c}.ex-po-empty{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;gap:7px;padding:26px 14px;border:1px dashed #bcd8dd;border-radius:12px;color:#668092;text-align:center;font-size:12px}.ex-po-empty i{font-size:24px;color:#0f9b8e}.ex-po-empty b{color:#10566b}@keyframes exPoCardIn{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}@media(max-width:850px){.ex-po-cards{grid-template-columns:1fr}.ex-po-card{grid-template-columns:minmax(0,1fr)}.ex-po-card-metrics{justify-content:flex-start}.ex-po-complete-btn{justify-self:start}}
+
+/* V2.25 PO extrusion planner: status colors, date/age clarity, and receipt breakdown */
+.ex-po-card.has-shortage{border-left-color:#ea580c;background:linear-gradient(130deg,#fffaf3,#fff7ed)}
+.ex-po-card.has-shortage .ex-po-card-metrics span:last-child{background:#ffedd5}
+.ex-po-card.has-shortage .ex-po-card-metrics span:last-child b{color:#c2410c}
+.ex-po-card.all-received{border-left-color:#059669;background:linear-gradient(130deg,#f0fdf4,#f0fdfa)}
+.ex-po-card.selected{outline:2px solid #0f9b8e;outline-offset:1px}
+.ex-po-date{display:inline-flex;flex-wrap:wrap;gap:5px;align-items:center;padding:4px 7px;border-radius:7px;background:#eaf2f8}
+.ex-receipt-breakdown{margin-top:18px;padding:14px;border:1px solid #cde5e8;border-radius:12px;background:linear-gradient(135deg,#f8fcff,#f0fdfa)}
+.ex-receipt-breakdown h4{margin:0 0 4px;color:#0f6170;font-size:14px}
+.ex-receipt-breakdown .ex-section-title{align-items:center}
+#exStockSubTab>.card{margin-bottom:16px}
+@media(max-width:800px){.ex-po-cards{grid-template-columns:1fr}.ex-receipt-breakdown{padding:9px}}
+
+/* PO-first extrusion receipt workspace */
+.ex-selected-po-banner{display:flex;align-items:center;gap:9px;margin:12px 0;padding:11px 13px;border:1px solid #b9e5dc;border-left:4px solid #0f9b8e;border-radius:10px;background:linear-gradient(90deg,#eafaf5,#f5fbff);color:#24566a;font-size:12px;font-weight:700}.ex-selected-po-banner i{color:#0f9b8e;font-size:16px}.exInSubTab .card{margin-bottom:16px}#exInSubTab>.card:first-child{border-top:3px solid #0f9b8e}
+
+/* Safe reset action for crate planning */
+.pp-reset-crate-plan{
+  background:linear-gradient(135deg,#fff7ed,#ffedd5)!important;
+  color:#9a3412!important;
+  border:1px solid #fdba74!important;
+  box-shadow:0 3px 10px rgba(154,52,18,.08);
+  transition:transform .18s ease,box-shadow .18s ease,background .18s ease;
+}
+.pp-reset-crate-plan:hover{
+  transform:translateY(-1px);
+  box-shadow:0 6px 16px rgba(154,52,18,.14);
+  background:linear-gradient(135deg,#ffedd5,#fed7aa)!important;
+}
+@media(prefers-reduced-motion:reduce){
+  .pp-reset-crate-plan{transition:none}
+  .pp-reset-crate-plan:hover{transform:none}
+}
+
+
+/* V2.32 — clean crate preview and profile/length colour legend */
+.pp-new-3dpreview{background:linear-gradient(145deg,#f8fbfd 0%,#eef5f8 100%);border:1px solid #d6e4eb;border-radius:14px;padding:14px;box-shadow:inset 0 1px 0 #fff}
+.pp-new-3dpreview svg{display:block;width:100%;max-width:620px;margin:0 auto 10px;filter:drop-shadow(0 5px 7px rgba(20,55,75,.10))}
+.pp-crate-view-legend{margin:8px 0 2px;padding:11px 13px;background:#fff;border:1px solid #dce7ed;border-radius:10px;color:#24475a;font-size:12px}
+.pp-crate-view-legend>b{display:block;margin-bottom:8px;color:#164e63;font-size:12px;letter-spacing:.02em}
+.pp-crate-legend-items{display:flex;flex-wrap:wrap;gap:7px 14px;margin-bottom:8px}
+.pp-crate-legend-item{display:inline-flex;align-items:center;gap:6px;font-weight:650;color:#40596a}
+.pp-crate-legend-item i{display:inline-block;width:13px;height:13px;border-radius:4px;border:1px solid rgba(20,50,70,.18);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.pp-crate-view-legend small{display:block;color:#718497;line-height:1.5}
+
+/* V2.34 — compact crate box legend */
+.pp-new-box-legend{display:flex;flex-wrap:wrap;gap:7px 12px;align-items:center;padding:9px 11px;margin-top:8px;border:1px solid #d7e5ed;border-radius:9px;background:#f8fbfd}
+.pp-new-box-legend-item{display:inline-flex;align-items:center;gap:6px;color:#34536a;font-size:11px;font-weight:700}
+.pp-new-box-legend-item i{display:inline-block;width:11px;height:11px;border:1px solid rgba(20,55,75,.25);border-radius:3px;flex:0 0 11px}
+.pp-new-2d-stage svg{display:block;width:100%;height:auto;max-height:300px}

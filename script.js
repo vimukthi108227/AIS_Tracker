@@ -2047,7 +2047,8 @@ function switchTab(tabId, btn) {
       if (tabId === 'dashboardTab') renderDashboard(); 
       if (tabId === 'balanceWorkTab') renderBalanceWorkTable(); 
       if (tabId === 'nextPlPlanningTab') renderNextPlPlanning(); 
-      if (tabId === 'cardboardTab') renderCardboardStock(); 
+      if (tabId === 'cardboardTab') renderCardboardStock();
+      if (tabId === 'extrusionTab') { resetExtrusionForm(); renderExtrusionModule(false); loadExtrusionReceipts(false); switchExtrusionSubTab('exInSubTab',document.querySelectorAll('.extrusion-sub-btn')[1]); } 
       if (tabId === 'historyTab') renderHistoryData(); 
       if (tabId === 'masterListTab') renderMasterCatalog(); 
       if (tabId === 'poManagementTab') { updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); } 
@@ -3749,9 +3750,53 @@ function renderMonthlyTeamProductionChart() {
     });
 }
 
+async function editPOChartDate(poNumber) {
+  if (currentUserRole !== 'Admin') { showToast('Only Admin can edit the PO date.', 'error'); return; }
+  const key = String(poNumber ?? '').trim();
+  const rows = poList.filter(p => String(p.poNumber ?? '').trim() === key && p.id != null);
+  if (!rows.length) { showToast('No saved Production Order rows found for this PO.', 'error'); return; }
+  const currentDate = rows.map(r => String(r.date || '').slice(0,10)).sort().pop() || '';
+  const nextDate = window.prompt(`Enter the date you received PO ${key} (YYYY-MM-DD):`, currentDate);
+  if (nextDate === null) return;
+  const date = String(nextDate).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date + 'T00:00:00Z'))) {
+    showToast('Please enter a valid date in YYYY-MM-DD format.', 'error'); return;
+  }
+  const parsed = new Date(date + 'T00:00:00Z');
+  if (parsed.toISOString().slice(0,10) !== date) { showToast('Please enter a valid calendar date.', 'error'); return; }
+  const oldRows = rows.map(r => ({ id:r.id, date:r.date }));
+  if (oldRows.every(r => String(r.date || '').slice(0,10) === date)) { showToast('PO date is already set to this date.', 'warning'); return; }
+  const updated = [];
+  try {
+    for (const row of rows) {
+      const result = await supabaseClient.from('production_orders').update({ po_date: date }).eq('id', row.id);
+      if (result.error) throw result.error;
+      updated.push(row);
+    }
+    rows.forEach(r => { r.date = date; });
+    aisRegisterUndo(`Change PO ${key} date`, async () => {
+      for (const old of oldRows) {
+        const result = await supabaseClient.from('production_orders').update({ po_date: old.date }).eq('id', old.id);
+        if (result.error) throw result.error;
+      }
+      oldRows.forEach(old => { const item = poList.find(p => String(p.id) === String(old.id)); if (item) item.date = old.date; });
+      updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); renderDashboard(); renderBalanceWorkTable();
+    }, 'poManagementTab');
+    updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); renderDashboard(); renderBalanceWorkTable();
+    showToast(`PO ${key} date updated to ${date}.`, 'success');
+  } catch (error) {
+    for (const row of updated.slice().reverse()) {
+      const old = oldRows.find(x => String(x.id) === String(row.id));
+      if (old) { try { await supabaseClient.from('production_orders').update({ po_date: old.date }).eq('id', old.id); } catch (_) {} }
+    }
+    try { await loadDataFromSupabase(true); } catch (_) {}
+    showToast(dbErrorMessage(error, 'Could not update the PO date. The change was rolled back where possible.'), 'error');
+  }
+}
+
 function renderPoCharts() { const poContainer = document.getElementById('poChartsContainerTab'); if(!poContainer) return; poChartInstances.forEach(chart => chart.destroy()); poChartInstances = []; poContainer.innerHTML = ''; if (poList.length === 0) { poContainer.innerHTML = `<div style="padding:20px; color:var(--text-muted); font-weight:700; text-align:center; width:100%;">No Active Production Orders Available.</div>`; return; } const poGroups = {}; sortProductionOrderRows(poList).forEach(po => { if(!poGroups[po.poNumber]) poGroups[po.poNumber] = { date: po.date, items: [] }; if(productionOrderDateRank(po.date)>productionOrderDateRank(poGroups[po.poNumber].date)) poGroups[po.poNumber].date=po.date; poGroups[po.poNumber].items.push(po); }); Object.keys(poGroups).sort((a,b)=>productionOrderDateRank(poGroups[b].date)-productionOrderDateRank(poGroups[a].date)).forEach((poNumber, idx) => { const group = poGroups[poNumber]; let totalOrderWt = 0; let totalShippedWt = 0; let totalCompleteWt = 0; group.items.forEach(poItem => { const matchedItem = masterData.find(m => String(m.profile).trim() === String(poItem.profile).trim() && cleanLen(m.length) === cleanLen(poItem.length)); const uw = matchedItem ? (matchedItem.unitWeight || 0) : 0; const orderWt = poItem.orderQty * uw; totalOrderWt += orderWt; let shippedQty = 0; shipmentList.filter(s => String(s.poNumber).trim() === String(poNumber).trim() && String(s.profile).trim() === String(poItem.profile).trim() && cleanLen(s.length) === cleanLen(poItem.length)).forEach(s => shippedQty += s.shippedQty); const shippedWt = shippedQty * uw; totalShippedWt += shippedWt; const completeWt = Math.min(matchedItem ? (matchedItem.boxQty + matchedItem.crateQty) : 0, Math.max(0, poItem.orderQty - shippedQty)) * uw; totalCompleteWt += completeWt; }); const pendingWt = Math.max(0, totalOrderWt - totalShippedWt - totalCompleteWt); 
 if(pendingWt <= 0 && totalCompleteWt <= 0) return; 
-poContainer.insertAdjacentHTML('beforeend', `<div class="po-chart-item"><h5 style="margin:0 0 10px 0; font-size:13.5px; color:var(--primary-dark); font-weight:900; width:100%; text-align:center; border-bottom:1px dashed var(--border-color); padding-bottom:5px;">${poNumber}</h5><div style="width: 110px; height: 110px; position:relative; margin-bottom:12px;"><canvas id="poChartTab_idx_${idx}"></canvas></div><div style="font-size:11.5px; width:100%; display:flex; flex-direction:column; gap:6px; font-weight:700;"><div style="display:flex; justify-content:space-between; color:#3b82f6;"><span>Shipped:</span> <span>${totalShippedWt.toFixed(1)} kg</span></div><div style="display:flex; justify-content:space-between; color:#10b981;"><span>Ready:</span> <span>${totalCompleteWt.toFixed(1)} kg</span></div><div style="display:flex; justify-content:space-between; color:#fb7185;"><span>Pending:</span> <span>${pendingWt.toFixed(1)} kg</span></div></div></div>`); if (typeof Chart !== 'undefined') { try { const ctxPo = document.getElementById(`poChartTab_idx_${idx}`).getContext('2d'); poChartInstances.push(new Chart(ctxPo, { type: 'doughnut', data: { labels: ['Shipped', 'Ready', 'Pending'], datasets: [{ data: [Number(totalShippedWt.toFixed(2))||0, Number(totalCompleteWt.toFixed(2))||0, Number(pendingWt.toFixed(2))||0], backgroundColor: ['#3b82f6', '#10b981', '#fb7185'], borderWidth: isDarkMode ? 2 : 1, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { display: false } } } })); } catch(e){} } }); }
+poContainer.insertAdjacentHTML('beforeend', `<div class="po-chart-item"><h5 style="margin:0 0 5px 0; font-size:13.5px; color:var(--primary-dark); font-weight:900; width:100%; text-align:center; border-bottom:1px dashed var(--border-color); padding-bottom:5px;">${poNumber}</h5><div class="po-chart-date-row" style="display:flex;align-items:center;justify-content:center;gap:5px;margin:0 0 8px;font-size:10.5px;color:var(--text-muted);font-weight:700;"><span><i class="fa-regular fa-calendar"></i> ${String(group.date||'Date not set').slice(0,10)}</span>${currentUserRole === 'Admin' ? `<button type="button" class="btn btn-secondary po-date-edit-btn" aria-label="Edit received PO date" style="width:25px;height:25px;min-width:25px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:1;border-radius:7px;" onclick="editPOChartDate(decodeURIComponent('${encodeURIComponent(String(poNumber))}'))" title="Edit received PO date"><i class="fa-solid fa-pen"></i></button>` : ''}</div><div style="width: 110px; height: 110px; position:relative; margin-bottom:12px;"><canvas id="poChartTab_idx_${idx}"></canvas></div><div style="font-size:11.5px; width:100%; display:flex; flex-direction:column; gap:6px; font-weight:700;"><div style="display:flex; justify-content:space-between; color:#3b82f6;"><span>Shipped:</span> <span>${totalShippedWt.toFixed(1)} kg</span></div><div style="display:flex; justify-content:space-between; color:#10b981;"><span>Ready:</span> <span>${totalCompleteWt.toFixed(1)} kg</span></div><div style="display:flex; justify-content:space-between; color:#fb7185;"><span>Pending:</span> <span>${pendingWt.toFixed(1)} kg</span></div></div></div>`); if (typeof Chart !== 'undefined') { try { const ctxPo = document.getElementById(`poChartTab_idx_${idx}`).getContext('2d'); poChartInstances.push(new Chart(ctxPo, { type: 'doughnut', data: { labels: ['Shipped', 'Ready', 'Pending'], datasets: [{ data: [Number(totalShippedWt.toFixed(2))||0, Number(totalCompleteWt.toFixed(2))||0, Number(pendingWt.toFixed(2))||0], backgroundColor: ['#3b82f6', '#10b981', '#fb7185'], borderWidth: isDarkMode ? 2 : 1, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { display: false } } } })); } catch(e){} } }); }
 function isPunchBypassed(profile, length) { const bypassProfiles = ['1041', '1042', '1043', '1047', '1048', '1090']; return bypassProfiles.includes(String(profile).trim()) || (String(profile).trim() === '1038' && String(length).trim() === '2438.4'); }
 function populateStockFilterDropdown() { const select = document.getElementById('stockFilterProfile'); if(!select) return; select.innerHTML = '<option value="">-- All Profiles --</option>'; const itemSelect = document.getElementById('stockFilterItemCode'); if(itemSelect) itemSelect.innerHTML = '<option value="">-- All Item Codes --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }
 function onStockProfileFilterChange() { const profile = document.getElementById('stockFilterProfile').value; const itemSelect = document.getElementById('stockFilterItemCode'); itemSelect.innerHTML = '<option value="">-- All Item Codes --</option>'; if(profile) { const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => itemSelect.appendChild(new Option(ic, ic))); } renderProfileSummaryTable(); }
@@ -7147,6 +7192,7 @@ function renderPoDetailsTable(){
       : `<span style="background:#dcfce7;color:#047857;padding:3px 8px;border-radius:999px;font-weight:800;font-size:11px;">Complete</span>`;
     return `<tr><td>${po.date||'-'}</td><td>${po.poNumber||'-'}</td><td>${po.profile||'-'}</td><td><b style="color:var(--primary-dark);">${itemCode||'-'}</b></td><td>${po.length||'-'} mm</td><td>${m?Number(m.unitWeight||0).toFixed(4):'-'}</td><td>${requiredQty.toLocaleString()}</td><td><b style="color:#2563eb;">${shippedQty.toLocaleString()} Pcs</b></td><td><b style="color:${remainingQty>0?'#dc2626':'#059669'};">${remainingQty.toLocaleString()} Pcs</b></td><td>${statusHtml}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:#fff" onclick="openPoEditModal(${idx})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deletePoItem(${po.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`;
   }).join(''):'<tr><td colspan="11" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No production orders match the filters.</td></tr>';
+  if(document.getElementById('extrusionTab')?.classList.contains('active')) renderExtrusionModule(false);
 }
 
 function updateShipmentHistoryProfileFilter(){
@@ -8191,6 +8237,7 @@ function ppSmartEditCrate(i){
 function ppSmartCopyCrate(i){const src=ppSmartCrates[i];if(!src)return;let n=1;const used=new Set(ppSmartCrates.map(c=>c.id));while(n<=60&&used.has(`C-${String(n).padStart(2,'0')}-I`))n++;if(n>60){alert('All crate numbers 1–60 are used.');return;}const copy=JSON.parse(JSON.stringify(src));copy.id=`C-${String(n).padStart(2,'0')}-I`;copy.createdAt=Date.now();copy.items=[];ppSmartCrates.push(copy);ppSmartPersist();ppSmartRenderCrateList();ppSmartRefreshPreviewOptions();}
 function ppSmartRemoveCrate(i){if(!confirm('Remove this crate and return its PCS to the Next PL remaining balance?'))return;ppSmartCrates.splice(i,1);ppSmartPersist();ppSmartRenderCrateList();ppSmartUpdateAllocationPreview();ppSmartRefreshPreviewOptions();}
 function ppSmartRenderCrateList(){
+ (ppSmartCrates||[]).forEach(c=>(c.items||[]).forEach(it=>{it.boxes=Math.ceil(Math.max(0,ppNum(it.pcs))/Math.max(1,ppNum(it.pcsPerBox)));}));
  const body=document.getElementById('ppCratePlanBody');if(!body)return;
  body.innerHTML=ppSmartCrates.length?ppSmartCrates.map((c,i)=>{const items=c.items||[],pcs=items.reduce((s,x)=>s+ppNum(x.pcs),0),boxes=items.reduce((s,x)=>s+ppNum(x.boxes),0),weight=items.reduce((s,x)=>s+ppNum(x.pcs)*ppNum(x.unitWeight),0);return `<tr><td><b>${ppEsc(c.id)}</b></td><td>${ppEsc([...new Set(items.map(x=>x.po))].join(', '))}</td><td>${ppEsc([...new Set(items.map(x=>x.profile))].join(' / '))}</td><td>${ppEsc([...new Set(items.map(x=>x.itemCode))].join(' / '))}</td><td>${ppEsc([...new Set(items.map(x=>x.length))].join(' / '))}</td><td>${pcs.toLocaleString()}</td><td>${items.map(x=>x.pcsPerBox).join(' / ')}</td><td>${boxes.toLocaleString()}</td><td>${c.outerL||'—'}</td><td>${c.outerW||'—'}</td><td>${c.packingH||'—'}</td><td>${c.overallH||'—'}</td><td>${c.perLayer||'—'}</td><td>${c.layers||'—'}</td><td>${c.rowMultiplier===2?'Double':'Single'}</td><td>${weight.toFixed(1)}</td><td><button class="btn btn-accent" onclick="ppSmartShowPreview(${i})">2D/3D</button></td><td><div class="pp-row-actions"><button class="btn btn-sm" onclick="ppSmartAddProfileToCrate(${i})">+ Profile</button><button class="btn btn-sm" onclick="ppSmartEditPcs(${i})">Edit PCS</button><button class="btn btn-sm" onclick="ppSmartCopyCrate(${i})">Copy</button><button class="btn btn-sm" onclick="ppSmartEditCrate(${i})">Edit</button><button class="btn btn-sm" onclick="ppSmartRemoveCrate(${i})">Remove</button><button class="btn btn-sm" onclick="ppSmartSaveNow()">Save</button></div></td></tr>`;}).join(''):'<tr><td colspan="18">No crates yet. Select a Next PL line and allocate PCS.</td></tr>';
  const pcs=ppSmartCrates.reduce((s,c)=>s+(c.items||[]).reduce((a,x)=>a+ppNum(x.pcs),0),0),weight=ppSmartCrates.reduce((s,c)=>s+(c.items||[]).reduce((a,x)=>a+ppNum(x.pcs)*ppNum(x.unitWeight),0),0),set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('ppSmartCrateCount',ppSmartCrates.length);set('ppSmartAllocatedPcs',pcs.toLocaleString());set('ppSmartTotalWeight',weight.toLocaleString(undefined,{maximumFractionDigits:1})+' kg');ppSmartRefreshPreviewOptions();
@@ -8424,7 +8471,7 @@ function ppCrateCalc(row){
 function ppSmartOrientationMetrics(items,manual={}){
  const parsed=(items||[]).map(it=>({it,m:ppSmartMasterFor(it),d:ppDims(ppSmartMasterFor(it)?.boxSize)}));if(!parsed.length||parsed.some(x=>!x.m||!x.d))return {valid:false,reason:'Box Size or Crate Width is missing. Complete Crate Master Data first.'};
  const width=ppNum(manual.outerW)||Math.max(...parsed.map(x=>ppNum(x.m.crateWidth)));if(width<=0)return {valid:false,reason:'Crate Width missing'};const maxPack=PP_MAX_PACKING_HEIGHT,requested=['height','width'].includes(manual.orientation)?manual.orientation:'auto';const masterRows=Math.max(...parsed.map(x=>Math.min(3,ppNum(x.m.rowMultiplier)||1)));const rows=Math.max(1,Math.min(3,Math.floor(ppNum(manual.rowMultiplier)||masterRows)));
- const boxes=parsed.reduce((s,x)=>{const cap=Math.max(1,ppNum(x.it.pcsPerBox)||ppNum(x.m.pcsPerBox)||1);const n=ppNum(x.it.boxes)||Math.ceil(ppNum(x.it.pcs)/cap);return s+Math.max(0,Math.floor(n));},0);if(boxes<=0)return {valid:false,reason:'Enter PCS to calculate crate height'};const c=[];
+ const boxes=parsed.reduce((s,x)=>{const cap=Math.max(1,ppNum(x.m.pcsPerBox)||ppNum(x.it.pcsPerBox)||1);x.it.pcsPerBox=cap;const n=Math.ceil(Math.max(0,ppNum(x.it.pcs))/cap);x.it.boxes=n;return s+Math.max(0,Math.floor(n));},0);if(boxes<=0)return {valid:false,reason:'Enter PCS to calculate crate height'};const c=[];
  for(const orientation of ['height','width']){if(requested!=='auto'&&requested!==orientation)continue;const acrossDim=Math.max(...parsed.map(x=>orientation==='height'?x.d.w:x.d.h)),vertical=Math.max(...parsed.map(x=>orientation==='height'?x.d.h:x.d.w)),across=Math.floor(width/acrossDim);if(across<1||vertical<1)continue;const perLayer=across*rows,layers=Math.ceil(boxes/perLayer),packingH=layers*vertical,overallH=packingH+PP_LEG_HEIGHT,maxLayers=Math.floor(maxPack/vertical),length=Math.max(...parsed.map(x=>ppNum(x.it.length)||0)),outerL=ppNum(manual.outerL)||Math.ceil(length+32)*rows;c.push({valid:packingH<=PP_MAX_PACKING_HEIGHT,orientation,rowMultiplier:rows,width,perLayer,layers,boxes,packingH,overallH,maxCapacity:perLayer*maxLayers,maxLayers,maxAcross:across,maxVertical:vertical,outerL,outerW:width,boxesAcross:across});}
  if(!c.length)return {valid:false,reason:'Neither box orientation fits the crate width'};c.sort((a,b)=>(a.valid===b.valid?0:a.valid?-1:1)||b.maxCapacity-a.maxCapacity||a.overallH-b.overallH);const best=c[0];return best.valid?best:{...best,valid:false,reason:`Needs ${best.packingH} mm packing height; maximum is ${PP_MAX_PACKING_HEIGHT} mm. Reduce PCS, change orientation or use another crate.`};
 }
@@ -8798,29 +8845,49 @@ function ppNewRenderSelectedCrate(){
  if(!c){host.innerHTML='<div class="pp-empty">Select a saved crate or create a new crate.</div>';table.innerHTML='<table class="pp-table"><tbody><tr><td>No crate selected.</td></tr></tbody></table>';return;}
  const items=c.items||[],pcs=items.reduce((s,it)=>s+ppNum(it.pcs),0),profileWeight=items.reduce((s,it)=>s+ppNum(it.pcs)*ppNum(it.unitWeight),0),tare=Math.max(0,ppNum(c.tareWeightKg)),total=profileWeight+tare;
  const dL=Math.max(1,ppNum(c.outerL)),dW=Math.max(1,ppNum(c.outerW)+2*PP_WOOD_THICKNESS),dH=Math.max(1,ppNum(c.overallH)),maxH=PP_MAX_OVERALL_HEIGHT;
- const colors=['#829eac','#9ba7d4','#d7a35b','#71b6a0','#b7a0c9','#c77c66','#6e9cc8','#b3aa70'];
- const boxRows=items.map((it,i)=>{const master=ppSmartMasterFor(it)||{},dims=ppDims(master.boxSize)||{l:ppNum(it.length)||1,w:30,h:20};return {it,i,dims,boxes:Math.max(0,Math.floor(ppNum(it.boxes)||Math.ceil(ppNum(it.pcs)/Math.max(1,ppNum(it.pcsPerBox)||1)))),color:colors[i%colors.length]};}).filter(x=>x.boxes>0);
+ const colors=['#4F86C6','#16A085','#D18B35','#8B6BC1','#D46A78','#4C9AAB','#7C9B45','#B06F4F'];
+ const colorByProfileLength=new Map();
+ const profileLengthKey=it=>`${String(it.profile??'').trim()}|${String(it.length??'').trim()}`;
+ const colorForProfileLength=it=>{const key=profileLengthKey(it);if(!colorByProfileLength.has(key))colorByProfileLength.set(key,colors[colorByProfileLength.size%colors.length]);return colorByProfileLength.get(key);};
+ /* Box quantity is always derived from this crate's PCS and its own PCS/box.
+    Never trust an old/manual cached boxes value for the drawing or summary. */
+ const boxRows=items.map((it,i)=>{
+  const master=ppSmartMasterFor(it)||{},dims=ppDims(master.boxSize)||{l:ppNum(it.length)||1,w:30,h:20};
+  const pcsPerBox=Math.max(1,ppNum(master.pcsPerBox)||ppNum(it.pcsPerBox)||1);it.pcsPerBox=pcsPerBox;
+  const exactBoxes=Math.max(0,Math.ceil(Math.max(0,ppNum(it.pcs))/pcsPerBox));
+  it.boxes=exactBoxes;
+  return {it,i,dims,boxes:exactBoxes,color:colorForProfileLength(it)};
+ }).filter(x=>x.boxes>0);
+ const boxCount=boxRows.reduce((s,x)=>s+x.boxes,0);
+ const perLayer=Math.max(1,Math.floor(ppNum(c.perLayer)||ppNum(c.boxesAcross)*Math.max(1,ppNum(c.rowMultiplier)||1)||1));
+ const layers=boxCount?Math.ceil(boxCount/perLayer):0;
+ const flat=[];boxRows.forEach(x=>{for(let n=0;n<x.boxes;n++)flat.push({color:x.color,profile:x.it.profile,length:x.it.length,itemCode:x.it.itemCode});});
+ const viewW=420,innerX=64,innerW=292,innerY=42,innerH=108,cols=Math.min(perLayer,Math.max(1,boxCount)),rows=Math.max(1,Math.ceil(boxCount/Math.max(1,cols)));
+ const cellW=innerW/cols,cellH=innerH/rows;
+ /* Draw only real boxes: no phantom/empty slots. Box numbers are printed inside each box. */
+ const drawCells=(count=flat.length)=>{let out='';for(let i=0;i<Math.min(count,flat.length);i++){const col=i%cols,row=Math.floor(i/cols),x=innerX+col*cellW,y=innerY+innerH-(row+1)*cellH,w=Math.max(.5,cellW-1),h=Math.max(.5,cellH-1),b=flat[i],cx=x+.5+w/2,cy=y+.5+h/2,fontSize=Math.max(7,Math.min(13,Math.min(w*.42,h*.62)));out+=`<g><rect x="${(x+.5).toFixed(2)}" y="${(y+.5).toFixed(2)}" width="${w.toFixed(2)}" height="${h.toFixed(2)}" rx="1.5" fill="${b.color}" stroke="#ffffff" stroke-width="1.8" stroke-linejoin="round"><title>Box ${i+1} · Profile ${ppNewEsc(String(b.profile))} · ${ppNewEsc(String(b.itemCode||""))} · ${ppNewEsc(String(b.length))} mm</title></rect><text x="${cx.toFixed(2)}" y="${cy.toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize.toFixed(1)}" font-weight="800" fill="#ffffff" stroke="#24445a" stroke-width=".7" paint-order="stroke" pointer-events="none">${i+1}</text></g>`;}return out;};
  let drawing='';
  if(ppNewCrateViewMode==='top'){
-  drawing=`<svg viewBox="0 0 420 205" role="img" aria-label="Top view showing profile boxes inside crate" style="width:100%;max-height:250px"><rect x="44" y="26" width="332" height="145" rx="2" fill="#f0dfc2" stroke="#815a35" stroke-width="9"/><rect x="55" y="37" width="310" height="123" fill="#fff9ed" stroke="#ad7b48" stroke-width="1.5"/>`;
-  let cursorY=43;const availableH=111,each=Math.min(15,Math.max(5,availableH/Math.max(1,boxRows.length)));
-  boxRows.forEach((x,j)=>{const lenRatio=Math.max(.15,Math.min(1,(ppNum(x.it.length)||x.dims.l)/dL)),barW=292*lenRatio,qtyLines=Math.max(1,Math.min(4,Math.ceil(x.boxes/Math.max(1,Math.floor(292/Math.max(1,x.dims.w))))));for(let k=0;k<qtyLines&&cursorY<153;k++){drawing+=`<rect x="61" y="${cursorY}" width="${barW}" height="${Math.max(3,each-2)}" fill="${x.color}" stroke="#456171" stroke-width=".8" rx="1"/>`;cursorY+=Math.max(5,each); }drawing+=`<text x="64" y="${Math.min(155,cursorY-1)}" font-size="8" fill="#17324b">${ppNewEsc(String(x.it.profile))} · ${ppNewEsc(String(x.it.length))}mm · ${x.boxes} box(es)</text>`;});
+  const bottomCount=Math.min(boxCount,perLayer);
+  drawing=`<svg viewBox="0 0 420 205" role="img" aria-label="Top view showing exact bottom-layer box count" style="width:100%;max-height:250px"><rect x="44" y="26" width="332" height="145" rx="2" fill="#f0dfc2" stroke="#815a35" stroke-width="9"/><rect x="55" y="37" width="310" height="123" fill="#fff9ed" stroke="#ad7b48" stroke-width="1.5"/>`;
+  const w=292/Math.max(1,perLayer);
+  for(let i=0;i<bottomCount;i++){const b=flat[i],x=64+i*w,bw=Math.max(1,w-1),cx=x+bw/2,fs=Math.max(7,Math.min(13,bw*.42));drawing+=`<g><rect x="${x}" y="53" width="${bw}" height="88" rx="1.5" fill="${b.color}" stroke="#ffffff" stroke-width="1.8"><title>Box ${i+1} · Profile ${ppNewEsc(String(b.profile))} · ${ppNewEsc(String(b.length))} mm</title></rect><text x="${cx}" y="97" text-anchor="middle" dominant-baseline="central" font-size="${fs}" font-weight="800" fill="#ffffff" stroke="#24445a" stroke-width=".7" paint-order="stroke">${i+1}</text></g>`;}
   drawing+=`<text x="210" y="190" text-anchor="middle" font-size="11" font-weight="700" fill="#123c66">L ${dL} mm · W ${dW} mm</text></svg>`;
- }else if(ppNewCrateViewMode==='front'){
-  drawing=`<svg viewBox="0 0 420 205" role="img" aria-label="Front view showing stacked profile boxes inside crate" style="width:100%;max-height:250px"><rect x="52" y="28" width="316" height="138" fill="#f0dfc2" stroke="#815a35" stroke-width="9"/><rect x="63" y="39" width="294" height="116" fill="#fff9ed" stroke="#ad7b48" stroke-width="1.5"/>`;
-  const totalBoxes=Math.max(1,boxRows.reduce((sum,x)=>sum+x.boxes,0)),bands=Math.min(8,totalBoxes),bandH=105/bands;let y=45;for(let i=0;i<bands;i++){const x=boxRows[i%Math.max(1,boxRows.length)];drawing+=`<rect x="69" y="${y}" width="282" height="${Math.max(4,bandH-2)}" fill="${x?.color||'#829eac'}" stroke="#456171" stroke-width=".8"/>`;y+=bandH;}drawing+=`<text x="210" y="190" text-anchor="middle" font-size="11" font-weight="700" fill="#123c66">Front elevation · H ${dH} / ${maxH} mm</text></svg>`;
  }else{
-  drawing=`<svg viewBox="0 0 420 230" role="img" aria-label="Isometric crate with profile box bundles loaded inside" style="width:100%;max-height:280px"><polygon points="34,62 235,20 385,72 179,117" fill="#e6c99d" stroke="#855b35" stroke-width="2"/><polygon points="34,62 179,117 179,181 34,121" fill="#c18a4a" stroke="#855b35" stroke-width="2"/><polygon points="179,117 385,72 385,137 179,181" fill="#b77b3f" stroke="#855b35" stroke-width="2"/><polygon points="51,64 235,31 365,73 179,105" fill="#f8ecd6" stroke="#9a6b3d" stroke-width="1.5"/>`;
-  const innerCount=Math.max(1,boxRows.reduce((sum,x)=>sum+Math.min(6,Math.ceil(x.boxes/2)),0));let n=0;
-  boxRows.forEach((x,j)=>{const count=Math.max(1,Math.min(6,Math.ceil(x.boxes/2))),ratio=Math.max(.18,Math.min(1,(ppNum(x.it.length)||x.dims.l)/dL));for(let k=0;k<count;k++){const t=n++/Math.max(1,innerCount),sx=67+t*90,sy=65+t*8,ex=sx+105*ratio,ey=sy+25*ratio;drawing+=`<path d="M ${sx} ${sy} L ${ex} ${ey} L ${ex} ${ey+3} L ${sx} ${sy+3} Z" fill="${x.color}" stroke="#476575" stroke-width=".7"/><path d="M ${sx} ${sy} L ${sx+4} ${sy-2} L ${ex+4} ${ey-2} L ${ex} ${ey} Z" fill="#d9e5eb" stroke="#476575" stroke-width=".6"/>`;}}
-  );
-  drawing+=`<polygon points="34,62 179,117 179,181 34,121" fill="#c18a4a" fill-opacity=".12" stroke="#855b35" stroke-width="2"/><polygon points="179,117 385,72 385,137 179,181" fill="#b77b3f" fill-opacity=".12" stroke="#855b35" stroke-width="2"/><g font-size="10" font-weight="700" fill="#123c66"><text x="188" y="205" text-anchor="middle">L ${dL} mm</text><text x="337" y="166">W ${dW} mm</text><text x="8" y="94">H ${dH} mm</text></g></svg>`;
+  const front=`<rect x="52" y="28" width="316" height="138" fill="#f0dfc2" stroke="#815a35" stroke-width="9"/><rect x="63" y="39" width="294" height="116" fill="#fff9ed" stroke="#ad7b48" stroke-width="1.5"/>`;
+  const cells=drawCells(boxCount);
+  if(ppNewCrateViewMode==='front'){
+   drawing=`<svg viewBox="0 0 420 205" role="img" aria-label="Front cross-section showing every box in this crate" style="width:100%;max-height:300px">${front}${cells}<text x="210" y="190" text-anchor="middle" font-size="11" font-weight="700" fill="#123c66">H ${dH} mm</text></svg>`;
+  }else{
+   drawing=`<svg viewBox="0 0 420 230" role="img" aria-label="Isometric crate view with exact box count" style="width:100%;max-height:300px"><polygon points="34,62 235,20 385,72 179,117" fill="#e6c99d" stroke="#855b35" stroke-width="2"/><polygon points="34,62 179,117 179,181 34,121" fill="#c18a4a" stroke="#855b35" stroke-width="2"/><polygon points="179,117 385,72 385,137 179,181" fill="#b77b3f" stroke="#855b35" stroke-width="2"/><polygon points="51,64 235,31 365,73 179,105" fill="#f8ecd6" stroke="#9a6b3d" stroke-width="1.5"/><g transform="translate(0,0)">${front}${cells}</g><polygon points="34,62 179,117 179,181 34,121" fill="#c18a4a" fill-opacity=".10" stroke="#855b35" stroke-width="2"/><polygon points="179,117 385,72 385,137 179,181" fill="#b77b3f" fill-opacity=".10" stroke="#855b35" stroke-width="2"/><g font-size="10" font-weight="700" fill="#123c66"><text x="188" y="205" text-anchor="middle">L ${dL} mm</text><text x="337" y="166">W ${dW} mm</text><text x="8" y="94">H ${dH} mm</text></g></svg>`;
+  }
  }
  const viewButtons=[['isometric','Isometric'],['top','Top'],['front','Front']].map(([mode,label])=>`<button type="button" class="btn btn-sm ${ppNewCrateViewMode===mode?'btn-accent':''}" onclick="ppNewSetCrateView('${mode}')">${label}</button>`).join('');
  const valid=items.length===0||dH<=maxH;
- host.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><b style="font-size:17px;color:#123c66">Crate ${ppNewEsc(ppDisplayCrateId(c.id))} Summary</b><span style="font-size:11px;font-weight:800;color:${valid?'#047857':'#b91c1c'}">${valid?'● HEIGHT VALID':'● HEIGHT OVER LIMIT'}</span></div><div class="pp-new-view-controls" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${viewButtons}</div><div class="pp-new-3dpreview">${drawing}<small>Crate loading preview · colored bundles represent profile/box groups; dimensions are schematic</small></div><div class="pp-new-dim-grid"><div><small>Crate length</small><b>${dL.toLocaleString()} mm</b></div><div><small>Crate width (outside)</small><b>${dW.toLocaleString()} mm</b></div><div><small>Overall height</small><b>${dH.toLocaleString()} / ${maxH} mm</b></div><div><small>Profiles / lines</small><b>${items.length}</b></div><div><small>Total PCS</small><b>${pcs.toLocaleString()}</b></div><div><small>Profile weight</small><b>${profileWeight.toLocaleString(undefined,{maximumFractionDigits:1})} kg</b></div><div><small>Crate tare</small><b>${tare.toLocaleString(undefined,{maximumFractionDigits:1})} kg</b></div><div><small>Total crate weight</small><b>${total.toLocaleString(undefined,{maximumFractionDigits:1})} kg</b></div><div><small>Box count</small><b>${items.reduce((s,it)=>s+ppNum(it.boxes),0).toLocaleString()}</b></div></div>`;
- table.innerHTML='<table class="pp-table"><thead><tr><th>PO</th><th>Profile</th><th>Item Code</th><th>Length</th><th>PCS</th><th>Boxes</th><th>Weight (kg)</th><th>Action</th></tr></thead><tbody>'+(items.length?items.map((it,i)=>`<tr><td>${ppNewEsc(it.po)}</td><td>${ppNewEsc(it.profile)}</td><td>${ppNewEsc(it.itemCode)}</td><td>${ppNewEsc(it.length)}</td><td>${ppNum(it.pcs).toLocaleString()}</td><td>${ppNum(it.boxes).toLocaleString()}</td><td>${(ppNum(it.pcs)*ppNum(it.unitWeight)).toLocaleString(undefined,{maximumFractionDigits:1})}</td><td><button class="btn btn-sm" onclick="ppNewEditLinePcs('${ppNewEsc(c.id)}',${i})">Edit PCS</button></td></tr>`).join(''):'<tr><td colspan="8">This crate is empty. Select a profile and add quantities from one or more POs.</td></tr>')+'</tbody></table>';
+ host.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><b style="font-size:17px;color:#123c66">Crate ${ppNewEsc(ppDisplayCrateId(c.id))} Summary</b><span style="font-size:11px;font-weight:800;color:${valid?'#047857':'#b91c1c'}">${valid?'● HEIGHT VALID':'● HEIGHT OVER LIMIT'}</span></div><div class="pp-new-view-controls" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${viewButtons}</div><div class="pp-new-3dpreview">${drawing}<div class="pp-crate-view-legend"><b>Profile / Length Key</b><div class="pp-crate-legend-items">${boxRows.map(x=>`<span class="pp-crate-legend-item"><i style="background:${x.color}"></i><span>Profile ${ppNewEsc(String(x.it.profile))} · ${ppNewEsc(String(x.it.length))} mm</span></span>`).join('')}</div><small>Same profile and cut length use one colour. Only occupied box positions are filled; unused crate space stays visibly empty. No box numbering is shown.</small></div></div><div class="pp-new-dim-grid"><div><small>Crate length</small><b>${dL.toLocaleString()} mm</b></div><div><small>Crate width (outside)</small><b>${dW.toLocaleString()} mm</b></div><div><small>Overall height</small><b>${dH.toLocaleString()} / ${maxH} mm</b></div><div><small>Profiles / lines</small><b>${items.length}</b></div><div><small>Total PCS</small><b>${pcs.toLocaleString()}</b></div><div><small>Profile weight</small><b>${profileWeight.toLocaleString(undefined,{maximumFractionDigits:1})} kg</b></div><div><small>Crate tare</small><b>${tare.toLocaleString(undefined,{maximumFractionDigits:1})} kg</b></div><div><small>Total crate weight</small><b>${total.toLocaleString(undefined,{maximumFractionDigits:1})} kg</b></div><div><small>Box count (PCS ÷ PCS/box)</small><b>${boxCount.toLocaleString()}</b></div><div><small>Boxes per layer</small><b>${boxCount?Math.min(perLayer,boxCount):0}</b></div><div><small>Layers</small><b>${layers}</b></div></div>`;
+ table.innerHTML='<table class="pp-table"><thead><tr><th>PO</th><th>Profile</th><th>Item Code</th><th>Length</th><th>PCS</th><th>PCS / Box</th><th>Boxes</th><th>Weight (kg)</th><th>Action</th></tr></thead><tbody>'+(items.length?items.map((it,i)=>`<tr><td>${ppNewEsc(it.po)}</td><td>${ppNewEsc(it.profile)}</td><td>${ppNewEsc(it.itemCode)}</td><td>${ppNewEsc(it.length)}</td><td>${ppNum(it.pcs).toLocaleString()}</td><td>${Math.max(1,ppNum(it.pcsPerBox)).toLocaleString()}</td><td>${Math.ceil(Math.max(0,ppNum(it.pcs))/Math.max(1,ppNum(it.pcsPerBox))).toLocaleString()}</td><td>${(ppNum(it.pcs)*ppNum(it.unitWeight)).toLocaleString(undefined,{maximumFractionDigits:1})}</td><td><button class="btn btn-sm" onclick="ppNewEditLinePcs('${ppNewEsc(c.id)}',${i})">Edit PCS</button></td></tr>`).join(''):'<tr><td colspan="9">This crate is empty. Select a profile and add quantities from one or more POs.</td></tr>')+'</tbody></table>';
 }
+
 function ppNewEditLinePcs(crateId,index){const c=ppSmartCrates.find(x=>String(x.id)===String(crateId)),it=c?.items?.[index];if(!c||!it)return;const r=(ppCrateNextRows||[]).find(x=>ppSmartLineKey(x)===it.lineKey),alloc=ppSmartGetAllocations(),max=r?Math.max(0,Math.floor(ppNum(r.planningQty)-(alloc[it.lineKey]||0)+ppNum(it.pcs))):ppNum(it.pcs);const raw=prompt(`${it.po} / ${it.profile} / ${it.itemCode} / ${it.length} mm — PCS (max ${max})`,String(it.pcs));if(raw===null)return;const q=Math.floor(ppNum(raw));if(q<0||q>max){alert(`Enter PCS from 0 to ${max}.`);return;}const before=JSON.parse(JSON.stringify(c));it.pcs=q;it.boxes=Math.ceil(q/Math.max(1,ppNum(it.pcsPerBox)));c.items=c.items.filter(x=>ppNum(x.pcs)>0);const calc=ppSmartCalcDims(c.items,{...(c.manual||{}),outerL:ppNum(c.outerL),outerW:ppNum(c.outerW),orientation:c.orientation||'auto',rowMultiplier:c.rowMultiplier||1});if(c.items.length&&!calc.valid){Object.assign(c,before);alert(calc.reason||'PCS quantity does not fit the current crate.');return;}if(calc.valid){if(calc.packingH+ppNum(c.extraHeight)>PP_MAX_PACKING_HEIGHT){Object.assign(c,before);alert(`The updated crate would exceed ${PP_MAX_PACKING_HEIGHT} mm packing height.`);return;}Object.assign(c,calc,{extraHeight:ppNum(c.extraHeight),overallH:calc.overallH+ppNum(c.extraHeight)});}ppSmartPersist();ppSmartRenderCrateList();ppNewRefreshCrateOptions();}
 function ppNewAddToCrate(){
  const c=ppNewSelectedCrate();if(!c){alert('Select an existing crate or create a new crate first.');return;}
@@ -8960,29 +9027,86 @@ function ppNewBuildDraftItems(c){
  return found?draft:null;
 }
 function ppNewDrawCrate2D(c,metric,view){
- const outerL=metric.length,outerW=metric.widthOutside||1,packing=metric.packingHeight,overall=metric.overallHeight,layers=metric.layers,perLayer=metric.boxesPerLayer,rows=metric.rows,items=metric.items;
- const colors=['#8ba9bb','#d5a15b','#6fb49d','#a899cb','#c78072','#6e9dc7','#a5b16b'];
+ const outerL=metric.length,outerW=metric.widthOutside||1,packing=metric.packingHeight,overall=metric.overallHeight;
+ const layers=Math.max(0,Math.floor(ppNum(metric.layers))),perLayer=Math.max(1,Math.floor(ppNum(metric.boxesPerLayer))),rows=Math.max(1,Math.floor(ppNum(metric.rows)));
+ const items=metric.items||[];
+ const palette=['#167f83','#2878b9','#9b5bb5','#c27624','#39865b','#b14d63','#6877a8','#8b7135'];
+ /* Expand each profile line into its actual physical boxes. A colour belongs to a
+    profile + cut length, so every box for that same size is visually consistent. */
+ const colourByKey=new Map(),flat=[];
+ items.forEach(it=>{
+  const pcs=Math.max(0,ppNum(it.pcs)),perBox=Math.max(1,ppNum(it.pcsPerBox)||ppNum(ppSmartMasterFor(it)?.pcsPerBox)||1);
+  const qty=Math.ceil(pcs/perBox),key=`${String(it.profile||'').trim()}|${String(it.length||'').trim()}`;
+  if(!colourByKey.has(key))colourByKey.set(key,palette[colourByKey.size%palette.length]);
+  for(let n=0;n<qty;n++)flat.push({profile:it.profile,length:it.length,itemCode:it.itemCode,color:colourByKey.get(key)});
+ });
+ const boxCount=flat.length,drawGrid=(list,cols,opts={})=>{
+  const count=list.length;if(!count)return '';
+  cols=Math.max(1,Math.min(Math.floor(cols)||1,count));
+  const gridRows=Math.ceil(count/cols),x=opts.x??52,y=opts.y??35,w=opts.w??356,h=opts.h??130;
+  const gap=opts.gap??2,cw=w/cols,ch=h/gridRows;let out='';
+  list.forEach((b,i)=>{
+   const col=i%cols,row=gridRows-1-Math.floor(i/cols),rx=x+col*cw+gap/2,ry=y+row*ch+gap/2,rw=Math.max(1,cw-gap),rh=Math.max(1,ch-gap);
+   const fs=Math.max(7,Math.min(14,Math.min(rw*.42,rh*.58)));
+   const title=`Box ${i+1} · Profile ${String(b.profile??'')} · ${String(b.itemCode??'')} · ${String(b.length??'')} mm`;
+   out+=`<g><rect x="${rx.toFixed(2)}" y="${ry.toFixed(2)}" width="${rw.toFixed(2)}" height="${rh.toFixed(2)}" rx="2" fill="${b.color}" stroke="#ffffff" stroke-width="1.5"><title>${ppNewEsc(title)}</title></rect><text x="${(rx+rw/2).toFixed(2)}" y="${(ry+rh/2).toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="${fs.toFixed(1)}" font-weight="800" fill="#ffffff" stroke="#17394d" stroke-width=".8" paint-order="stroke" pointer-events="none">${i+1}</text></g>`;
+  });
+  return out;
+ };
  let svg='',desc='';
  if(view==='top'){
-  const x=52,y=35,w=356,h=130,innerX=x+11,innerY=y+11,innerW=w-22,innerH=h-22;
-  svg=`<svg viewBox="0 0 460 218" role="img" aria-label="2D top view crate box layout"><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#b98146" stroke="#81562f" stroke-width="3"/><rect x="${innerX}" y="${innerY}" width="${innerW}" height="${innerH}" fill="#fff8e9" stroke="#96673c" stroke-width="1.5"/>`;
-  if(metric.boxTotal>0&&perLayer>0){const shown=Math.min(perLayer,100),across=Math.max(1,Math.ceil(perLayer/rows)),cellX=innerW/rows,cellY=innerH/across;for(let n=0;n<shown;n++){const rr=Math.floor(n/across),cc=n%across;const pad=1.5;svg+=`<rect x="${innerX+rr*cellX+pad}" y="${innerY+cc*cellY+pad}" width="${Math.max(1,cellX-3)}" height="${Math.max(1,cellY-3)}" rx="1.5" fill="${colors[n%colors.length]}" stroke="#466477" stroke-width=".7"/>`;}}
-  svg+=`<text x="230" y="188" text-anchor="middle" font-size="11" font-weight="800" fill="#123c66">L ${outerL} mm · W ${Math.round(outerW)} mm</text><text x="230" y="205" text-anchor="middle" font-size="10" fill="#536b7b">Bottom layer layout · ${perLayer} box slot(s) / layer · ${rows} lengthwise row(s)</text></svg>`;
-  desc='Top view — individual tiles show the bottom-layer box positions.';
+  const x=52,y=30,w=356,h=132,ix=x+11,iy=y+11,iw=w-22,ih=h-22;
+  const bottom=flat.slice(0,Math.min(perLayer,boxCount));
+  const innerLength=Math.max(1,outerL-2*PP_WOOD_THICKNESS);
+  const innerWidth=Math.max(1,metric.innerW||outerW-2*PP_WOOD_THICKNESS);
+  /* In the crate top view the profile runs along the crate length. The
+     Master Catalog box cross-section (not the profile cut length) determines
+     each box's width across the crate. */
+  const footprints=bottom.map(b=>{
+   const it=items.find(q=>String(q.profile??'')===String(b.profile??'')&&String(q.length??'')===String(b.length??'')&&String(q.itemCode??'')===String(b.itemCode??''));
+   const master=it?ppSmartMasterFor(it):null,dim=ppDims(master?.boxSize);
+   const calc=master?.calc||ppCrateCalc(master||{});
+   const cross=calc?.orientation==='width'?(dim?.h||dim?.w):(dim?.w||dim?.h);
+   const fallback=innerWidth/Math.max(1,bottom.length);
+   const boxW=Math.max(1,Math.min(innerWidth,cross||fallback));
+   return {...b,boxL:innerLength,boxW};
+  });
+  /* Fill the crate from the bottom edge upward, using the calculated box
+     cross-width. If catalog widths are absent, divide the available width
+     evenly so the preview still shows the allocated bottom-layer boxes. */
+  const gapMm=2,placements=[];let cursorW=0;
+  const rawWidth=footprints.reduce((sum,b)=>sum+b.boxW,0),usableWidth=Math.max(1,innerWidth-gapMm*Math.max(0,footprints.length-1));
+  const widthScale=rawWidth>usableWidth?usableWidth/rawWidth:1;
+  footprints.forEach((b,i)=>{
+   const bw=Math.max(1,b.boxW*widthScale);
+   placements.push({...b,index:i,posW:cursorW,boxW:bw});
+   cursorW+=bw+gapMm;
+  });
+  const scale=Math.min(iw/innerLength,ih/innerWidth);
+  const usedW=Math.min(innerWidth,Math.max(1,...placements.map(q=>q.posW+q.boxW)));
+  const offsetX=ix+(iw-innerLength*scale)/2,offsetY=iy+(ih-innerWidth*scale)/2;
+  let topBoxes='';
+  placements.forEach(b=>{
+   const rx=offsetX,ry=offsetY+(innerWidth-(b.posW+b.boxW))*scale,rw=innerLength*scale,rh=b.boxW*scale;
+   const fs=Math.max(7,Math.min(14,Math.min(rw*.18,rh*.58)));
+   const title=`Box ${b.index+1} · Profile ${String(b.profile??'')} · ${String(b.itemCode??'')} · footprint ${Math.round(b.boxL)} × ${Math.round(b.boxW)} mm`;
+   topBoxes+=`<g><rect x="${rx.toFixed(2)}" y="${ry.toFixed(2)}" width="${Math.max(1,rw-1).toFixed(2)}" height="${Math.max(1,rh-1).toFixed(2)}" rx="2" fill="${b.color}" stroke="#ffffff" stroke-width="1.5"><title>${ppNewEsc(title)}</title></rect><text x="${(rx+rw/2).toFixed(2)}" y="${(ry+rh/2).toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="${fs.toFixed(1)}" font-weight="800" fill="#ffffff" stroke="#17394d" stroke-width=".8" paint-order="stroke">${b.index+1}</text></g>`;
+  });
+  svg=`<svg viewBox="0 0 460 218" role="img" aria-label="Top view showing allocated bottom-layer boxes fitted across crate width"><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#b98146" stroke="#81562f" stroke-width="3"/><rect x="${ix}" y="${iy}" width="${iw}" height="${ih}" fill="#fff8e9" stroke="#96673c" stroke-width="1.5"/>${topBoxes}<text x="230" y="185" text-anchor="middle" font-size="11" font-weight="800" fill="#123c66">Top view · L ${outerL} mm · W ${Math.round(outerW)} mm</text><text x="230" y="202" text-anchor="middle" font-size="10" fill="#536b7b">Bottom layer: ${placements.length} actual box(es) · Total: ${boxCount} box(es)</text></svg>`;
+  desc=`Top view — shows the actual allocated bottom-layer boxes fitted along the crate length and across its width.`;
  }else if(view==='front'){
-  const x=100,y=31,w=260,baseY=166,packPx=91,framePx=10,legPx=13,usableY=baseY-framePx-packPx;
-  svg=`<svg viewBox="0 0 460 218" role="img" aria-label="2D front cross-section of the crate"><rect x="${x}" y="${usableY-framePx}" width="${w}" height="${packPx+2*framePx}" fill="#d6a86c" stroke="#81562f" stroke-width="2"/><rect x="${x+9}" y="${usableY}" width="${w-18}" height="${packPx}" fill="#fff8e9" stroke="#96673c" stroke-width="1.5"/>`;
-  if(metric.boxTotal>0&&layers>0){const drawLayers=Math.min(layers,15),band=packPx/drawLayers,slots=Math.max(1,Math.min(metric.acrossWidth,12)),slotW=(w-22)/slots;for(let r=0;r<drawLayers;r++){for(let k=0;k<slots;k++){svg+=`<rect x="${x+11+k*slotW}" y="${usableY+r*band+1}" width="${Math.max(1,slotW-2)}" height="${Math.max(1,band-2)}" fill="${colors[(r+k)%colors.length]}" stroke="#466477" stroke-width=".65"/>`;}}}
-  svg+=`<rect x="${x+16}" y="${baseY+framePx}" width="18" height="${legPx}" fill="#a87842" stroke="#81562f"/><rect x="${x+w-34}" y="${baseY+framePx}" width="18" height="${legPx}" fill="#a87842" stroke="#81562f"/><text x="230" y="199" text-anchor="middle" font-size="11" font-weight="800" fill="#123c66">Front / end cross-section · W ${Math.round(outerW)} mm</text><text x="230" y="212" text-anchor="middle" font-size="10" fill="#536b7b">${layers} layer(s) · ${Math.round(packing)} mm packing + ${PP_LEG_HEIGHT} mm legs</text></svg>`;
-  desc='Front view — shows stack layers, timber frame and legs schematically.';
+  const x=100,y=31,w=260,h=135,baseY=166,framePx=9,legPx=13,ix=x+9,iy=y+9,iw=w-18,ih=h-18;
+  const cols=Math.max(1,Math.min(perLayer,boxCount));
+  svg=`<svg viewBox="0 0 460 218" role="img" aria-label="Front view showing every actual box with its number"><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#d6a86c" stroke="#81562f" stroke-width="2"/><rect x="${ix}" y="${iy}" width="${iw}" height="${ih}" fill="#fff8e9" stroke="#96673c" stroke-width="1.5"/>${drawGrid(flat,cols,{x:ix+2,y:iy+2,w:iw-4,h:ih-4,gap:2})}<rect x="${x+16}" y="${baseY+framePx}" width="18" height="${legPx}" fill="#a87842" stroke="#81562f"/><rect x="${x+w-34}" y="${baseY+framePx}" width="18" height="${legPx}" fill="#a87842" stroke="#81562f"/><text x="230" y="199" text-anchor="middle" font-size="11" font-weight="800" fill="#123c66">Front / end cross-section · W ${Math.round(outerW)} mm</text><text x="230" y="212" text-anchor="middle" font-size="10" fill="#536b7b">${boxCount} actual box(es) · ${layers} layer(s) · ${Math.round(packing)} mm packing + ${PP_LEG_HEIGHT} mm legs</text></svg>`;
+  desc=`Front view — displays all ${boxCount} actual boxes, numbered in order; each profile/length keeps its own colour.`;
  }else{
-  const x=51,y=28,w=358,baseY=162,packPx=Math.min(95,Math.max(0,packing/PP_MAX_PACKING_HEIGHT*95)),framePx=9,legPx=14,bodyTop=baseY-framePx-packPx-framePx,packTop=bodyTop+framePx,packBottom=baseY-framePx;
-  svg=`<svg viewBox="0 0 460 218" role="img" aria-label="2D side elevation with box layers and crate legs"><rect x="${x}" y="${bodyTop}" width="${w}" height="${packPx+2*framePx}" fill="#d3a064" stroke="#81562f" stroke-width="2"/><rect x="${x+9}" y="${packTop}" width="${w-18}" height="${Math.max(0,packPx)}" fill="#fff8e9" stroke="#96673c" stroke-width="1.5"/>`;
-  if(metric.boxTotal>0&&layers>0&&packPx>0){const drawLayers=Math.min(layers,15),band=packPx/drawLayers,slots=Math.max(1,Math.min(perLayer,18)),slotW=(w-20)/slots;for(let r=0;r<drawLayers;r++){for(let k=0;k<slots;k++){svg+=`<rect x="${x+10+k*slotW}" y="${packTop+r*band+1}" width="${Math.max(1,slotW-2)}" height="${Math.max(1,band-2)}" fill="${colors[(r+k)%colors.length]}" stroke="#466477" stroke-width=".65"/>`;}}}
-  svg+=`<rect x="${x+14}" y="${baseY}" width="18" height="${legPx}" fill="#a87842" stroke="#81562f"/><rect x="${x+w/2-9}" y="${baseY}" width="18" height="${legPx}" fill="#a87842" stroke="#81562f"/><rect x="${x+w-32}" y="${baseY}" width="18" height="${legPx}" fill="#a87842" stroke="#81562f"/><text x="230" y="194" text-anchor="middle" font-size="11" font-weight="800" fill="#123c66">Side elevation · L ${outerL} mm</text><text x="230" y="208" text-anchor="middle" font-size="10" fill="#536b7b">Packing ${Math.round(packing)} mm · legs 100 mm · overall ${Math.round(overall)} mm</text></svg>`;
-  desc='Side elevation — layers and the timber frame/leg height are shown schematically.';
+  const x=51,y=28,w=358,h=134,baseY=162,packPx=Math.min(95,Math.max(0,packing/PP_MAX_PACKING_HEIGHT*95)),framePx=9,legPx=14,bodyTop=baseY-framePx-packPx-framePx,packTop=bodyTop+framePx;
+  const cols=Math.max(1,Math.min(perLayer,boxCount));
+  svg=`<svg viewBox="0 0 460 218" role="img" aria-label="Side view showing every actual box with its number"><rect x="${x}" y="${bodyTop}" width="${w}" height="${packPx+2*framePx}" fill="#d3a064" stroke="#81562f" stroke-width="2"/><rect x="${x+9}" y="${packTop}" width="${w-18}" height="${Math.max(0,packPx)}" fill="#fff8e9" stroke="#96673c" stroke-width="1.5"/>${packPx>0?drawGrid(flat,cols,{x:x+11,y:packTop+1,w:w-22,h:Math.max(1,packPx-2),gap:2}):''}<rect x="${x+14}" y="${baseY}" width="18" height="${legPx}" fill="#a87842" stroke="#81562f"/><rect x="${x+w/2-9}" y="${baseY}" width="18" height="${legPx}" fill="#a87842" stroke="#81562f"/><rect x="${x+w-32}" y="${baseY}" width="18" height="${legPx}" fill="#a87842" stroke="#81562f"/><text x="230" y="194" text-anchor="middle" font-size="11" font-weight="800" fill="#123c66">Side elevation · L ${outerL} mm</text><text x="230" y="208" text-anchor="middle" font-size="10" fill="#536b7b">${boxCount} actual box(es) · Packing ${Math.round(packing)} mm · overall ${Math.round(overall)} mm</text></svg>`;
+  desc=`Side elevation — displays ${boxCount} actual boxes with their numbers; empty slots are omitted.`;
  }
- return `<div class="pp-new-2d-stage">${svg}<div class="pp-new-2d-caption">${desc} Diagram is scaled for display; final dimensions are calculated in millimetres.</div></div>`;
+ const legend=[...colourByKey.entries()].map(([key,color])=>{const [profile,length]=key.split('|');return `<span class="pp-new-box-legend-item"><i style="background:${color}"></i>Profile ${ppNewEsc(profile)} · ${ppNewEsc(length)} mm</span>`;}).join('');
+ return `<div class="pp-new-2d-stage">${svg}<div class="pp-new-2d-caption">${desc} Each box number is printed inside the box.</div>${legend?`<div class="pp-new-box-legend">${legend}</div>`:''}</div>`;
 }
 ppNewRenderSelectedCrate=function(draftItems=null,draftMode=false){
  const c=ppNewSelectedCrate(),host=document.getElementById('ppNewCrateDetails'),table=document.getElementById('ppNewCrateProfiles');if(!host||!table)return;
@@ -10299,3 +10423,253 @@ ppSmartRenderContainer = function(){
     setTimeout(refreshCratePlanner, 700);
   }
 })();
+
+
+/* AIS Extrusion Stock module — separate additive receipt ledger */
+let extrusionReceipts=[];
+let extrusionReceiptsLoaded=false;
+let extrusionLoading=false;
+function switchExtrusionSubTab(id,btn){document.querySelectorAll('.extrusion-sub-content').forEach(x=>x.style.display='none');document.querySelectorAll('.extrusion-sub-btn').forEach(x=>x.classList.remove('active'));const el=document.getElementById(id);if(el)el.style.display='block';if(btn)btn.classList.add('active');if(id==='exInSubTab'){populateExtrusionReceiptPOs();renderExtrusionPoTable();populateExtrusionReceiptProfiles();}if(id==='exHistorySubTab')renderExtrusionHistory();}
+function extrusionLen(v){const n=Number(String(v??'').replace(/mm/gi,'').trim());return Number.isFinite(n)&&n>0?n:0;}
+function extrusionMasterRows(){return (masterData||[]).filter(m=>String(m.profile||'').trim()&&extrusionLen(m.exLength)>0);}
+function extrusionRequiredByPo(){
+ const out=[];
+ (poList||[]).forEach(po=>{
+  const p=String(po.profile||'').trim(), cut=extrusionLen(po.length); if(!p||!cut)return;
+  const shipped=(shipmentList||[]).filter(s=>String(s.poNumber||'').trim()===String(po.poNumber||'').trim()&&String(s.profile||'').trim()===p&&cleanLen(s.length)===cleanLen(po.length)).reduce((a,s)=>a+(Number(s.shippedQty)||0),0);
+  const open=Math.max(0,(Number(po.orderQty)||0)-shipped); if(!open)return;
+  const matches=extrusionMasterRows().filter(m=>String(m.profile).trim()===p&&cleanLen(m.length)===cleanLen(po.length));
+  const master=matches[0]; if(!master)return;
+  const exLen=extrusionLen(master.exLength); if(!exLen)return;
+  const required=Math.ceil((open*cut)/exLen);
+  out.push({date:po.date||'',poNumber:String(po.poNumber||''),profile:p,itemCode:master.itemCode||po.itemCode||'',cutLength:cut,exLength:exLen,openQty:open,required,masterKey:`${p}__${exLen}`});
+ });
+ return out.sort((a,b)=>String(b.date).localeCompare(String(a.date))||a.poNumber.localeCompare(b.poNumber,undefined,{numeric:true}));
+}
+const EXTRUSION_PO_COMPLETED_KEY='ais_extrusion_po_confirmed_complete_v1';
+function getExtrusionCompletedPOs(){try{return new Set(JSON.parse(localStorage.getItem(EXTRUSION_PO_COMPLETED_KEY)||'[]').map(String));}catch(e){return new Set();}}
+function saveExtrusionCompletedPOs(set){try{localStorage.setItem(EXTRUSION_PO_COMPLETED_KEY,JSON.stringify([...set]));return true;}catch(e){showToast('Could not save PO completion in this browser.','error');return false;}}
+function extrusionPoAllocationRows(){
+ const completed=getExtrusionCompletedPOs();
+ const rows=extrusionRequiredByPo().slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||a.poNumber.localeCompare(b.poNumber,undefined,{numeric:true})||a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.cutLength-b.cutLength);
+ const receipts=(extrusionReceipts||[]).slice().sort((a,b)=>String(a.receiptDate||'').localeCompare(String(b.receiptDate||''))||Number(a.id||0)-Number(b.id||0));
+ const explicitByLine=new Map();
+ receipts.filter(r=>String(r.po_number||r.poNumber||'').trim()).forEach(r=>{
+  const po=String(r.po_number||r.poNumber).trim(),key=`${po}__${String(r.profile||'').trim()}__${extrusionLen(r.extrusion_length)}`;
+  explicitByLine.set(key,(explicitByLine.get(key)||0)+(Number(r.in_qty??r.inQty)||0));
+ });
+ // Older receipts without a PO number remain intact and are allocated FIFO by PO date after explicitly linked receipts.
+ const legacyByKey=new Map();
+ receipts.filter(r=>!String(r.po_number||r.poNumber||'').trim()).forEach(r=>{const k=`${String(r.profile||'').trim()}__${extrusionLen(r.extrusion_length)}`;legacyByKey.set(k,(legacyByKey.get(k)||0)+(Number(r.in_qty??r.inQty)||0));});
+ const legacyUsedByKey=new Map();
+ return rows.map(r=>{
+  const lineKey=`${r.poNumber}__${r.profile}__${extrusionLen(r.exLength)}`;
+  const explicitAvailable=Math.max(0,explicitByLine.get(lineKey)||0);
+  const explicit=Math.min(r.required,explicitAvailable);
+  explicitByLine.set(lineKey,Math.max(0,explicitAvailable-explicit));
+  const legacyKey=r.masterKey;
+  const remainingLegacy=Math.max(0,(legacyByKey.get(legacyKey)||0)-(legacyUsedByKey.get(legacyKey)||0));
+  const legacy=Math.min(Math.max(0,r.required-explicit),remainingLegacy);
+  legacyUsedByKey.set(legacyKey,(legacyUsedByKey.get(legacyKey)||0)+legacy);
+  const manualComplete=completed.has(String(r.poNumber));
+  const allocated=manualComplete?r.required:Math.min(r.required,explicit+legacy);
+  return {...r,explicitAllocated:explicit,legacyAllocated:legacy,allocated,shortage:manualComplete?0:Math.max(0,r.required-allocated),manualComplete,status:manualComplete||allocated>=r.required?'Complete':'Pending'};
+ });
+}
+function confirmExtrusionPOComplete(poNumber){const po=String(poNumber||'');if(!po)return;const lines=extrusionRequiredByPo().filter(r=>r.poNumber===po);if(!lines.length)return;const total=lines.reduce((s,r)=>s+r.required,0);if(!confirm(`Mark PO ${po} as extrusion received/complete?\n\n${lines.length} line(s), ${total.toLocaleString()} extrusion(s) will be treated as complete in this browser. Actual receipt records and other PO data will not be deleted.`))return;const done=getExtrusionCompletedPOs();done.add(po);if(!saveExtrusionCompletedPOs(done))return;renderExtrusionModule(false);showToast(`PO ${po} marked complete and removed from pending list.`,'success');}
+function undoExtrusionPOComplete(poNumber){const po=String(poNumber||'');const done=getExtrusionCompletedPOs();if(!done.has(po))return;done.delete(po);if(!saveExtrusionCompletedPOs(done))return;renderExtrusionModule(false);showToast(`PO ${po} returned to pending list.`,'success');}
+
+function extrusionStockSummary(){const groups=new Map();extrusionRequiredByPo().filter(r=>!getExtrusionCompletedPOs().has(String(r.poNumber))).forEach(r=>{if(!groups.has(r.masterKey))groups.set(r.masterKey,{profile:r.profile,exLength:r.exLength,required:0,poLines:[]});const g=groups.get(r.masterKey);g.required+=r.required;g.poLines.push(r);});(extrusionReceipts||[]).forEach(r=>{const p=String(r.profile||'').trim(),l=extrusionLen(r.extrusion_length);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});
+ groups.forEach(g=>{g.stock=(extrusionReceipts||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.in_qty)||0),0);g.balance=g.stock-g.required;g.status=g.balance>=0?(g.stock===0&&g.required>0?'Short':g.balance>0?'Extra':'Complete'):'Short';});return [...groups.values()].sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);}
+async function loadExtrusionReceipts(showMessage=false){if(extrusionLoading)return;extrusionLoading=true;try{const {data,error}=await supabaseClient.from('extrusion_receipts').select('*').order('receipt_date',{ascending:false}).order('id',{ascending:false});if(error)throw error;extrusionReceipts=(data||[]).map(r=>({...r,receiptDate:r.receipt_date,profile:String(r.profile||''),extrusionLength:extrusionLen(r.extrusion_length),trolleyNo:r.trolley_no||'',inQty:Number(r.in_qty)||0,note:r.note||''}));extrusionReceiptsLoaded=true;renderExtrusionModule(false);if(showMessage)showToast('Extrusion receipts refreshed.','success');}catch(e){console.error('Extrusion receipt load failed',e);if(showMessage)showToast('Extrusion table is not ready. Run supabase_extrusion_module.sql once in Supabase SQL Editor.','error');else{const b=document.getElementById('exHistoryBody');if(b)b.innerHTML='<tr><td colspan="7">Extrusion receipt table is not ready. Run the included supabase_extrusion_module.sql migration, then refresh.</td></tr>';}}finally{extrusionLoading=false;}}
+function moveExtrusionStockSummaryToBottom(){const target=document.getElementById('exInSubTab');const planner=document.getElementById('exPoCards')?.closest('.card');const form=document.getElementById('exReceiptForm')?.closest('.card');if(target&&planner&&form&&planner.parentElement!==target)target.insertBefore(planner,form);const stockSection=document.getElementById('exStockSubTab');const stock=document.getElementById('exStockBody')?.closest('.card');if(stockSection&&stock&&stock.parentElement!==stockSection)stockSection.appendChild(stock);}
+function renderExtrusionModule(force=false){if(force&&!extrusionReceiptsLoaded){loadExtrusionReceipts(true);return;}moveExtrusionStockSummaryToBottom();populateExtrusionFilters();populateExtrusionReceiptProfiles();renderExtrusionStockTable();renderExtrusionPoTable();renderExtrusionHistory();}
+function populateExtrusionFilters(){const groups=extrusionStockSummary();const fill=(id,label,vals)=>{const s=document.getElementById(id);if(!s)return;const old=s.value;s.innerHTML=`<option value="">${label}</option>`;[...new Set(vals)].forEach(v=>s.add(new Option(v,v)));if([...s.options].some(o=>o.value===old))s.value=old;};fill('exFilterProfile','All Profiles',groups.map(g=>g.profile));fill('exFilterLength','All Lengths',groups.map(g=>String(g.exLength)));fill('exHistProfile','All Profiles',[...new Set(extrusionReceipts.map(r=>r.profile))].sort());}
+function renderExtrusionStockTable(){const body=document.getElementById('exStockBody');if(!body)return;const p=document.getElementById('exFilterProfile')?.value||'',l=document.getElementById('exFilterLength')?.value||'',q=(document.getElementById('exSearch')?.value||'').toLowerCase();const rows=extrusionStockSummary().filter(g=>(!p||g.profile===p)&&(!l||String(g.exLength)===l)&&(!q||`${g.profile} ${g.exLength}`.toLowerCase().includes(q)));body.innerHTML=rows.length?rows.map(g=>`<tr><td><b>${escapeHtml(String(g.profile))}</b></td><td>${g.exLength.toLocaleString()} mm</td><td>${g.required.toLocaleString()}</td><td>${g.stock.toLocaleString()}</td><td><b style="color:${g.balance<0?'#b45309':g.balance>0?'#1d4ed8':'#047857'}">${g.balance.toLocaleString()}</b></td><td><span class="ex-status ${g.balance<0?'short':g.balance>0?'extra':'complete'}">${g.balance<0?'Short by '+Math.abs(g.balance):g.balance>0?'Extra '+g.balance:'Complete'}</span></td></tr>`).join(''):'<tr><td colspan="6">No extrusion lengths matched. Check Master Catalog Ex Length values.</td></tr>';}
+let selectedExtrusionPO='';
+function extrusionPoAgeDays(date){if(!date)return null;const d=new Date(`${date}T00:00:00`);if(Number.isNaN(d.getTime()))return null;return Math.max(0,Math.floor((new Date(new Date().toDateString())-d)/86400000));}
+function renderExtrusionPoTable(){
+ const body=document.getElementById('exPoBody'),cards=document.getElementById('exPoCards');if(!body||!cards)return;
+ const q=(document.getElementById('exPoCardSearch')?.value||'').trim().toLowerCase();
+ const rows=extrusionPoAllocationRows();const byPO=new Map();
+ rows.forEach(r=>{if(!byPO.has(r.poNumber))byPO.set(r.poNumber,{poNumber:r.poNumber,date:r.date||'',rows:[],required:0,shortage:0,profiles:new Set(),manualComplete:r.manualComplete});const g=byPO.get(r.poNumber);g.rows.push(r);g.required+=r.required;g.shortage+=r.shortage;g.profiles.add(r.profile);if(String(r.date||'')<String(g.date||''))g.date=r.date||'';g.manualComplete=g.manualComplete||r.manualComplete;});
+ const pending=[...byPO.values()].filter(g=>g.rows.some(r=>r.status!=='Complete')&&!g.manualComplete).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||a.poNumber.localeCompare(b.poNumber,undefined,{numeric:true}));
+ const filtered=pending.filter(g=>!q||`${g.poNumber} ${g.date} ${[...g.profiles].join(' ')} ${g.rows.map(r=>r.exLength).join(' ')}`.toLowerCase().includes(q));
+ const count=document.getElementById('exPoCardCount');if(count)count.textContent=`${filtered.length} pending PO${filtered.length===1?'':'s'}`;
+ cards.innerHTML=filtered.length?filtered.map(g=>`<article class="ex-po-card ${selectedExtrusionPO===g.poNumber?'selected':''} ${g.shortage>0?'has-shortage':'all-received'}" onclick="selectExtrusionPO('${escapeHtml(g.poNumber).replace(/'/g,'&#39;')}')"><div class="ex-po-card-main"><span class="ex-po-date">${escapeHtml(g.date||'Date not set')} · ${extrusionPoAgeDays(g.date)===null?'Age unavailable':extrusionPoAgeDays(g.date)+' day(s) since PO date'}</span><h4>PO ${escapeHtml(g.poNumber)}</h4><p>${g.rows.length} extrusion line(s) · Profile ${escapeHtml([...g.profiles].join(', '))}</p></div><div class="ex-po-card-metrics"><span><small>Required</small><b>${g.required.toLocaleString()}</b></span><span><small>Still required</small><b class="${g.shortage?'is-short':''}">${g.shortage.toLocaleString()}</b></span></div><button type="button" class="ex-po-complete-btn" onclick="event.stopPropagation();confirmExtrusionPOComplete('${escapeHtml(g.poNumber).replace(/'/g,'&#39;')}')" title="Confirm all extrusion for this PO has arrived"><i class="fa-solid fa-check"></i> Mark complete & remove</button></article>`).join(''):'<div class="ex-po-empty"><i class="fa-solid fa-circle-check"></i><b>No pending PO cards</b><span>All matching PO extrusion requirements are complete, or the search has no matches.</span></div>';
+ if(!selectedExtrusionPO||!pending.some(g=>g.poNumber===selectedExtrusionPO))selectedExtrusionPO=filtered[0]?.poNumber||'';
+ const poSelect=document.getElementById('exReceiptPO');if(poSelect){populateExtrusionReceiptPOs();poSelect.value=selectedExtrusionPO;populateExtrusionReceiptProfiles();}
+ renderSelectedExtrusionPODetails();
+}
+function selectExtrusionPO(po){selectedExtrusionPO=String(po||'');const sel=document.getElementById('exReceiptPO');if(sel){populateExtrusionReceiptPOs();sel.value=selectedExtrusionPO;populateExtrusionReceiptProfiles();}renderExtrusionPoTable();const panel=document.getElementById('exPoDetailsPanel');if(panel)panel.scrollIntoView({behavior:'smooth',block:'nearest'});}
+function renderSelectedExtrusionPODetails(){
+ const body=document.getElementById('exPoBody');if(!body)return;
+ const rows=extrusionPoAllocationRows().filter(r=>r.poNumber===selectedExtrusionPO&&!r.manualComplete);
+ const title=document.getElementById('exPoDetailsTitle'),meta=document.getElementById('exPoDetailsMeta');
+ if(title)title.textContent=selectedExtrusionPO?`PO ${selectedExtrusionPO} — Extrusion Details`:'Select a PO';
+ if(meta)meta.textContent=rows.length?`${rows.length} line(s) · ${rows.reduce((s,r)=>s+r.shortage,0).toLocaleString()} extrusion(s) still required`:'Choose a pending PO card to view its profile and extrusion details.';
+ body.innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHtml(r.date||'-')}</td><td><b>${escapeHtml(r.poNumber)}</b></td><td><b>${escapeHtml(r.profile)}</b></td><td>${escapeHtml(r.itemCode||'-')}</td><td>${r.cutLength.toLocaleString()} mm</td><td>${r.exLength.toLocaleString()} mm</td><td>${r.openQty.toLocaleString()}</td><td><b>${r.required.toLocaleString()}</b></td><td>${r.allocated.toLocaleString()}</td><td><b style="color:${r.shortage>0?'#b45309':'#047857'}">${r.shortage.toLocaleString()}</b></td><td><span class="ex-status ${r.shortage>0?'short':'complete'}">${r.shortage>0?'Pending':'Complete'}</span></td></tr>`).join(''):'<tr><td colspan="11">No pending details for this PO. Completed PO confirmation does not delete production or receipt records.</td></tr>';
+ const rb=document.getElementById('exPoReceiptBody');
+ if(rb){
+   const keys=new Set(rows.map(r=>`${String(r.profile).trim()}__${extrusionLen(r.exLength)}`));
+   const recs=(extrusionReceipts||[]).filter(r=>{
+     const key=`${String(r.profile||'').trim()}__${extrusionLen(r.extrusion_length)}`;
+     const linked=String(r.po_number||r.poNumber||'').trim();
+     return keys.has(key)&&(!linked||linked===String(selectedExtrusionPO));
+   }).slice().sort((a,b)=>String(a.receiptDate||'').localeCompare(String(b.receiptDate||''))||Number(a.id||0)-Number(b.id||0));
+   const cumulative=new Map();
+   rb.innerHTML=recs.length?recs.map(r=>{
+     const key=`${String(r.profile||'').trim()}__${extrusionLen(r.extrusion_length)}`;
+     const linked=String(r.po_number||r.poNumber||'').trim();
+     const qty=Number(r.inQty??r.in_qty)||0;
+     const required=rows.filter(x=>x.masterKey===key).reduce((sum,x)=>sum+x.required,0);
+     const receiptKey=`${linked||'LEGACY'}__${key}`;
+     const receivedBefore=cumulative.get(receiptKey)||0;
+     const allocated=linked===String(selectedExtrusionPO)?Math.min(qty,Math.max(0,required-receivedBefore)):Math.min(qty,Math.max(0,rows.filter(x=>x.masterKey===key).reduce((sum,x)=>sum+x.legacyAllocated,0)-receivedBefore));
+     cumulative.set(receiptKey,receivedBefore+qty);
+     const remaining=Math.max(0,required-Math.min(required,receivedBefore+allocated));
+     return `<tr><td>${escapeHtml(r.receiptDate||'-')}</td><td><b>${escapeHtml(linked||'Legacy shared stock')}</b></td><td><b>${escapeHtml(r.profile)}</b></td><td>${extrusionLen(r.extrusionLength||r.extrusion_length).toLocaleString()} mm</td><td>${escapeHtml(r.trolleyNo||r.trolley_no||'-')}</td><td>${qty.toLocaleString()}</td><td><b style="color:${remaining?'#b45309':'#047857'}">${remaining.toLocaleString()}</b></td></tr>`;
+   }).join(''):'<tr><td colspan="7">No receipt records linked to this PO/profile yet. Record new receipts with the PO selected in the Extrusion IN tab.</td></tr>';
+ }
+
+}
+function exportSelectedExtrusionPODetails(){
+ const po=selectedExtrusionPO;if(!po)return showToast('Select a PO first.','warning');
+ const rows=extrusionPoAllocationRows().filter(r=>r.poNumber===po);
+ const lines=[['PO Date','PO Number','Profile','Item Code','Cut Length (mm)','Extrusion Length (mm)','Open Balance (Pcs)','Required Extrusions','Stock Allocated','Still Required','Status']];
+ rows.forEach(r=>lines.push([r.date,po,r.profile,r.itemCode,r.cutLength,r.exLength,r.openQty,r.required,r.allocated,r.shortage,r.shortage?'Pending':'Complete']));
+ const receipts=(extrusionReceipts||[]).filter(r=>rows.some(x=>x.masterKey===`${String(r.profile||'').trim()}__${extrusionLen(r.extrusion_length)}`));
+ lines.push([],['Receipt Date','PO Number','Profile','Extrusion Length (mm)','Trolley / Details','IN Qty']);
+ receipts.filter(r=>!String(r.po_number||r.poNumber||'').trim()||String(r.po_number||r.poNumber).trim()===po).forEach(r=>lines.push([r.receiptDate,r.po_number||r.poNumber||'Legacy shared stock',r.profile,extrusionLen(r.extrusionLength||r.extrusion_length),r.trolleyNo||r.trolley_no,r.inQty??r.in_qty]));
+ const csv=lines.map(row=>row.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\r\n');
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\\ufeff'+csv],{type:'text/csv;charset=utf-8;'}));a.download=`Extrusion_PO_${po}_Details.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+function populateExtrusionReceiptPOs(){const s=document.getElementById('exReceiptPO');if(!s)return;const old=s.value;const rows=extrusionRequiredByPo();const byPO=new Map();rows.forEach(r=>{if(!byPO.has(r.poNumber))byPO.set(r.poNumber,{date:r.date||'',po:r.poNumber});else if(String(r.date||'')<String(byPO.get(r.poNumber).date||''))byPO.get(r.poNumber).date=r.date||'';});s.innerHTML='<option value="">Select PO</option>';[...byPO.values()].sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||a.po.localeCompare(b.po,undefined,{numeric:true})).forEach(g=>s.add(new Option(`${g.po} · ${g.date||'No date'}`,g.po)));if([...s.options].some(o=>o.value===old))s.value=old;}
+function populateExtrusionReceiptProfiles(){const s=document.getElementById('exReceiptProfile');if(!s)return;populateExtrusionReceiptPOs();const po=document.getElementById('exReceiptPO')?.value||'',old=s.value;if(po&&po!==selectedExtrusionPO){selectedExtrusionPO=po;renderExtrusionPoTable();}const poRows=po?extrusionRequiredByPo().filter(r=>r.poNumber===po):[];const profiles=po?[...new Set(poRows.map(r=>String(r.profile).trim()))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})):[...new Set(extrusionMasterRows().map(m=>String(m.profile).trim()))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));s.innerHTML='<option value="">Select profile</option>';profiles.forEach(p=>s.add(new Option(p,p)));if(profiles.includes(old))s.value=old;updateExtrusionLengthOptions();}
+function updateExtrusionLengthOptions(){const p=document.getElementById('exReceiptProfile')?.value||'',po=document.getElementById('exReceiptPO')?.value||'',s=document.getElementById('exReceiptLength');if(!s)return;const old=s.value;const poLengths=po?extrusionRequiredByPo().filter(r=>r.poNumber===po&&r.profile===p).map(r=>String(extrusionLen(r.exLength))):[];const lengths=[...new Set(po?poLengths:extrusionMasterRows().filter(m=>String(m.profile).trim()===p).map(m=>String(extrusionLen(m.exLength))))].sort((a,b)=>Number(a)-Number(b));s.innerHTML='<option value="">Select length</option>';lengths.forEach(l=>s.add(new Option(`${Number(l).toLocaleString()} mm`,l)));if(lengths.includes(old))s.value=old;}
+function resetExtrusionForm(){const f=document.getElementById('exReceiptForm');if(f)f.reset();document.getElementById('exEditId').value='';document.getElementById('exReceiptDate').value=new Date().toISOString().slice(0,10);document.getElementById('exSaveBtn').innerHTML='<i class="fa-solid fa-floppy-disk"></i> Save IN';populateExtrusionReceiptProfiles();}
+async function saveExtrusionReceipt(){if(isAppBusy)return;if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return showToast('Admin or Planner access is required.','warning');const id=document.getElementById('exEditId').value,date=document.getElementById('exReceiptDate').value,poNumber=document.getElementById('exReceiptPO')?.value||'',profile=document.getElementById('exReceiptProfile').value,length=extrusionLen(document.getElementById('exReceiptLength').value),trolley=document.getElementById('exTrolley').value.trim(),qty=Math.floor(Number(document.getElementById('exInQty').value)||0),note=document.getElementById('exNote').value.trim();const oldRecord=id?extrusionReceipts.find(r=>String(r.id)===String(id)):null;const allowLegacyEdit=!!oldRecord&&!String(oldRecord.po_number||oldRecord.poNumber||'').trim();if(!date||(!poNumber&&!allowLegacyEdit)||!profile||!length||!trolley||qty<=0)return showToast('Select PO, date, profile, extrusion length, trolley details and a positive IN quantity. Old unassigned receipts may be edited without assigning a PO.','warning');if(poNumber&&!extrusionRequiredByPo().some(r=>r.poNumber===poNumber&&r.profile===profile&&extrusionLen(r.exLength)===length))return showToast('Selected profile and extrusion length do not belong to this PO.','warning');const payload={receipt_date:date,profile,extrusion_length:length,trolley_no:trolley,in_qty:qty,note,po_number:poNumber||null};isAppBusy=true;try{let result;if(id){result=await supabaseClient.from('extrusion_receipts').update(payload).eq('id',id).select().single();}else{result=await supabaseClient.from('extrusion_receipts').insert([payload]).select().single();}if(result.error)throw result.error;resetExtrusionForm();await loadExtrusionReceipts(false);switchExtrusionSubTab('exHistorySubTab',document.querySelectorAll('.extrusion-sub-btn')[2]);showToast(id?'Extrusion receipt updated.':'PO-linked Extrusion IN saved; PO/profile balances recalculated.','success');}catch(e){console.error(e);showToast('Could not save extrusion receipt. Ensure the additive po_number column migration in supabase_extrusion_module.sql has been run. Existing records were not deleted.','error');}finally{isAppBusy=false;}}
+function renderExtrusionHistory(){const body=document.getElementById('exHistoryBody');if(!body)return;const p=document.getElementById('exHistProfile')?.value||'',q=(document.getElementById('exHistSearch')?.value||'').toLowerCase();const rows=extrusionReceipts.filter(r=>(!p||r.profile===p)&&(!q||`${r.po_number||r.poNumber||''} ${r.profile} ${r.extrusionLength} ${r.trolleyNo} ${r.note}`.toLowerCase().includes(q)));body.innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHtml(r.receiptDate||'-')}</td><td><b>${escapeHtml(r.po_number||r.poNumber||'Legacy shared stock')}</b></td><td><b>${escapeHtml(r.profile)}</b></td><td>${r.extrusionLength} mm</td><td>${escapeHtml(r.trolleyNo)}</td><td><b>${r.inQty.toLocaleString()}</b></td><td>${escapeHtml(r.note||'-')}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:white" onclick="editExtrusionReceipt('${String(r.id)}')"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteExtrusionReceipt('${String(r.id)}')"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):'<tr><td colspan="8">No extrusion IN records found.</td></tr>';}
+function editExtrusionReceipt(id){const r=extrusionReceipts.find(x=>String(x.id)===String(id));if(!r)return;switchExtrusionSubTab('exInSubTab',document.querySelectorAll('.extrusion-sub-btn')[1]);document.getElementById('exEditId').value=r.id;document.getElementById('exReceiptDate').value=r.receiptDate||'';populateExtrusionReceiptPOs();document.getElementById('exReceiptPO').value=String(r.po_number||r.poNumber||'');populateExtrusionReceiptProfiles();document.getElementById('exReceiptProfile').value=r.profile;updateExtrusionLengthOptions();document.getElementById('exReceiptLength').value=String(r.extrusionLength);document.getElementById('exTrolley').value=r.trolleyNo;document.getElementById('exInQty').value=r.inQty;document.getElementById('exNote').value=r.note;document.getElementById('exSaveBtn').innerHTML='<i class="fa-solid fa-check"></i> Update IN';}
+async function deleteExtrusionReceipt(id){if(currentUserRole!=='Admin')return showToast('Admin access is required to delete receipts.','warning');const r=extrusionReceipts.find(x=>String(x.id)===String(id));if(!r||!confirm(`Delete extrusion IN record for ${r.profile}, ${r.extrusionLength} mm, qty ${r.inQty}? Stock balance will be recalculated.`))return;try{const {error}=await supabaseClient.from('extrusion_receipts').delete().eq('id',id);if(error)throw error;await loadExtrusionReceipts(false);showToast('Extrusion receipt deleted; balance recalculated.','success');}catch(e){showToast('Could not delete receipt. Check table permissions.','error');}}
+function exportExtrusionRequirements(){const rows=extrusionPoAllocationRows().filter(r=>r.status!=='Complete').map(r=>{const g=extrusionStockSummary().find(x=>x.profile===r.profile&&x.exLength===r.exLength);return {'PO Date':r.date,'PO Number':r.poNumber,'Profile':r.profile,'Item Code':r.itemCode,'Cut Length (mm)':r.cutLength,'Extrusion Length (mm)':r.exLength,'Open Balance (Pcs)':r.openQty,'Required Extrusions':r.required,'Received Stock':g?.stock||0,'Balance Qty':g?.balance||0};});if(!rows.length)return showToast('No extrusion requirements to export.','warning');const headers=Object.keys(rows[0]);const csv=[headers,...rows.map(r=>headers.map(h=>r[h]))].map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='AIS_Extrusion_PO_Requirements.csv';a.click();URL.revokeObjectURL(url);}
+
+function escapeHtml(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+
+/* Safe crate-planning reset: clears crate allocations only.
+   The active Next Planning PL and Crate Master Data are intentionally retained. */
+function ppResetCratePlanning(){
+ const count=Array.isArray(ppSmartCrates)?ppSmartCrates.length:0;
+ const itemCount=(ppSmartCrates||[]).reduce((n,c)=>n+(Array.isArray(c.items)?c.items.length:0),0);
+ if(!confirm(`Reset Crate Planning?\n\nThis will remove ${count} saved crate(s) and ${itemCount} allocated profile line(s) from the crate plan.\n\nYour Next Planning PL, Production Orders, Master Catalog and Crate Master Data will NOT be deleted or changed.\n\nYou can then allocate the same Next Planning PL quantities into crates again.`))return;
+ try{
+  ppSmartCrates=[];
+  ppCratePlans=[];
+  try{localStorage.setItem(PP_SMART_STATE_KEY,'[]');}catch(e){console.warn('Could not update local crate plan cache:',e);}
+  try{localStorage.setItem(PP_CRATE_PLAN_STATE_KEY,'[]');}catch(e){console.warn('Could not update legacy crate plan cache:',e);}
+  ppSmartPendingCloudPayload='[]';
+  if(ppSmartSaveTimer){clearTimeout(ppSmartSaveTimer);ppSmartSaveTimer=null;}
+  ppSmartRenderCrateList();
+  ppSmartRefreshPreviewOptions();
+  ppSmartUpdateAllocationPreview();
+  if(typeof ppNewRefreshCrateOptions==='function')ppNewRefreshCrateOptions();
+  const completion=document.getElementById('ppSmartCompletionSummary');
+  if(completion){completion.style.display='none';completion.innerHTML='';}
+  const preview=document.getElementById('ppCrate3DPreview');
+  if(preview)preview.innerHTML='<div class="pp-empty">Crate plan reset. Select items from the current Next Planning PL and add them to a new crate.</div>';
+  const previewSelect=document.getElementById('ppSmartPreviewCrate');
+  if(previewSelect)previewSelect.value='';
+  const crateSelect=document.getElementById('ppNewCrateSelect');
+  if(crateSelect)crateSelect.value='';
+  const pcs=document.getElementById('ppSmartAllocatePcs');if(pcs)pcs.value='';
+  const boxes=document.getElementById('ppSmartAllocateBoxes');if(boxes)boxes.value='';
+  const countInput=document.getElementById('ppSmartCrateCountInput');if(countInput)countInput.value='1';
+  const summary=document.getElementById('ppNewTotalPcs');if(summary)summary.textContent='0';
+  const weight=document.getElementById('ppNewTotalWeight');if(weight)weight.textContent='0.0 kg';
+  const boxSummary=document.getElementById('ppNewTotalBoxes');if(boxSummary)boxSummary.textContent='0';
+  if(typeof ppSmartSaveNow==='function'){
+    Promise.resolve(ppSmartSaveNow()).then(()=>{
+      if(typeof showToast==='function')showToast('Crate planning reset. Next Planning PL and Master Data are preserved.','success');
+    }).catch(err=>{
+      console.error('Crate plan reset cloud save failed:',err);
+      if(typeof showToast==='function')showToast('Local crate plan cleared, but cloud save failed. Check connection and use Save Crate List.','warning');
+      else alert('Local crate plan cleared, but cloud save failed. Check your connection and retry Save Crate List.');
+    });
+  }else if(typeof showToast==='function')showToast('Crate planning reset. Next Planning PL and Master Data are preserved.','success');
+ }catch(err){
+  console.error('Crate planning reset failed:',err);
+  alert('Could not safely reset crate planning. No source Next Planning PL or Master Catalog data was intentionally changed.');
+ }
+}
+
+/* V238: orientation-aware crate stacking. Box dimensions are L × W × H.
+   Standard: H is vertical; rotated Width-vertical: W is vertical and H is
+   the cross-crate footprint. Layer count is limited by the usable crate height. */
+function ppV238Orientation(value){
+ const v=String(value||'').toLowerCase();
+ if(v==='width'||v.includes('width vertical')||v.includes('rotate'))return 'width';
+ if(v==='height'||v.includes('height vertical'))return 'height';
+ return 'height';
+}
+function ppV238ResolveOrientation(master,manual){
+ const live=document.getElementById('ppBoxOrientation')?.value;
+ if(live==='width'||live==='height')return live;
+ const saved=String(master?.orientation||'').toLowerCase();
+ if(saved==='width'||saved.includes('width vertical')||saved.includes('rotate'))return 'width';
+ if(saved==='height'||saved.includes('height vertical'))return 'height';
+ return ppV238Orientation(manual?.orientation);
+}
+ppV213MasterBoxesPerLayer=function(master,dim,width,rows){
+ if(!master||!dim)return 0;
+ const manual=Math.floor(ppNum(master.manualPerLayer));
+ if(manual>0)return manual;
+ const orientation=ppV238ResolveOrientation(master,{});
+ const acrossDim=orientation==='width'?dim.h:dim.w;
+ const usableWidth=Math.max(1,ppNum(width)-2*PP_WOOD_THICKNESS);
+ return Math.max(1,Math.floor(usableWidth/Math.max(1,acrossDim))*Math.max(1,Math.floor(ppNum(rows)||1)));
+};
+ppSmartOrientationMetrics=function(items,manual={}){
+ const parsed=(items||[]).map(it=>({it,m:ppSmartMasterFor(it),d:ppDims(ppSmartMasterFor(it)?.boxSize)}));
+ if(!parsed.length||parsed.some(x=>!x.m||!x.d))return {valid:false,reason:'Box Size is missing for one or more profiles. Complete Crate Master Data first.'};
+ const masters=parsed.map(x=>x.m),width=ppNum(manual.outerW)||Math.max(0,...masters.map(m=>ppNum(m.crateWidth)));
+ if(width<=0)return {valid:false,reason:'Crate Master Data usable width is missing.'};
+ const rows=Math.max(1,Math.min(3,Math.floor(ppNum(manual.rowMultiplier)||Math.max(1,...masters.map(m=>ppNum(m.rowMultiplier)||1)))));
+ const grouped=new Map();
+ for(const x of parsed){
+  const pbox=Math.max(1,ppNum(x.it.pcsPerBox)||ppNum(x.m.pcsPerBox)||1);
+  const pcs=Math.max(0,Math.floor(ppNum(x.it.pcs))),boxCount=Math.ceil(pcs/pbox);
+  if(!boxCount)continue;
+  const orientation=ppV238ResolveOrientation(x.m,manual);
+  const key=[x.it.profile,x.it.itemCode,x.it.length,x.m.boxSize,pbox,orientation].join('|');
+  if(!grouped.has(key))grouped.set(key,{profile:x.it.profile,itemCode:x.it.itemCode,length:ppNum(x.it.length),master:x.m,dim:x.d,pcsPerBox:pbox,orientation,boxes:0});
+  grouped.get(key).boxes+=boxCount;
+ }
+ const groups=[...grouped.values()],boxes=groups.reduce((sum,g)=>sum+g.boxes,0);
+ if(boxes<=0)return {valid:false,reason:'Enter PCS per crate to calculate box layers and height.'};
+ for(const g of groups){
+  const acrossDim=g.orientation==='width'?g.dim.h:g.dim.w;
+  g.verticalHeight=g.orientation==='width'?g.dim.w:g.dim.h;
+  g.perLayer=Math.max(1,Math.floor(Math.max(1,width-2*PP_WOOD_THICKNESS)/Math.max(1,acrossDim))*rows);
+  g.layers=Math.ceil(g.boxes/g.perLayer);
+  g.packingH=g.layers*g.verticalHeight;
+  g.maxLayers=Math.floor(PP_MAX_PACKING_HEIGHT/Math.max(1,g.verticalHeight));
+  g.maxBoxes=g.perLayer*g.maxLayers;
+ }
+ const layers=groups.reduce((sum,g)=>sum+g.layers,0);
+ const packingH=groups.reduce((sum,g)=>sum+g.packingH,0),overallH=packingH+PP_LEG_HEIGHT;
+ const perLayer=Math.min(...groups.map(g=>g.perLayer));
+ const profileLength=Math.max(0,...items.map(it=>ppNum(it.length)));
+ const masterSingleLength=Math.max(0,...masters.map(m=>ppNum(m.manualOuterL)>0?ppNum(m.manualOuterL)/Math.max(1,ppNum(m.rowMultiplier)||1):0));
+ const outerL=ppNum(manual.outerL)||Math.ceil(Math.max(profileLength+32,masterSingleLength)*rows);
+ const maxBoxL=Math.max(0,...parsed.map(x=>ppNum(x.d.l)));
+ if(maxBoxL>outerL/rows+0.5)return {valid:false,reason:`Box length ${maxBoxL} mm is longer than available length per row (${Math.round(outerL/rows)} mm). Increase crate length in Crate Master Data.`};
+ const maxLayers=Math.min(...groups.map(g=>g.maxLayers));
+ const valid=packingH<=PP_MAX_PACKING_HEIGHT&&overallH<=PP_MAX_OVERALL_HEIGHT;
+ const layerBreakdown=groups.map(g=>`${g.profile} ${g.itemCode}: ${g.boxes} boxes ÷ ${g.perLayer}/layer = ${g.layers} layer(s) × ${g.verticalHeight} mm (${g.orientation==='width'?'rotated width vertical':'standard height vertical'}) = ${g.packingH} mm`);
+ const orientations=[...new Set(groups.map(g=>g.orientation))];
+ return {valid,reason:valid?'':`Needs ${packingH} mm packing height. ${layerBreakdown.join('; ')}. Maximum packing height is ${PP_MAX_PACKING_HEIGHT} mm.`,orientation:orientations.length===1?orientations[0]:'mixed',rowMultiplier:rows,width,internalWidth:width,widthOutside:width+2*PP_WOOD_THICKNESS,perLayer,per:perLayer,layers,boxes,packingH,overallH,maxCapacity:groups.reduce((sum,g)=>sum+g.maxBoxes,0),maxLayers,maxAcross:perLayer,maxVertical:Math.max(...groups.map(g=>g.verticalHeight)),verticalBoxHeight:Math.max(...groups.map(g=>g.verticalHeight)),outerL,outerW:width,boxesAcross:perLayer,layerGroups:groups,layerBreakdown};
+};
+ppSmartCalcDims=function(items,manual={}){const c=ppSmartOrientationMetrics(items,manual);return c.valid?{...c,packingH:c.packingH,overallH:c.overallH,per:c.perLayer,perLayer:c.perLayer,layers:c.layers,boxes:c.boxes,orientation:c.orientation,rowMultiplier:c.rowMultiplier,outerW:c.width,outerL:c.outerL}:c;};
+
