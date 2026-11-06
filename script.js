@@ -6693,16 +6693,26 @@ async function processPlExcelUpload() {
         if(base<1){errors.push(`Row ${excelRow}: Total Qty (${totalQty}) is too small for ${crateCount} crates.`);continue;}
         crateQtys=Array.from({length:crateCount},(_,idx)=>base+(idx<remainder?1:0));
       }
-      const matches=masterData.filter(m=>
+      let matches=masterData.filter(m=>
         normCode(m.itemCode)===normCode(itemCode) &&
         (!profileRaw || normProfile(m.profile)===normProfile(profileRaw)) &&
         (!lengthRaw || normLength(cleanLen(m.length))===lengthRaw)
       );
+      // Excel lengths may be rounded to one decimal place while Master Catalog
+      // stores a more precise value. If the profile + item code identifies
+      // exactly one catalog row, safely use that authoritative catalog length.
+      if(!matches.length && lengthRaw){
+        const itemMatches=masterData.filter(m=>
+          normCode(m.itemCode)===normCode(itemCode) &&
+          (!profileRaw || normProfile(m.profile)===normProfile(profileRaw))
+        );
+        if(itemMatches.length===1) matches=itemMatches;
+      }
       if(!matches.length){
-        errors.push(`Row ${excelRow}: ${profileRaw} / ${itemCode}${lengthRaw?` / ${lengthRaw} mm`:''} not found in Master Catalog.`);continue;
+        errors.push(`Row ${excelRow}: ${profileRaw} / ${itemCode}${lengthRaw?` / ${lengthRaw} mm`:''} not found in Master Catalog. Add this profile/item to Master Catalog first.`);continue;
       }
       if(matches.length>1){
-        errors.push(`Row ${excelRow}: ${itemCode} matches multiple Master Catalog entries. Add Length to Excel to identify the correct item.`);continue;
+        errors.push(`Row ${excelRow}: ${itemCode} matches multiple Master Catalog entries. Add the exact Master Catalog Length to Excel to identify the correct item.`);continue;
       }
       const cat=matches[0], profile=String(cat.profile||profileRaw).trim(), length=cleanLen(cat.length);
       if(!length){errors.push(`Row ${excelRow}: Master Catalog length is missing for ${itemCode}.`);continue;}
@@ -6712,7 +6722,7 @@ async function processPlExcelUpload() {
         const label=crateCount===1 ? crateRaw : `${crateRaw}-${romanSuffix(crateIndex+1)}`;
         const crateNo=`Crate ${label}`;
         const qty=crateQtys[crateIndex];
-        const uniqueKey=`${uploadMonth}|${uploadContainer}|${crateNo}|${profile}|${itemCode}|${length}`.toLowerCase();
+        const uniqueKey=`${uploadMonth}|${uploadContainer}|${crateNo}|${poNum}|${profile}|${itemCode}|${length}`.toLowerCase();
         if(seen.has(uniqueKey)){
           errors.push(`Row ${excelRow}: duplicate crate/profile/item entry in this Excel file (${label}).`);
           rowHasError=true;continue;
@@ -6739,10 +6749,10 @@ async function processPlExcelUpload() {
     if(errors.length) throw new Error(errors.slice(0,8).join(' | ')+(errors.length>8?` | +${errors.length-8} more errors`:''));
     if(!rowsToInsert.length) throw new Error('No valid packing rows were found.');
     // Read-only duplicate check: never overwrite, delete, or update existing records.
-    const {data:existing,error:existingError}=await supabaseClient.from('packing_list').select('crate_no,profile,item_code,length,shipment_month,container').eq('shipment_month',uploadMonth).eq('container',uploadContainer);
+    const {data:existing,error:existingError}=await supabaseClient.from('packing_list').select('crate_no,po_number,profile,item_code,length,shipment_month,container').eq('shipment_month',uploadMonth).eq('container',uploadContainer);
     if(existingError) throw existingError;
-    const existingKeys=new Set((existing||[]).map(x=>`${String(x.shipment_month||'').trim()}|${String(x.container||'').trim()}|${String(x.crate_no||'').replace(/^crate\s*/i,'').trim()}|${String(x.profile||'').trim()}|${String(x.item_code||'').trim()}|${cleanLen(x.length)}`.toLowerCase()));
-    const duplicateRows=rowsToInsert.filter(x=>existingKeys.has(`${uploadMonth}|${uploadContainer}|${x.crate_no.replace(/^crate\s*/i,'')}|${x.profile}|${x.item_code}|${cleanLen(x.length)}`.toLowerCase()));
+    const existingKeys=new Set((existing||[]).map(x=>`${String(x.shipment_month||'').trim()}|${String(x.container||'').trim()}|${String(x.crate_no||'').replace(/^crate\s*/i,'').trim()}|${String(x.po_number||'').trim()}|${String(x.profile||'').trim()}|${String(x.item_code||'').trim()}|${cleanLen(x.length)}`.toLowerCase()));
+    const duplicateRows=rowsToInsert.filter(x=>existingKeys.has(`${uploadMonth}|${uploadContainer}|${x.crate_no.replace(/^crate\s*/i,'')}|${String(x.po_number||'').trim()}|${x.profile}|${x.item_code}|${cleanLen(x.length)}`.toLowerCase()));
     if(duplicateRows.length) throw new Error(`Upload stopped safely: ${duplicateRows.length} record(s) already exist in ${uploadMonth} / ${uploadContainer}. Existing data was not changed.`);
     if(uploadBtn) uploadBtn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
     const {error:insertError}=await supabaseClient.from('packing_list').insert(rowsToInsert);
