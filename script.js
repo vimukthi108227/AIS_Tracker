@@ -5088,7 +5088,7 @@ function renderPlAnalytics(filteredPls) {
             if (!crateMap[pl.crateNo]) crateMap[pl.crateNo] = { req: 0, comp: 0, items: [] };
             crateMap[pl.crateNo].req += reqQty;
             crateMap[pl.crateNo].comp += Math.min(reqQty,allocation.box+allocation.wrap);
-            crateMap[pl.crateNo].items.push({ profile: pl.profile, itemCode: pl.itemCode || (matched ? matched.itemCode : ''), length: pl.length, req: reqQty, crate: allocation.crate||0, box: allocation.box||0, wrap: allocation.wrap||0, punch: allocation.punch||0, cut: allocation.cut||0, pending: allocation.pending||0, unitWeight: uw });
+            crateMap[pl.crateNo].items.push({ poNumber: pl.poNumber || pl.po_number || '', profile: pl.profile, itemCode: pl.itemCode || (matched ? matched.itemCode : ''), length: pl.length, req: reqQty, crate: allocation.crate||0, box: allocation.box||0, wrap: allocation.wrap||0, punch: allocation.punch||0, cut: allocation.cut||0, pending: allocation.pending||0, unitWeight: uw });
         });
 
         let sortedCrateKeys = Object.keys(crateMap).sort((a,b) => {
@@ -5167,7 +5167,7 @@ function renderPlAnalytics(filteredPls) {
                 let boxStageFull = ((i.box + i.wrap) >= i.req);
                 return `<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; border-left: 3px solid ${isManualComplete ? '#059669' : '#0284c7'}; padding-left: 10px; margin-bottom: 5px; font-size: 11.5px;">
                     <div style="font-weight: 700; color: var(--primary-dark); margin-right: 15px;">
-                        Pr: ${i.profile} <span style="margin: 0 4px; color: #cbd5e1;">|</span> L: ${i.length}mm <span style="margin: 0 4px; color: #cbd5e1;">|</span> Req Qty: ${i.req}
+                        PO: ${i.poNumber || '-'} <span style="margin: 0 4px; color: #cbd5e1;">|</span> Pr: ${i.profile} <span style="margin: 0 4px; color: #cbd5e1;">|</span> L: ${i.length}mm <span style="margin: 0 4px; color: #cbd5e1;">|</span> Req Qty: ${i.req}
                     </div>
                     <div style="display:flex; gap:6px; flex-wrap:wrap; font-size: 10.5px; align-items:center;">
                         <span style="background: #059669; color: #fff; padding: 2px 6px; border-radius: 4px; font-weight: 700;">Crate: ${i.crate||0}</span>
