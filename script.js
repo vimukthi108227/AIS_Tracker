@@ -6,7 +6,8 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let currentUserRole = null; let isAdminUnlocked = false; let isDarkMode = false; let isAppBusy = false;
 let masterChartInstance = null, overallPoChartInstance = null, overallPlChartInstance = null, plChartInstance = null, monthlyShiftChartInstance = null, monthlyTeamContributionChartInstance = null, poChartInstances = [], rejectDashChart = null, rejectProfileChartInstance = null;
-let cardboardStockList = [], cardboardManualData = [], dailyInstructionsList = [], masterData = [], historyLogs = [], poList = [], shipmentList = [], packingLists = [], rejectLogs = [], recoverLogs = [], recoveryCutLogs = [], recoveryWrapLogs = []; 
+let cardboardStockList = [], cardboardManualData = [], dailyInstructionsList = [], masterData = [], historyLogs = [], dailyTeamPlans = [], poList = [], shipmentList = [], packingLists = [], rejectLogs = [], recoverLogs = [], recoveryCutLogs = [], recoveryWrapLogs = [];
+let teamPlanActualChartInstance = null, teamPlanWeightChartInstance = null; 
 let globalManualCrates = {};
 let stockResetInProgress = false;
 let shipmentStates = {};
@@ -602,6 +603,17 @@ async function loadDataFromSupabase(isSilent = false) {
          throw new Error(`Could not safely read ${table}: ${e.message || e}`);
        }
      };
+    const safeFetchAdditiveFeature = async (table, options={}) => {
+      try { return await safeFetch(table, options, true); }
+      catch(e) {
+        const msg=String(e?.message||e);
+        if(table==='daily_team_plans' && /(does not exist|could not find the table|schema cache|42P01)/i.test(msg)) {
+          console.warn('Daily Team Plan feature is awaiting its additive Supabase migration.',e);
+          return [];
+        }
+        throw new Error(`Could not safely read ${table}: ${msg}`);
+      }
+    };
     const results = await Promise.all([
         safeFetch('master_catalog'),
         safeFetchOptional('production_orders', { order: {col: 'id', asc: false} }),
@@ -613,7 +625,8 @@ async function loadDataFromSupabase(isSilent = false) {
         safeFetchOptional('cardboard_stock', { order: {col: 'id', asc: false} }),
         safeFetchOptional('daily_instructions', { order: {col: 'id', asc: false} }),
         safeFetchOptional('recovery_cut_logs', { order: {col: 'id', asc: false} }),
-        safeFetchOptional('recovery_wrap_logs', { order: {col: 'id', asc: false} })
+        safeFetchOptional('recovery_wrap_logs', { order: {col: 'id', asc: false} }),
+        safeFetchAdditiveFeature('daily_team_plans', { order: {col: 'plan_date', asc: false} })
     ]);
 
     let catDataRaw = results[0];
@@ -623,7 +636,7 @@ async function loadDataFromSupabase(isSilent = false) {
     }
 
     setDbStatus(true,'Supabase data sync completed.');
-    const poData = results[1], shipData = results[2], plData = results[3], logData = results[4], rjData = results[5], rcData = results[6], cbData = results[7], instData = results[8], rCutData = results[9], rWrapData = results[10];
+    const poData = results[1], shipData = results[2], plData = results[3], logData = results[4], rjData = results[5], rcData = results[6], cbData = results[7], instData = results[8], rCutData = results[9], rWrapData = results[10], teamPlanData = results[11];
     
     let syncRow = instData.find(i => i.target_user === 'SYS_CRATES_SYNC');
     if (syncRow && syncRow.message) {
@@ -698,7 +711,8 @@ async function loadDataFromSupabase(isSilent = false) {
     }));
     shipmentList = shipData.map(item => ({ id: item.id, date: item.shipment_date, month: item.shipment_month, poNumber: item.po_number, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), container: item.container, shippedQty: item.shipped_qty, remainingBalance: item.remaining_balance }));
     packingLists = plData.map(item => ({ id: item.id, plNumber: item.pl_number, poNumber: item.po_number, month: item.shipment_month || 'January', container: item.container || '1st Container', crateNo: item.crate_no || `Crate 1`, profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), boxQty: item.box_qty || 1, pcsQty: item.pcs_qty || 0, netWeight: item.net_weight || 0, grossWeight: item.gross_weight || 0, date: item.packing_date, createdAt: item.created_at || item.createdAt || null, updatedAt: item.updated_at || item.updatedAt || null, timestamp: item.timestamp || null }));
-    historyLogs = logData.map(item => ({ id: item.id, date: item.log_date, shift: item.shift, team: item.team || item.production_team || '', profile: item.profile, length: cleanLen(item.length), cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, timestamp: item.log_time || item.created_at || new Date().toISOString() }));
+    historyLogs = logData.map(item => ({ id: item.id, date: item.log_date, shift: item.shift, team: item.team || item.production_team || '', profile: item.profile, itemCode: item.item_code || '', length: cleanLen(item.length), cutQty: item.cut_qty || 0, punchQty: item.punch_qty || 0, wrapQty: item.wrap_qty || 0, boxQty: item.box_qty || 0, crateQty: item.crate_qty || 0, timestamp: item.log_time || item.created_at || new Date().toISOString() }));
+    dailyTeamPlans = (teamPlanData || []).map(item => ({id:item.id,date:item.plan_date,shift:item.shift,team:item.team,profile:item.profile,itemCode:item.item_code,length:cleanLen(item.length),cutQty:Number(item.plan_cut_qty)||0,punchQty:Number(item.plan_punch_qty)||0,wrapQty:Number(item.plan_wrap_qty)||0,boxQty:Number(item.plan_box_qty)||0,crateQty:Number(item.plan_crate_qty)||0,updatedAt:item.updated_at||item.created_at||null}));
     rejectLogs = rjData; recoverLogs = rcData; dailyInstructionsList = (instData || []).map(normalizeDailyInstructionRow);
     nextPlStateLoaded = false; nextPlRestorePersistedState();
     recoveryCutLogs = (rCutData || []).map(r => ({id:r.id,cut_date:r.cut_date,source_profile:r.source_profile,source_item_code:r.source_item_code,original_length:cleanLen(r.original_length),new_profile:r.new_profile,new_item_code:r.new_item_code,new_length:cleanLen(r.new_length),cut_pcs:Number(r.cut_pcs)||0,cut_weight:Number(r.cut_weight)||0}));
@@ -2045,7 +2059,8 @@ function switchTab(tabId, btn) {
   
   setTimeout(() => {
       if (tabId === 'dashboardTab') renderDashboard(); 
-      if (tabId === 'balanceWorkTab') renderBalanceWorkTable(); 
+      if (tabId === 'balanceWorkTab') renderBalanceWorkTable();
+      if (tabId === 'teamProductionTab') renderDailyTeamPerformance(); 
       if (tabId === 'nextPlPlanningTab') renderNextPlPlanning(); 
       if (tabId === 'cardboardTab') renderCardboardStock();
       if (tabId === 'extrusionTab') { resetExtrusionForm(); renderExtrusionModule(false); loadExtrusionReceipts(false); switchExtrusionSubTab('exInSubTab',document.querySelectorAll('.extrusion-sub-btn')[1]); } 
@@ -4146,6 +4161,84 @@ async function resetCardboardStock(){
   });
 }
 
+function teamPerfWeightFor(profile,itemCode,length,pcs){
+  const matches=masterData.filter(m=>String(m.profile||'').trim()===String(profile||'').trim()&&String(m.itemCode||'').trim()===String(itemCode||'').trim()&&cleanLen(m.length)===cleanLen(length));
+  const weights=[...new Set(matches.map(m=>Number(m.unitWeight)||0))];
+  return weights.length===1&&weights[0]>0 ? (Number(pcs)||0)*weights[0] : null;
+}
+let selectedTeamPerfSheet='Team A';
+function onTeamPerfDateChange(){
+  const date=document.getElementById('teamPerfDate')?.value||'';
+  if(date){const month=document.getElementById('teamPerfMonth');if(month)month.value=date.slice(0,7);}
+  renderDailyTeamPerformance();
+}
+function onTeamPerfMonthChange(){
+  const date=document.getElementById('teamPerfDate');if(date)date.value='';
+  renderDailyTeamPerformance();
+}
+function selectTeamPerfSheet(team,button){
+  selectedTeamPerfSheet=team;
+  document.querySelectorAll('.team-sheet-tabs button').forEach(b=>b.classList.toggle('active',b.dataset.team===team));
+  renderDailyTeamPerformance();
+}
+function printTeamPerformanceSheet(){
+  const content=document.getElementById('teamPerfSheetContent'); if(!content)return;
+  const team=selectedTeamPerfSheet, caption=document.getElementById('teamPerfSheetCaption')?.textContent||'';
+  const win=window.open('','_blank','width=1100,height=800'); if(!win){showToast('Please allow pop-ups to print the team report.','warning');return;}
+  win.document.write(`<!doctype html><html><head><title>${team} Production Report</title><style>body{font:13px Arial,sans-serif;padding:24px;color:#183447}h2{color:#075b68}table{width:100%;border-collapse:collapse;margin-top:16px}th{background:#105466;color:#fff}td,th{border:1px solid #cbd5e1;padding:8px;text-align:left}.extra{color:#0877bd;font-weight:bold}.below{color:#be123c}.above{color:#047857}.meta{color:#52677a}</style></head><body><h2>${team} — Plan vs Actual Production</h2><div class="meta">${caption}</div>${content.innerHTML}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  win.document.close();
+}
+function renderDailyTeamPerformance(){
+  const sheet=document.getElementById('teamPerfSheetContent'); if(!sheet)return;
+  const date=document.getElementById('teamPerfDate')?.value||'';
+  const month=document.getElementById('teamPerfMonth')?.value||new Date().toISOString().slice(0,7);
+  const isDaily=!!date;
+  const periodMatch=d=>isDaily?String(d||'')===date:String(d||'').startsWith(month);
+  const teams=['Team A','Team B','Team C'], colors=['#0f766e','#2563eb','#d97706'];
+  const stages=[['Cut','cutQty'],['Punch','punchQty'],['Wrapping','wrapQty']];
+  const selectedPlans=dailyTeamPlans.filter(p=>periodMatch(p.date)&&teams.includes(String(p.team||'')));
+  const selectedActual=historyLogs.filter(h=>periodMatch(h.date)&&teams.includes(String(h.team||'')));
+  const sums=Object.fromEntries(teams.map(t=>[t,{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0,stages:Object.fromEntries(stages.map(([n])=>[n,{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0}]))}]));
+  const rows=[]; let unresolved=0;
+  const norm=v=>String(v??'').trim().toLowerCase();
+  teams.forEach(team=>stages.forEach(([stage,key])=>{
+    const plans=selectedPlans.filter(p=>p.team===team); const actuals=selectedActual.filter(a=>a.team===team);
+    let plan=0,actual=0,additional=0,planWt=0,actualWt=0,additionalWt=0;
+    plans.forEach(p=>{const q=Number(p[key])||0;plan+=q;const w=teamPerfWeightFor(p.profile,p.itemCode,p.length,q);if(w==null)unresolved++;else planWt+=w;});
+    actuals.forEach(a=>{
+      const q=Number(a[key])||0;if(q<=0)return; actual+=q;
+      const matchingPlan=plans.filter(p=>norm(p.profile)===norm(a.profile)&&norm(p.itemCode)===norm(a.itemCode)&&cleanLen(p.length)===cleanLen(a.length)&&String(p.shift||'')===String(a.shift||''));
+      const plannedStageQty=matchingPlan.reduce((n,p)=>n+(Number(p[key])||0),0);
+      const isAdditional=plannedStageQty<=0;
+      let w=teamPerfWeightFor(a.profile,a.itemCode,a.length,q);
+      if(w==null){const matches=masterData.filter(m=>norm(m.profile)===norm(a.profile)&&cleanLen(m.length)===cleanLen(a.length));const ws=[...new Set(matches.map(m=>Number(m.unitWeight)||0))];w=ws.length===1&&ws[0]>0?q*ws[0]:null;}
+      if(isAdditional){additional+=q;if(w==null)unresolved++;else additionalWt+=w;}
+      else if(w==null)unresolved++;else actualWt+=w;
+    });
+    // Actual includes both planned and additional output; show additional separately and keep total actual visible.
+    const diff=actual-plan,pct=plan>0?diff/plan*100:null,status=plan===0?(actual>0?'Additional only':'No data'):(actual<plan?'Below plan':actual>plan?'Above plan':'On plan');
+    const stageObj={plan,actual,additional,planWt,actualWt,additionalWt}; sums[team].stages[stage]={...stageObj};
+    ['plan','actual','additional','planWt','actualWt','additionalWt'].forEach(k=>sums[team][k]+=stageObj[k]);
+    rows.push({team,stage,...stageObj,diff,pct,status});
+  }));
+  const fmt=n=>Number(n||0).toLocaleString('en-US',{maximumFractionDigits:2});
+  const cards=document.getElementById('teamPerfCards');
+  if(cards)cards.innerHTML=teams.map((team,i)=>{const t=sums[team],diff=t.actual-t.plan,pct=t.plan>0?diff/t.plan*100:null,cls=pct===null?'neutral':pct<0?'below':'above';const stageRows=stages.map(([name])=>{const s=t.stages[name],d=s.actual-s.plan,p=s.plan>0?d/s.plan*100:null,c=p===null?'neutral':p<0?'below':'above';return `<div class="team-perf-stage-row"><div class="team-perf-stage-name">${name}</div><div><small>Plan</small><b>${fmt(s.plan)} Pcs</b><small>${s.planWt.toFixed(2)} kg</small></div><div><small>Actual</small><b>${fmt(s.actual)} Pcs</b><small>${(s.actualWt+s.additionalWt).toFixed(2)} kg</small></div><div class="team-perf-stage-diff ${c}"><small>Difference / %</small><b>${d>0?'+':''}${fmt(d)} Pcs</b><b>${p===null?'—':`${p>0?'+':''}${p.toFixed(1)}%`}</b></div></div>`;}).join('');return `<div class="team-perf-card" style="--team-color:${colors[i]}"><h4><i class="fa-solid fa-people-group"></i> ${team}</h4><div class="team-perf-main"><div class="team-perf-metric"><small>Planned Output</small><b>${fmt(t.plan)} Pcs</b><small>${t.planWt.toFixed(2)} kg</small></div><div class="team-perf-metric"><small>Total Actual Output</small><b>${fmt(t.actual)} Pcs</b><small>${(t.actualWt+t.additionalWt).toFixed(2)} kg</small></div><div class="team-perf-metric team-perf-additional"><small>Additional Production</small><b>${fmt(t.additional)} Pcs</b><small>${t.additionalWt.toFixed(2)} kg</small></div><div class="team-perf-metric"><small>Plan Variance</small><b class="${cls}">${pct===null?'—':`${pct>0?'+':''}${pct.toFixed(1)}%`}</b><small>${diff>0?'+':''}${fmt(diff)} Pcs</small></div></div><div class="team-perf-stage-breakdown"><div class="team-perf-stage-head"><span>Stage</span><span>Plan</span><span>Actual</span><span>Additional</span></div>${stages.map(([name])=>{const s=t.stages[name];return `<div class="team-perf-stage-row"><div class="team-perf-stage-name">${name}</div><div><b>${fmt(s.plan)} Pcs</b><small>${s.planWt.toFixed(2)} kg</small></div><div><b>${fmt(s.actual)} Pcs</b><small>${s.actualWt.toFixed(2)} kg</small></div><div class="team-perf-additional-text"><b>${fmt(s.additional)} Pcs</b><small>${s.additionalWt.toFixed(2)} kg</small></div></div>`;}).join('')}</div><div class="team-perf-variance ${cls}"><span>${pct===null?'No plan entered':pct<0?'Below plan':pct>0?'Above plan':'Plan achieved'}</span><strong>${pct===null?'—':`${pct>0?'+':''}${pct.toFixed(1)}%`}</strong></div></div>`;}).join('');
+  const periodLabel=isDaily?`Daily: ${date}`:`Monthly: ${month}`;
+  const caption=document.getElementById('teamPerfSheetCaption');if(caption)caption.textContent=`${periodLabel} • Cut, Punch and Wrapping only • Additional production is actual stage quantity entered where that stage has no plan quantity.`;
+  const teamRows=rows.filter(r=>r.team===selectedTeamPerfSheet);
+  const total=teamRows.reduce((a,r)=>{['plan','actual','additional','planWt','actualWt','additionalWt'].forEach(k=>a[k]+=r[k]);return a;},{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0});
+  sheet.innerHTML=`<table class="team-individual-report"><thead><tr><th>Stage</th><th>Plan (Pcs)</th><th>Actual (Pcs)</th><th>Additional (Pcs)</th><th>Difference (Pcs)</th><th>Variance %</th><th>Plan Weight (kg)</th><th>Actual Weight (kg)</th><th>Additional Weight (kg)</th><th>Status</th></tr></thead><tbody>${teamRows.map(r=>`<tr><td><b>${r.stage}</b></td><td>${fmt(r.plan)}</td><td>${fmt(r.actual)}</td><td class="team-perf-additional-text">${fmt(r.additional)}</td><td class="${r.diff<0?'team-perf-table-below':'team-perf-table-above'}">${r.diff>0?'+':''}${fmt(r.diff)}</td><td>${r.pct===null?'—':`${r.pct>0?'+':''}${r.pct.toFixed(1)}%`}</td><td>${r.planWt.toFixed(2)}</td><td>${(r.actualWt+r.additionalWt).toFixed(2)}</td><td class="team-perf-additional-text">${r.additionalWt.toFixed(2)}</td><td>${r.status}</td></tr>`).join('')}</tbody><tfoot><tr><td><b>TOTAL STAGE ACTIVITY</b></td><td><b>${fmt(total.plan)}</b></td><td><b>${fmt(total.actual)}</b></td><td class="team-perf-additional-text"><b>${fmt(total.additional)}</b></td><td><b>${fmt(total.actual-total.plan)}</b></td><td><b>${total.plan?`${((total.actual-total.plan)/total.plan*100).toFixed(1)}%`:'—'}</b></td><td><b>${total.planWt.toFixed(2)}</b></td><td><b>${(total.actualWt+total.additionalWt).toFixed(2)}</b></td><td class="team-perf-additional-text"><b>${total.additionalWt.toFixed(2)}</b></td><td></td></tr></tfoot></table>`;
+  const notice=document.getElementById('teamPerfNotice');if(notice)notice.textContent=`${periodLabel} • ${selectedPlans.length} saved plan line(s) • ${selectedActual.length} actual production record(s) • Additional production is shown separately in blue. Weight uses unambiguous Master Catalog unit weight; ${unresolved} line calculation(s) without a unique unit weight are excluded.`;
+  if(typeof Chart!=='undefined'){
+    const textColor=isDarkMode?'#f8fafc':'#334155';
+    const draw=(id,old,labels,sets)=>{const cv=document.getElementById(id);if(!cv)return old;safeChartDestroy(old,id);return new Chart(cv,{type:'bar',data:{labels,datasets:sets},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:textColor,usePointStyle:true,boxWidth:9}},tooltip:{mode:'index',intersect:false}},interaction:{mode:'index',intersect:false},scales:{x:{ticks:{color:textColor},grid:{display:false}},y:{beginAtZero:true,ticks:{color:textColor},grid:{color:isDarkMode?'#334155':'#e2e8f0'}}}}});};
+    teamPlanActualChartInstance=draw('teamPlanActualChart',teamPlanActualChartInstance,teams,[{label:'Plan (Pcs)',data:teams.map(t=>sums[t].plan),backgroundColor:'#94a3b8',borderRadius:6},{label:'Actual Total (Pcs)',data:teams.map(t=>sums[t].actual),backgroundColor:'#0f766e',borderRadius:6},{label:'Additional (included in actual) (Pcs)',data:teams.map(t=>sums[t].additional),backgroundColor:'#168bd2',borderRadius:6}]);
+    teamPlanWeightChartInstance=draw('teamPlanActualWeightChart',teamPlanWeightChartInstance,teams,[{label:'Plan Weight (kg)',data:teams.map(t=>Number(sums[t].planWt.toFixed(2))),backgroundColor:'#93c5fd',borderRadius:6},{label:'Actual Total Weight (kg)',data:teams.map(t=>Number((sums[t].actualWt+sums[t].additionalWt).toFixed(2))),backgroundColor:'#0f766e',borderRadius:6},{label:'Additional Weight (included in actual) (kg)',data:teams.map(t=>Number(sums[t].additionalWt.toFixed(2))),backgroundColor:'#168bd2',borderRadius:6}]);
+  }
+}
+
+
 async function submitDailyEntry() {
   if(isAppBusy) {
     showToast('A save is already in progress. Please wait for it to finish.','info');
@@ -4158,6 +4251,8 @@ async function submitDailyEntry() {
 
   let updatedRows = [];
   let insertedLog = null;
+  let savedTeamPlan = null;
+  let previousTeamPlan = null;
   let databaseCommitComplete = false;
   let cardboardDeducted = null;
   let cardboardToDeduct = 0;
@@ -4172,14 +4267,17 @@ async function submitDailyEntry() {
     const cutQty=Number(raw('cutQty')||0), punchQty=Number(raw('punchQty')||0),
       wrapQty=Number(raw('wrapQty')||0), enteredBoxes=Number(raw('boxQty')||0),
       crateQty=Number(raw('crateQty')||0);
+    const planQty={cut:Number(raw('planCutQty')||0),punch:Number(raw('planPunchQty')||0),wrap:Number(raw('planWrapQty')||0),box:Number(raw('planBoxQty')||0),crate:Number(raw('planCrateQty')||0)};
 
     if(!dateVal||!shiftVal||!teamVal||!profileVal||!itemCodeVal||!lengthVal)
       return showToast('Please select date, shift, team, profile, item code and length.','warning');
     const quantities=[['Cut',cutQty],['Punch',punchQty],['Wrapping',wrapQty],['Box',enteredBoxes],['Crate',crateQty]];
     const invalid=quantities.find(([label,value])=>!Number.isFinite(value)||value<0||!Number.isInteger(value));
+    const invalidPlan=Object.entries(planQty).find(([stage,value])=>!Number.isFinite(value)||value<0||!Number.isInteger(value));
+    if(invalidPlan) return showToast(`${invalidPlan[0]} plan quantity must be a whole number greater than or equal to 0.`,'warning');
     if(invalid) return showToast(`${invalid[0]} quantity must be a whole number greater than or equal to 0.`,'warning');
-    if(quantities.every(([,value])=>value===0))
-      return showToast('Enter at least one production quantity before saving. This prevents empty/duplicate entries.','warning');
+    if(quantities.every(([,value])=>value===0)&&Object.values(planQty).every(v=>v===0))
+      return showToast('Enter at least one actual production quantity or a planned PCS quantity before saving.','warning');
 
     item=masterData.find(m=>String(m.profile).trim()===profileVal&&String(m.itemCode).trim()===itemCodeVal&&cleanLen(m.length)===cleanLen(lengthVal));
     if(!item) return showToast('Selected catalog item was not found. Refresh data and try again.','error');
@@ -4257,9 +4355,23 @@ async function submitDailyEntry() {
     }
     insertedLog=await dbInsert('history_logs',newLog,'Production history save failed');
     databaseCommitComplete = true;
+    let teamPlanSaved = true;
+    {
+      try{
+        previousTeamPlan=dailyTeamPlans.find(x=>x.date===dateVal&&x.shift===shiftVal&&x.team===teamVal&&String(x.profile)===profileVal&&String(x.itemCode)===itemCodeVal&&cleanLen(x.length)===cleanLen(lengthVal))||null;
+        const planRow={plan_date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,item_code:itemCodeVal,length:cleanLen(lengthVal),updated_at:new Date().toISOString(),plan_cut_qty:planQty.cut,plan_punch_qty:planQty.punch,plan_wrap_qty:planQty.wrap,plan_box_qty:planQty.box,plan_crate_qty:planQty.crate};
+        const {data: savedPlan,error: planError}=await supabaseClient.from('daily_team_plans').upsert(planRow,{onConflict:'plan_date,shift,team,profile,item_code,length'}).select().single();
+        if(planError) throw planError;
+        savedTeamPlan=planRow;
+        const localPlan={id:savedPlan?.id||null,date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,itemCode:itemCodeVal,length:cleanLen(lengthVal),cutQty:planQty.cut,punchQty:planQty.punch,wrapQty:planQty.wrap,boxQty:planQty.box,crateQty:planQty.crate,updatedAt:savedPlan?.updated_at||new Date().toISOString()};
+        dailyTeamPlans=dailyTeamPlans.filter(x=>!(x.date===dateVal&&x.shift===shiftVal&&x.team===teamVal&&String(x.profile)===profileVal&&String(x.itemCode)===itemCodeVal&&cleanLen(x.length)===cleanLen(lengthVal)));
+        dailyTeamPlans.push(localPlan);
+      }catch(planErr){teamPlanSaved=false;console.error('Team plan save failed after production commit:',planErr);}
+    }
     // Clear quantities immediately after the database commit so a later UI/render
     // exception cannot leave the just-saved quantities ready for an accidental retry.
     ['cutQty','punchQty','wrapQty','boxQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
+    if(teamPlanSaved) ['planCutQty','planPunchQty','planWrapQty','planBoxQty','planCrateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
     updateProductionCardboardAvailability();
 
     Object.assign(item,next);
@@ -4269,16 +4381,16 @@ async function submitDailyEntry() {
     aisRegisterUndo(`Daily Production • ${profileVal} / ${lengthVal} • ${dateVal}`, async()=>{
       for(const row of updatedRows) await dbUpdate('master_catalog',previousToDb(row.before),row.id,'Production undo failed');
       await aisDeleteLatest('history_logs',{log_date:newLog.log_date,shift:newLog.shift,team:newLog.team,profile:newLog.profile,length:newLog.length,cut_qty:newLog.cut_qty,punch_qty:newLog.punch_qty,wrap_qty:newLog.wrap_qty,box_qty:newLog.box_qty,crate_qty:newLog.crate_qty,log_time:newLog.log_time});
+      if(savedTeamPlan){if(previousTeamPlan){await supabaseClient.from('daily_team_plans').upsert({plan_date:previousTeamPlan.date,shift:previousTeamPlan.shift,team:previousTeamPlan.team,profile:previousTeamPlan.profile,item_code:previousTeamPlan.itemCode,length:previousTeamPlan.length,plan_cut_qty:previousTeamPlan.cutQty,plan_punch_qty:previousTeamPlan.punchQty,plan_wrap_qty:previousTeamPlan.wrapQty,plan_box_qty:previousTeamPlan.boxQty,plan_crate_qty:previousTeamPlan.crateQty},{onConflict:'plan_date,shift,team,profile,item_code,length'});}else{await supabaseClient.from('daily_team_plans').delete().match({plan_date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,item_code:itemCodeVal,length:cleanLen(lengthVal)});}}
       if(cardboardDeducted) await aisDeleteLatest('cardboard_stock',{cb_date:cardboardDeducted.date,cb_type:cardboardDeducted.type,incoming:0,used:cardboardDeducted.used});
     },'adminEntryTab');
 
-    historyLogs.unshift({id:insertedLog.id || -Date.now(),date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,length:cleanLen(lengthVal),cutQty,punchQty,wrapQty,boxQty:boxPcs,crateQty,timestamp:insertedLog.log_time||insertedLog.created_at});
-    renderDashboard(); renderProfileSummaryTable(); renderHistoryData(); checkDateStatus(); renderCardboardStock(); renderBalanceWorkTable();
+    historyLogs.unshift({id:insertedLog.id || -Date.now(),date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,itemCode:itemCodeVal,length:cleanLen(lengthVal),cutQty,punchQty,wrapQty,boxQty:boxPcs,crateQty,timestamp:insertedLog.log_time||insertedLog.created_at});
+    renderDashboard(); renderProfileSummaryTable(); renderHistoryData(); checkDateStatus(); renderCardboardStock(); renderBalanceWorkTable(); renderDailyTeamPerformance();
     ['cutQty','punchQty','wrapQty','boxQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
     updateProductionCardboardAvailability();
-    showToast(shortageBoxes>0
-      ? `Production saved successfully. Cardboard stock for this profile is now ${Math.max(0,Number(getAvailableCardboard(profileVal,itemCodeVal,lengthVal))||0)} box(es); ${shortageBoxes} box(es) had to be packed using separately prepared cardboard. Box Qty was saved.`
-      : 'Production saved successfully. Stock and history are updated.','success');
+    const saveMessage=shortageBoxes>0 ? `Production saved successfully. Cardboard stock for this profile is now ${Math.max(0,Number(getAvailableCardboard(profileVal,itemCodeVal,lengthVal))||0)} box(es); ${shortageBoxes} box(es) had to be packed using separately prepared cardboard. Box Qty was saved.` : (teamPlanSaved ? 'Production saved successfully. Stock, history and team plan are updated.' : 'Production and stock were saved, but the Team Plan could not be saved. Run the additive daily_team_plans SQL migration and retry the plan entry.');
+    showToast(saveMessage,teamPlanSaved?'success':'warning');
   } catch(e) {
     console.error('Production save error:',e);
     if(databaseCommitComplete){
@@ -5083,12 +5195,22 @@ function renderPlAnalytics(filteredPls) {
         filteredPls.forEach(pl => {
             const reqQty = Math.max(0,Number(pl.pcsQty)||0);
             const allocation=stageAllocations.get(pl)||{crate:0,box:0,wrap:0,punch:0,cut:0,pending:reqQty};
-            const matched = masterData.find(m => String(m.profile).trim() === String(pl.profile).trim() && cleanLen(m.length) === cleanLen(pl.length) && (!pl.itemCode || String(m.itemCode||'').trim()===String(pl.itemCode).trim()));
-            const uw = matched ? (Number(matched.unitWeight)||0) : 0;
+            const normText = v => String(v ?? '').trim().toUpperCase().replace(/\s+/g,'');
+            const normLen = v => { const n = Number(String(v ?? '').replace(/,/g,'').replace(/mm/ig,'').trim()); return Number.isFinite(n) ? n : null; };
+            const profKey = normText(pl.profile), itemKey = normText(pl.itemCode);
+            const candidates = masterData.filter(m => normText(m.profile) === profKey && (!itemKey || normText(m.itemCode) === itemKey));
+            const plLen = normLen(pl.length);
+            const exact = candidates.find(m => plLen !== null && normLen(m.length) !== null && Math.abs(normLen(m.length)-plLen) < 0.051);
+            const matched = exact || (candidates.length === 1 ? candidates[0] : null);
+            // Prefer saved Packing List net weight; otherwise use a uniquely matched Master Catalog unit weight.
+            const savedLineWeight = Number(pl.netWeight ?? pl.net_weight) || 0;
+            const catalogUnitWeight = matched ? (Number(matched.unitWeight ?? matched.unit_weight) || 0) : 0;
+            const uw = reqQty > 0 && savedLineWeight > 0 ? savedLineWeight / reqQty : catalogUnitWeight;
+            const lineWeight = reqQty * uw;
             if (!crateMap[pl.crateNo]) crateMap[pl.crateNo] = { req: 0, comp: 0, items: [] };
             crateMap[pl.crateNo].req += reqQty;
             crateMap[pl.crateNo].comp += Math.min(reqQty,allocation.box+allocation.wrap);
-            crateMap[pl.crateNo].items.push({ poNumber: pl.poNumber || pl.po_number || '', profile: pl.profile, itemCode: pl.itemCode || (matched ? matched.itemCode : ''), length: pl.length, req: reqQty, crate: allocation.crate||0, box: allocation.box||0, wrap: allocation.wrap||0, punch: allocation.punch||0, cut: allocation.cut||0, pending: allocation.pending||0, unitWeight: uw });
+            crateMap[pl.crateNo].items.push({ poNumber: pl.poNumber || pl.po_number || '', profile: pl.profile, itemCode: pl.itemCode || (matched ? matched.itemCode : ''), length: pl.length, req: reqQty, crate: allocation.crate||0, box: allocation.box||0, wrap: allocation.wrap||0, punch: allocation.punch||0, cut: allocation.cut||0, pending: allocation.pending||0, unitWeight: uw, lineWeight });
         });
 
         let sortedCrateKeys = Object.keys(crateMap).sort((a,b) => {
@@ -5107,10 +5229,10 @@ function renderPlAnalytics(filteredPls) {
             
             crate.items.forEach(i => {
                 let w = i.unitWeight;
-                totalWt += (i.req * w);
+                totalWt += (Number(i.lineWeight) || (i.req * w));
                 
                 if (isManualComplete) {
-                    totManualWt += (i.req * w);
+                    totManualWt += (Number(i.lineWeight) || (i.req * w));
                 } else {
                     totBoxWt += (i.box * w);
                     totWrapWt += (i.wrap * w);
@@ -5150,7 +5272,7 @@ function renderPlAnalytics(filteredPls) {
 
             let totReq = crate.req, totComp = crate.comp, totPending = 0;
             let totCut = 0, totPunch = 0, totWrap = 0, totBox = 0, totNetWeight = 0;
-            crate.items.forEach(i => { totCut += i.cut; totPunch += i.punch; totWrap += i.wrap; totBox += i.box; totPending += i.pending; totNetWeight += (i.req * i.unitWeight); });
+            crate.items.forEach(i => { totCut += i.cut; totPunch += i.punch; totWrap += i.wrap; totBox += i.box; totPending += i.pending; totNetWeight += (Number(i.lineWeight) || (i.req * i.unitWeight)); });
             
             let stageName = "Pending", stageColor = "#475569", stageBg = "#f8fafc", icon = "fa-spinner";
             

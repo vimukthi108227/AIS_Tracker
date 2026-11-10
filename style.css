@@ -3593,3 +3593,58 @@ body.dark-mode table tbody tr:hover td,body.dark-mode table tbody tr:hover th{ba
 .pp-new-box-legend-item{display:inline-flex;align-items:center;gap:6px;color:#34536a;font-size:11px;font-weight:700}
 .pp-new-box-legend-item i{display:inline-block;width:11px;height:11px;border:1px solid rgba(20,55,75,.25);border-radius:3px;flex:0 0 11px}
 .pp-new-2d-stage svg{display:block;width:100%;height:auto;max-height:300px}
+
+
+/* V2.43 Team Plan vs Actual workspace */
+.team-plan-input-grid{padding:12px;border:1px solid var(--emerald-border);border-radius:12px;background:linear-gradient(135deg,rgba(240,253,250,.88),rgba(239,246,255,.72));margin-bottom:14px;}
+.team-plan-input-grid .form-group{margin:0;min-width:130px;}
+.team-plan-input-grid input{border-color:#99d8cf;background:#fff;font-weight:800;color:#075985;}
+.team-performance-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:12px;}
+.team-perf-card{background:var(--surface-color,#fff);border:1px solid var(--border-color);border-top:4px solid var(--team-color,#0f766e);border-radius:14px;padding:14px;box-shadow:0 5px 16px rgba(15,45,65,.06);transition:transform .2s ease,box-shadow .2s ease;}
+.team-perf-card:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(15,45,65,.1);}
+.team-perf-card h4{margin:0 0 10px;color:var(--team-color,#0f766e);font-size:15px;}
+.team-perf-main{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.team-perf-metric{padding:9px;border-radius:9px;background:var(--emerald-light,rgba(15,118,110,.06));}
+.team-perf-metric small{display:block;font-size:10px;color:var(--text-muted);font-weight:800;}
+.team-perf-metric b{display:block;font-size:17px;color:var(--text-color,#123);margin-top:2px;}
+.team-perf-variance{margin-top:10px;padding:8px 10px;border-radius:9px;font-weight:900;font-size:12px;display:flex;justify-content:space-between;gap:8px;}
+.team-perf-variance.below{background:#fff1f2;color:#be123c;border:1px solid #fecdd3;}
+.team-perf-variance.above{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;}
+.team-perf-variance.neutral{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;}
+.team-perf-table-below{color:#be123c;font-weight:900;background:#fff7f7;}
+.team-perf-table-above{color:#047857;font-weight:900;background:#f0fdf4;}
+@media(max-width:700px){.team-plan-input-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.team-performance-cards{grid-template-columns:1fr;}.team-performance-charts{grid-template-columns:1fr!important;}}
+
+/* V2.45 Team performance report refinements */
+.team-sheet-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.team-sheet-heading small{display:block;color:var(--text-muted);font-size:11px;margin-top:5px}
+.team-sheet-tabs{display:flex;gap:8px;margin-top:14px;padding:6px;background:var(--emerald-light, #effaf7);border:1px solid var(--border-color);border-radius:12px;width:max-content;max-width:100%}
+.team-sheet-tabs button{border:1px solid transparent;border-radius:9px;padding:9px 22px;font:inherit;font-weight:700;font-size:13px;color:var(--text-color);background:transparent;cursor:pointer;transition:all .18s ease}
+.team-sheet-tabs button:hover{background:#e0f2fe;transform:translateY(-1px)}
+.team-sheet-tabs button.active{background:#104e63;color:#fff;box-shadow:0 4px 12px rgba(16,78,99,.18)}
+.team-perf-additional{background:#eff8ff!important;border:1px solid #bfdbfe}
+.team-perf-additional b,.team-perf-additional-text{color:#0877bd!important;font-weight:900}
+.team-perf-additional small{color:#2584bd!important}
+.team-individual-report{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
+.team-individual-report th{background:#104e63;color:#fff;white-space:nowrap}
+.team-individual-report td,.team-individual-report th{padding:10px 9px;border:1px solid #d5e1e8}
+.team-individual-report tbody tr:nth-child(even){background:#f5f9fb}
+.team-individual-report tfoot td{background:#eaf4f8;font-weight:900}
+@media print{.team-sheet-tabs,.team-sheet-heading button{display:none!important}}
+
+/* V2.45 Team performance report refinements */
+.team-sheet-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.team-sheet-heading small{display:block;color:var(--text-muted);font-size:11px;margin-top:5px}
+.team-sheet-tabs{display:flex;gap:8px;margin-top:14px;padding:6px;background:var(--emerald-light, #effaf7);border:1px solid var(--border-color);border-radius:12px;width:max-content;max-width:100%}
+.team-sheet-tabs button{border:1px solid transparent;border-radius:9px;padding:9px 22px;font:inherit;font-weight:700;font-size:13px;color:var(--text-color);background:transparent;cursor:pointer;transition:all .18s ease}
+.team-sheet-tabs button:hover{background:#e0f2fe;transform:translateY(-1px)}
+.team-sheet-tabs button.active{background:#104e63;color:#fff;box-shadow:0 4px 12px rgba(16,78,99,.18)}
+.team-perf-additional{background:#eff8ff!important;border:1px solid #bfdbfe}
+.team-perf-additional b,.team-perf-additional-text{color:#0877bd!important;font-weight:900}
+.team-perf-additional small{color:#2584bd!important}
+.team-individual-report{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
+.team-individual-report th{background:#104e63;color:#fff;white-space:nowrap}
+.team-individual-report td,.team-individual-report th{padding:10px 9px;border:1px solid #d5e1e8}
+.team-individual-report tbody tr:nth-child(even){background:#f5f9fb}
+.team-individual-report tfoot td{background:#eaf4f8;font-weight:900}
+@media print{.team-sheet-tabs,.team-sheet-heading button{display:none!important}}
