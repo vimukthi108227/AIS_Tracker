@@ -7,7 +7,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentUserRole = null; let isAdminUnlocked = false; let isDarkMode = false; let isAppBusy = false;
 let masterChartInstance = null, overallPoChartInstance = null, overallPlChartInstance = null, plChartInstance = null, monthlyShiftChartInstance = null, monthlyTeamContributionChartInstance = null, poChartInstances = [], rejectDashChart = null, rejectProfileChartInstance = null;
 let cardboardStockList = [], cardboardManualData = [], dailyInstructionsList = [], masterData = [], historyLogs = [], dailyTeamPlans = [], poList = [], shipmentList = [], packingLists = [], rejectLogs = [], recoverLogs = [], recoveryCutLogs = [], recoveryWrapLogs = [];
-let teamPlanActualChartInstance = null, teamPlanWeightChartInstance = null; 
+let teamPlanActualChartInstance = null, teamPlanWeightChartInstance = null, teamProductionContributionChartInstance = null; 
 let globalManualCrates = {};
 let stockResetInProgress = false;
 let shipmentStates = {};
@@ -2687,6 +2687,13 @@ async function dbInsert(table, row, action) {
   // allowed while SELECT/RETURNING is not. Using .select() made a successful
   // write look like a failed write and could trigger a rollback in production.
   let result = await supabaseClient.from(table).insert([row]);
+  if (result.error && table === 'history_logs' && Object.prototype.hasOwnProperty.call(row||{},'item_code')) {
+    const msg = String(result.error.message || result.error.details || '');
+    if (/could not find the ['\"]?item_code['\"]? column|column .*item_code.* does not exist/i.test(msg)) {
+      const legacyRow={...row}; delete legacyRow.item_code;
+      return await dbInsert(table,legacyRow,action);
+    }
+  }
   if (result.error && table === 'history_logs' && row && row.team != null) {
     const msg = String(result.error.message || result.error.details || '');
     // Older deployments may use production_team rather than team. Only retry
@@ -4162,9 +4169,11 @@ async function resetCardboardStock(){
 }
 
 function teamPerfWeightFor(profile,itemCode,length,pcs){
-  const matches=masterData.filter(m=>String(m.profile||'').trim()===String(profile||'').trim()&&String(m.itemCode||'').trim()===String(itemCode||'').trim()&&cleanLen(m.length)===cleanLen(length));
-  const weights=[...new Set(matches.map(m=>Number(m.unitWeight)||0))];
-  return weights.length===1&&weights[0]>0 ? (Number(pcs)||0)*weights[0] : null;
+  const norm=v=>String(v??'').trim().toLowerCase();
+  let matches=masterData.filter(m=>norm(m.profile)===norm(profile)&&cleanLen(m.length)===cleanLen(length));
+  if(norm(itemCode)) matches=matches.filter(m=>norm(m.itemCode)===norm(itemCode));
+  const weights=[...new Set(matches.map(m=>Number(m.unitWeight)||0).filter(v=>v>0))];
+  return weights.length===1 ? (Number(pcs)||0)*weights[0] : null;
 }
 let selectedTeamPerfSheet='Team A';
 function onTeamPerfDateChange(){
@@ -4185,59 +4194,168 @@ function printTeamPerformanceSheet(){
   const content=document.getElementById('teamPerfSheetContent'); if(!content)return;
   const team=selectedTeamPerfSheet, caption=document.getElementById('teamPerfSheetCaption')?.textContent||'';
   const win=window.open('','_blank','width=1100,height=800'); if(!win){showToast('Please allow pop-ups to print the team report.','warning');return;}
-  win.document.write(`<!doctype html><html><head><title>${team} Production Report</title><style>body{font:13px Arial,sans-serif;padding:24px;color:#183447}h2{color:#075b68}table{width:100%;border-collapse:collapse;margin-top:16px}th{background:#105466;color:#fff}td,th{border:1px solid #cbd5e1;padding:8px;text-align:left}.extra{color:#0877bd;font-weight:bold}.below{color:#be123c}.above{color:#047857}.meta{color:#52677a}</style></head><body><h2>${team} — Plan vs Actual Production</h2><div class="meta">${caption}</div>${content.innerHTML}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  win.document.write(`<!doctype html><html><head><title>${team} Production Report</title><style>body{font:13px Arial,sans-serif;padding:24px;color:#183447}h2{color:#075b68}table{width:100%;border-collapse:collapse;margin-top:16px}th{background:#105466;color:#fff}td,th{border:1px solid #cbd5e1;padding:8px;text-align:left}.extra,.team-perf-additional-text{color:#0877bd;font-weight:bold}.below,.team-perf-table-below{color:#be123c;background:#fff1f2;font-weight:bold}.above,.team-perf-table-above{color:#047857;background:#ecfdf5;font-weight:bold}.meta{color:#52677a}</style></head><body><h2>${team} — Plan vs Actual Production</h2><div class="meta">${caption}</div>${content.innerHTML}<script>window.onload=()=>window.print()<\/script></body></html>`);
   win.document.close();
 }
+
+function teamPerfResolveItemCode(profile,itemCode,length){
+  const current=String(itemCode||'').trim();
+  if(current)return current;
+  const norm=v=>String(v??'').trim().toLowerCase();
+  const matches=masterData.filter(m=>norm(m.profile)===norm(profile)&&cleanLen(m.length)===cleanLen(length)).map(m=>String(m.itemCode||'').trim()).filter(Boolean);
+  const unique=[...new Set(matches)];
+  return unique.length===1?unique[0]:'';
+}
+let activeTeamPlanEdit=null;
+function closeTeamPlanEditModal(){
+  const modal=document.getElementById('teamPlanEditModal');
+  if(modal)modal.remove();
+  activeTeamPlanEdit=null;
+}
+async function editTeamPlanStage(date,shift,team,profile,itemCode,length,stage,currentValue){
+  const field={Cut:'cutQty',Punch:'punchQty',Wrapping:'wrapQty'}[stage]; if(!field)return;
+  activeTeamPlanEdit={date,shift,team,profile,itemCode,length,stage,field,currentValue:Number(currentValue)||0};
+  let modal=document.getElementById('teamPlanEditModal');
+  if(!modal){
+    document.body.insertAdjacentHTML('beforeend',`<div class="ais-plan-modal-backdrop" id="teamPlanEditModal" onclick="if(event.target===this)closeTeamPlanEditModal()"><section class="ais-plan-modal" role="dialog" aria-modal="true" aria-labelledby="teamPlanEditTitle"><div class="ais-plan-modal-head"><div><span class="ais-plan-modal-kicker">PRODUCTION PLANNING</span><h3 id="teamPlanEditTitle">Edit planned quantity</h3></div><button type="button" class="ais-plan-modal-close" onclick="closeTeamPlanEditModal()" aria-label="Close">&times;</button></div><div class="ais-plan-modal-meta" id="teamPlanEditMeta"></div><label class="ais-plan-modal-label" for="teamPlanEditQty">Planned quantity <span>(PCS)</span></label><div class="ais-plan-modal-input-wrap"><input id="teamPlanEditQty" type="number" min="0" step="1" inputmode="numeric" autocomplete="off"><span>PCS</span></div><p class="ais-plan-modal-hint">Enter a whole number. This updates the plan only; production history and stock are not changed.</p><div class="ais-plan-modal-actions"><button type="button" class="ais-plan-btn-secondary" onclick="closeTeamPlanEditModal()">Cancel</button><button type="button" class="ais-plan-btn-primary" id="teamPlanEditSaveBtn" onclick="saveTeamPlanEditModal()"><i class="fa-solid fa-check"></i> Save Plan</button></div></section></div>`);
+    modal=document.getElementById('teamPlanEditModal');
+  }
+  const meta=modal.querySelector('#teamPlanEditMeta');
+  meta.textContent=`${team}  •  ${date}  •  Shift: ${shift}  •  Profile: ${profile}  •  ${itemCode||'Item code unavailable'}  •  ${cleanLen(length)} mm  •  ${stage}`;
+  const input=modal.querySelector('#teamPlanEditQty');input.value=String(Number(currentValue)||0);
+  modal.classList.add('is-open');
+  setTimeout(()=>{input.focus();input.select();},40);
+}
+async function saveTeamPlanEditModal(){
+  if(!activeTeamPlanEdit)return;
+  const ctx=activeTeamPlanEdit,input=document.getElementById('teamPlanEditQty'),btn=document.getElementById('teamPlanEditSaveBtn');
+  const raw=String(input?.value??'').trim(),value=Number(raw);
+  if(raw===''||!Number.isInteger(value)||value<0){showToast('Enter a valid whole-number PCS quantity (zero or greater).','warning');input?.focus();return;}
+  const code=teamPerfResolveItemCode(ctx.profile,ctx.itemCode,ctx.length);
+  const existing=dailyTeamPlans.find(p=>String(p.date)===String(ctx.date)&&String(p.shift)===String(ctx.shift)&&String(p.team)===String(ctx.team)&&String(p.profile)===String(ctx.profile)&&String(teamPerfResolveItemCode(p.profile,p.itemCode,p.length)||'')===String(code||'')&&cleanLen(p.length)===cleanLen(ctx.length));
+  const row={plan_date:ctx.date,shift:ctx.shift,team:ctx.team,profile:ctx.profile,item_code:(existing?.itemCode??code)||'',length:cleanLen(ctx.length),updated_at:new Date().toISOString(),
+    plan_cut_qty:Number(existing?.cutQty)||0,plan_punch_qty:Number(existing?.punchQty)||0,plan_wrap_qty:Number(existing?.wrapQty)||0,
+    plan_box_qty:Number(existing?.boxQty)||0,plan_crate_qty:Number(existing?.crateQty)||0};
+  row[{cutQty:'plan_cut_qty',punchQty:'plan_punch_qty',wrapQty:'plan_wrap_qty'}[ctx.field]]=value;
+  try{
+    if(btn){btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Saving...';}
+    const {data,error}=await supabaseClient.from('daily_team_plans').upsert(row,{onConflict:'plan_date,shift,team,profile,item_code,length'}).select().single();
+    if(error)throw error;
+    dailyTeamPlans=dailyTeamPlans.filter(p=>!(String(p.date)===String(ctx.date)&&String(p.shift)===String(ctx.shift)&&String(p.team)===String(ctx.team)&&String(p.profile)===String(ctx.profile)&&String(teamPerfResolveItemCode(p.profile,p.itemCode,p.length)||'')===String(code||'')&&cleanLen(p.length)===cleanLen(ctx.length)));
+    dailyTeamPlans.push({id:data?.id||existing?.id||null,date:ctx.date,shift:ctx.shift,team:ctx.team,profile:ctx.profile,itemCode:code||'',length:cleanLen(ctx.length),cutQty:row.plan_cut_qty,punchQty:row.plan_punch_qty,wrapQty:row.plan_wrap_qty,boxQty:row.plan_box_qty,crateQty:row.plan_crate_qty,updatedAt:data?.updated_at||row.updated_at});
+    closeTeamPlanEditModal();renderDailyTeamPerformance();showToast(`${ctx.stage} plan saved for ${ctx.date} • ${ctx.team}. Production history and stock were not changed.`,'success');
+  }catch(e){
+    console.error('Historical plan edit failed',e);const msg=String(e?.message||e||'');
+    showToast(/row-level security|RLS|42501/i.test(msg)?'Plan save blocked by Supabase RLS. Run the V250 SQL migration in Supabase SQL Editor, then refresh the website.':'Plan was not saved: '+msg,'error');
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="fa-solid fa-check"></i> Save Plan';}
+  }
+}
+
 function renderDailyTeamPerformance(){
   const sheet=document.getElementById('teamPerfSheetContent'); if(!sheet)return;
   const date=document.getElementById('teamPerfDate')?.value||'';
   const month=document.getElementById('teamPerfMonth')?.value||new Date().toISOString().slice(0,7);
-  const isDaily=!!date;
-  const periodMatch=d=>isDaily?String(d||'')===date:String(d||'').startsWith(month);
+  const isDaily=!!date, periodMatch=d=>isDaily?String(d||'')===date:String(d||'').startsWith(month);
   const teams=['Team A','Team B','Team C'], colors=['#0f766e','#2563eb','#d97706'];
   const stages=[['Cut','cutQty'],['Punch','punchQty'],['Wrapping','wrapQty']];
-  const selectedPlans=dailyTeamPlans.filter(p=>periodMatch(p.date)&&teams.includes(String(p.team||'')));
-  const selectedActual=historyLogs.filter(h=>periodMatch(h.date)&&teams.includes(String(h.team||'')));
-  const sums=Object.fromEntries(teams.map(t=>[t,{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0,stages:Object.fromEntries(stages.map(([n])=>[n,{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0}]))}]));
-  const rows=[]; let unresolved=0;
-  const norm=v=>String(v??'').trim().toLowerCase();
-  teams.forEach(team=>stages.forEach(([stage,key])=>{
-    const plans=selectedPlans.filter(p=>p.team===team); const actuals=selectedActual.filter(a=>a.team===team);
-    let plan=0,actual=0,additional=0,planWt=0,actualWt=0,additionalWt=0;
-    plans.forEach(p=>{const q=Number(p[key])||0;plan+=q;const w=teamPerfWeightFor(p.profile,p.itemCode,p.length,q);if(w==null)unresolved++;else planWt+=w;});
-    actuals.forEach(a=>{
-      const q=Number(a[key])||0;if(q<=0)return; actual+=q;
-      const matchingPlan=plans.filter(p=>norm(p.profile)===norm(a.profile)&&norm(p.itemCode)===norm(a.itemCode)&&cleanLen(p.length)===cleanLen(a.length)&&String(p.shift||'')===String(a.shift||''));
-      const plannedStageQty=matchingPlan.reduce((n,p)=>n+(Number(p[key])||0),0);
-      const isAdditional=plannedStageQty<=0;
-      let w=teamPerfWeightFor(a.profile,a.itemCode,a.length,q);
-      if(w==null){const matches=masterData.filter(m=>norm(m.profile)===norm(a.profile)&&cleanLen(m.length)===cleanLen(a.length));const ws=[...new Set(matches.map(m=>Number(m.unitWeight)||0))];w=ws.length===1&&ws[0]>0?q*ws[0]:null;}
-      if(isAdditional){additional+=q;if(w==null)unresolved++;else additionalWt+=w;}
-      else if(w==null)unresolved++;else actualWt+=w;
+  const norm=v=>String(v??'').trim().toLowerCase(), fmt=n=>Number(n||0).toLocaleString('en-US',{maximumFractionDigits:2});
+  const plans= dailyTeamPlans.filter(p=>periodMatch(p.date)&&teams.includes(String(p.team||'')));
+  const actuals=historyLogs.filter(a=>periodMatch(a.date)&&teams.includes(String(a.team||'')));
+  const resolveCode=x=>teamPerfResolveItemCode(x.profile,x.itemCode,x.length);
+  const keyOf=x=>[x.date,x.shift,x.team,x.profile,resolveCode(x),cleanLen(x.length)].map(norm).join('|');
+  const groups=new Map();
+  plans.forEach(p=>{const k=keyOf(p);if(!groups.has(k))groups.set(k,{date:p.date,shift:p.shift,team:p.team,profile:p.profile,itemCode:resolveCode(p),length:cleanLen(p.length),plan:{cut:0,punch:0,wrap:0,box:0},actual:{cut:0,punch:0,wrap:0,box:0}});const g=groups.get(k);g.plan.cut+=Number(p.cutQty)||0;g.plan.punch+=Number(p.punchQty)||0;g.plan.wrap+=Number(p.wrapQty)||0;g.plan.box+=Number(p.boxQty)||0;});
+  actuals.forEach(a=>{const k=keyOf(a);if(!groups.has(k))groups.set(k,{date:a.date,shift:a.shift,team:a.team,profile:a.profile,itemCode:resolveCode(a),length:cleanLen(a.length),plan:{cut:0,punch:0,wrap:0,box:0},actual:{cut:0,punch:0,wrap:0,box:0}});const g=groups.get(k);g.actual.cut+=Number(a.cutQty)||0;g.actual.punch+=Number(a.punchQty)||0;g.actual.wrap+=Number(a.wrapQty)||0;g.actual.box+=Number(a.boxQty)||0;});
+  const detailRows=[], sums=Object.fromEntries(teams.map(t=>[t,{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0,planBoxes:0,actualBoxes:0,stages:Object.fromEntries(stages.map(([s])=>[s,{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0}]))}]));
+  const monthPlans=dailyTeamPlans.filter(p=>String(p.date||'').startsWith(month)&&teams.includes(String(p.team||'')));
+  const monthActuals=historyLogs.filter(a=>String(a.date||'').startsWith(month)&&teams.includes(String(a.team||'')));
+  const monthlyBoxes=Object.fromEntries(teams.map(t=>[t,{plan:0,actual:0}]));
+  const capacityFor=x=>{const ms=masterData.filter(m=>norm(m.profile)===norm(x.profile)&&norm(m.itemCode)===norm(x.itemCode)&&cleanLen(m.length)===cleanLen(x.length));const cs=[...new Set(ms.map(m=>Number(m.boxCapacity)||0).filter(v=>v>0))];return cs.length===1?cs[0]:null;};
+  monthPlans.forEach(p=>{const c=capacityFor(p);if(c)monthlyBoxes[p.team].plan+=(Number(p.boxQty)||0)/c;});
+  monthActuals.forEach(a=>{const c=capacityFor(a);if(c)monthlyBoxes[a.team].actual+=(Number(a.boxQty)||0)/c;});
+  let unresolved=0;
+  [...groups.values()].sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.team).localeCompare(String(b.team))||String(a.profile).localeCompare(String(b.profile))||String(a.itemCode).localeCompare(String(b.itemCode))).forEach(g=>{
+    const itemMatches=masterData.filter(m=>norm(m.profile)===norm(g.profile)&&norm(m.itemCode)===norm(g.itemCode)&&cleanLen(m.length)===cleanLen(g.length));
+    const capVals=[...new Set(itemMatches.map(m=>Number(m.boxCapacity)||0).filter(v=>v>0))], capacity=capVals.length===1?capVals[0]:null;
+    const team=sums[g.team];
+    stages.forEach(([stage,key])=>{
+      const st=key.replace('Qty',''), plan=Number(g.plan[st])||0, actual=Number(g.actual[st])||0;
+      const additional=Math.max(0,actual-plan), diff=actual-plan, pct=plan>0?diff/plan*100:null;
+      const pw=plan>0?teamPerfWeightFor(g.profile,g.itemCode,g.length,plan):0;
+      const aw=actual>0?teamPerfWeightFor(g.profile,g.itemCode,g.length,actual):0;
+      const adw=additional>0?teamPerfWeightFor(g.profile,g.itemCode,g.length,additional):0;
+      if(plan>0&&pw==null)unresolved++;if(actual>0&&aw==null)unresolved++;if(additional>0&&adw==null)unresolved++;
+      const row={...g,stage,plan,actual,additional,diff,pct,planWt:pw==null?0:pw,actualWt:aw==null?0:aw,additionalWt:adw==null?0:adw,status:plan<=0?(actual>0?'Additional':'No plan'):actual<plan?'Below plan':actual>plan?'Above plan':'On plan'};
+      detailRows.push(row);
+      const s=team.stages[stage];s.plan+=plan;s.actual+=actual;s.additional+=additional;s.planWt+=row.planWt;s.actualWt+=row.actualWt;s.additionalWt+=row.additionalWt;
+      team.plan+=plan;team.actual+=actual;team.additional+=additional;team.planWt+=row.planWt;team.actualWt+=row.actualWt;team.additionalWt+=row.additionalWt;
     });
-    // Actual includes both planned and additional output; show additional separately and keep total actual visible.
-    const diff=actual-plan,pct=plan>0?diff/plan*100:null,status=plan===0?(actual>0?'Additional only':'No data'):(actual<plan?'Below plan':actual>plan?'Above plan':'On plan');
-    const stageObj={plan,actual,additional,planWt,actualWt,additionalWt}; sums[team].stages[stage]={...stageObj};
-    ['plan','actual','additional','planWt','actualWt','additionalWt'].forEach(k=>sums[team][k]+=stageObj[k]);
-    rows.push({team,stage,...stageObj,diff,pct,status});
-  }));
-  const fmt=n=>Number(n||0).toLocaleString('en-US',{maximumFractionDigits:2});
+    if(capacity){team.planBoxes+=(Number(g.plan.box)||0)/capacity;team.actualBoxes+=(Number(g.actual.box)||0)/capacity;}
+  });
   const cards=document.getElementById('teamPerfCards');
-  if(cards)cards.innerHTML=teams.map((team,i)=>{const t=sums[team],diff=t.actual-t.plan,pct=t.plan>0?diff/t.plan*100:null,cls=pct===null?'neutral':pct<0?'below':'above';const stageRows=stages.map(([name])=>{const s=t.stages[name],d=s.actual-s.plan,p=s.plan>0?d/s.plan*100:null,c=p===null?'neutral':p<0?'below':'above';return `<div class="team-perf-stage-row"><div class="team-perf-stage-name">${name}</div><div><small>Plan</small><b>${fmt(s.plan)} Pcs</b><small>${s.planWt.toFixed(2)} kg</small></div><div><small>Actual</small><b>${fmt(s.actual)} Pcs</b><small>${(s.actualWt+s.additionalWt).toFixed(2)} kg</small></div><div class="team-perf-stage-diff ${c}"><small>Difference / %</small><b>${d>0?'+':''}${fmt(d)} Pcs</b><b>${p===null?'—':`${p>0?'+':''}${p.toFixed(1)}%`}</b></div></div>`;}).join('');return `<div class="team-perf-card" style="--team-color:${colors[i]}"><h4><i class="fa-solid fa-people-group"></i> ${team}</h4><div class="team-perf-main"><div class="team-perf-metric"><small>Planned Output</small><b>${fmt(t.plan)} Pcs</b><small>${t.planWt.toFixed(2)} kg</small></div><div class="team-perf-metric"><small>Total Actual Output</small><b>${fmt(t.actual)} Pcs</b><small>${(t.actualWt+t.additionalWt).toFixed(2)} kg</small></div><div class="team-perf-metric team-perf-additional"><small>Additional Production</small><b>${fmt(t.additional)} Pcs</b><small>${t.additionalWt.toFixed(2)} kg</small></div><div class="team-perf-metric"><small>Plan Variance</small><b class="${cls}">${pct===null?'—':`${pct>0?'+':''}${pct.toFixed(1)}%`}</b><small>${diff>0?'+':''}${fmt(diff)} Pcs</small></div></div><div class="team-perf-stage-breakdown"><div class="team-perf-stage-head"><span>Stage</span><span>Plan</span><span>Actual</span><span>Additional</span></div>${stages.map(([name])=>{const s=t.stages[name];return `<div class="team-perf-stage-row"><div class="team-perf-stage-name">${name}</div><div><b>${fmt(s.plan)} Pcs</b><small>${s.planWt.toFixed(2)} kg</small></div><div><b>${fmt(s.actual)} Pcs</b><small>${s.actualWt.toFixed(2)} kg</small></div><div class="team-perf-additional-text"><b>${fmt(s.additional)} Pcs</b><small>${s.additionalWt.toFixed(2)} kg</small></div></div>`;}).join('')}</div><div class="team-perf-variance ${cls}"><span>${pct===null?'No plan entered':pct<0?'Below plan':pct>0?'Above plan':'Plan achieved'}</span><strong>${pct===null?'—':`${pct>0?'+':''}${pct.toFixed(1)}%`}</strong></div></div>`;}).join('');
+  if(cards)cards.innerHTML=teams.map((team,i)=>{const t=sums[team],diff=t.actual-t.plan,pct=t.plan>0?diff/t.plan*100:null,cls=pct===null?'neutral':pct<0?'below':'above';
+    const stageRows=stages.map(([name])=>{const s=t.stages[name],d=s.actual-s.plan,p=s.plan>0?d/s.plan*100:null,c=p===null?'neutral':p<0?'below':'above';return `<div class="team-perf-stage-row"><div class="team-perf-stage-name">${name}</div><div><small>Plan</small><b>${fmt(s.plan)} Pcs</b><small>${s.planWt.toFixed(2)} kg</small></div><div><small>Actual</small><b>${fmt(s.actual)} Pcs</b><small>${s.actualWt.toFixed(2)} kg</small></div><div><small>Variance</small><b class="${p===null?'neutral':p<0?'below':'above'}">${p===null?'—':`${p>0?'+':''}${p.toFixed(1)}%`}</b><small>${d>0?'+':''}${fmt(d)} Pcs</small></div><div><small>Additional</small><b class="team-perf-additional-text">${fmt(s.additional)} Pcs</b><small class="team-perf-additional-text">${s.additionalWt.toFixed(2)} kg</small></div></div>`;}).join('');
+    return `<div class="team-perf-card" style="--team-color:${colors[i]}"><h4><i class="fa-solid fa-people-group"></i> ${team}</h4><div class="team-perf-main"><div class="team-perf-metric"><small>Planned Output</small><b>${fmt(t.plan)} Pcs</b><small>${t.planWt.toFixed(2)} kg</small></div><div class="team-perf-metric"><small>Total Actual Output</small><b>${fmt(t.actual)} Pcs</b><small>${t.actualWt.toFixed(2)} kg</small></div><div class="team-perf-metric team-perf-additional"><small>Additional Production</small><b>${fmt(t.additional)} Pcs</b><small>${t.additionalWt.toFixed(2)} kg</small></div><div class="team-perf-metric"><small>Plan Variance</small><b class="${cls}">${pct===null?'—':`${pct>0?'+':''}${pct.toFixed(1)}%`}</b><small>${diff>0?'+':''}${fmt(diff)} Pcs</small></div><div class="team-perf-metric"><small>Plan Box Qty</small><b>${fmt(t.planBoxes)} Boxes</b></div><div class="team-perf-metric"><small>Actual Box Qty (selected period)</small><b>${fmt(t.actualBoxes)} Boxes</b></div><div class="team-perf-metric"><small>Monthly Plan Box Qty</small><b>${fmt(monthlyBoxes[team].plan)} Boxes</b></div><div class="team-perf-metric"><small>Monthly Actual Box Qty</small><b>${fmt(monthlyBoxes[team].actual)} Boxes</b></div></div><div class="team-perf-stage-breakdown"><div class="team-perf-stage-head"><span>Stage</span><span>Plan</span><span>Actual</span><span>Additional</span></div>${stageRows}</div><div class="team-perf-variance ${cls}"><span>${pct===null?'No plan entered':pct<0?'Below plan':pct>0?'Above plan':'Plan achieved'}</span><strong>${pct===null?'—':`${pct>0?'+':''}${pct.toFixed(1)}%`}</strong></div></div>`;}).join('');
   const periodLabel=isDaily?`Daily: ${date}`:`Monthly: ${month}`;
-  const caption=document.getElementById('teamPerfSheetCaption');if(caption)caption.textContent=`${periodLabel} • Cut, Punch and Wrapping only • Additional production is actual stage quantity entered where that stage has no plan quantity.`;
-  const teamRows=rows.filter(r=>r.team===selectedTeamPerfSheet);
+  const caption=document.getElementById('teamPerfSheetCaption');if(caption)caption.textContent=`${selectedTeamPerfSheet} • ${periodLabel} • Cut, Punch and Wrapping with profile-level plan/actual history`;
+  const teamRows=detailRows.filter(r=>r.team===selectedTeamPerfSheet);
   const total=teamRows.reduce((a,r)=>{['plan','actual','additional','planWt','actualWt','additionalWt'].forEach(k=>a[k]+=r[k]);return a;},{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0});
-  sheet.innerHTML=`<table class="team-individual-report"><thead><tr><th>Stage</th><th>Plan (Pcs)</th><th>Actual (Pcs)</th><th>Additional (Pcs)</th><th>Difference (Pcs)</th><th>Variance %</th><th>Plan Weight (kg)</th><th>Actual Weight (kg)</th><th>Additional Weight (kg)</th><th>Status</th></tr></thead><tbody>${teamRows.map(r=>`<tr><td><b>${r.stage}</b></td><td>${fmt(r.plan)}</td><td>${fmt(r.actual)}</td><td class="team-perf-additional-text">${fmt(r.additional)}</td><td class="${r.diff<0?'team-perf-table-below':'team-perf-table-above'}">${r.diff>0?'+':''}${fmt(r.diff)}</td><td>${r.pct===null?'—':`${r.pct>0?'+':''}${r.pct.toFixed(1)}%`}</td><td>${r.planWt.toFixed(2)}</td><td>${(r.actualWt+r.additionalWt).toFixed(2)}</td><td class="team-perf-additional-text">${r.additionalWt.toFixed(2)}</td><td>${r.status}</td></tr>`).join('')}</tbody><tfoot><tr><td><b>TOTAL STAGE ACTIVITY</b></td><td><b>${fmt(total.plan)}</b></td><td><b>${fmt(total.actual)}</b></td><td class="team-perf-additional-text"><b>${fmt(total.additional)}</b></td><td><b>${fmt(total.actual-total.plan)}</b></td><td><b>${total.plan?`${((total.actual-total.plan)/total.plan*100).toFixed(1)}%`:'—'}</b></td><td><b>${total.planWt.toFixed(2)}</b></td><td><b>${(total.actualWt+total.additionalWt).toFixed(2)}</b></td><td class="team-perf-additional-text"><b>${total.additionalWt.toFixed(2)}</b></td><td></td></tr></tfoot></table>`;
-  const notice=document.getElementById('teamPerfNotice');if(notice)notice.textContent=`${periodLabel} • ${selectedPlans.length} saved plan line(s) • ${selectedActual.length} actual production record(s) • Additional production is shown separately in blue. Weight uses unambiguous Master Catalog unit weight; ${unresolved} line calculation(s) without a unique unit weight are excluded.`;
+  const stageColors={Cut:'#2563eb',Punch:'#d97706',Wrapping:'#0f766e'};
+  const stageTables=stages.map(([stage])=>{
+    const rows=teamRows.filter(r=>r.stage===stage&&Number(r.actual)>0);
+    const sum=rows.reduce((a,r)=>{['plan','actual','additional','planWt','actualWt','additionalWt'].forEach(k=>a[k]+=r[k]);return a;},{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0});
+    const pct=sum.planWt>0?(sum.actualWt-sum.planWt)/sum.planWt*100:null;
+    return `<section class="team-stage-report" style="--stage-color:${stageColors[stage]};border-top:5px solid ${stageColors[stage]};margin:14px 0;padding:12px;border-radius:10px;background:#fff;box-shadow:0 2px 9px #0f172a10"><h4 style="margin:0 0 10px;color:${stageColors[stage]}">${stage} Stage — ${selectedTeamPerfSheet}</h4><div class="table-container"><table class="team-individual-report"><thead><tr><th>Date</th><th>Shift</th><th>Profile</th><th>Item Code</th><th>Length (mm)</th><th>Plan (Pcs) • Click to edit</th><th>Plan Weight (kg)</th><th>Production (Pcs)</th><th>Production Weight (kg)</th><th>Additional (Pcs)</th><th>Additional Weight (kg)</th><th>Balance (Pcs)</th><th>Variance %</th><th>Status</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.date}</td><td>${r.shift||''}</td><td>${r.profile}</td><td>${r.itemCode||'—'}</td><td>${r.length}</td><td><button type="button" class="team-plan-edit-chip" title="Click to add or edit planned PCS" onclick='editTeamPlanStage(${JSON.stringify(r.date)},${JSON.stringify(r.shift||'')},${JSON.stringify(r.team)},${JSON.stringify(String(r.profile||''))},${JSON.stringify(String(r.itemCode||''))},${JSON.stringify(String(r.length||''))},${JSON.stringify(stage)},${Number(r.plan)||0})'>${fmt(r.plan)} <i class="fa-solid fa-pen"></i></button></td><td>${r.planWt.toFixed(2)}</td><td>${fmt(r.actual)}</td><td>${r.actualWt.toFixed(2)}</td><td class="team-perf-additional-text">${fmt(r.additional)}</td><td class="team-perf-additional-text">${r.additionalWt.toFixed(2)}</td><td class="${r.diff<0?'team-perf-table-below':'team-perf-table-above'}">${r.diff>0?'+':''}${fmt(r.diff)}</td><td class="${r.diff<0?'team-perf-table-below':'team-perf-table-above'}">${r.pct===null?'—':`${r.pct>0?'+':''}${r.pct.toFixed(1)}%`}</td><td>${r.status}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="5"><b>${stage} TOTAL</b></td><td><b>${fmt(sum.plan)}</b></td><td><b>${sum.planWt.toFixed(2)}</b></td><td><b>${fmt(sum.actual)}</b></td><td><b>${sum.actualWt.toFixed(2)}</b></td><td class="team-perf-additional-text"><b>${fmt(sum.additional)}</b></td><td class="team-perf-additional-text"><b>${sum.additionalWt.toFixed(2)}</b></td><td><b>${fmt(sum.actual-sum.plan)}</b></td><td><b>${pct===null?'—':pct.toFixed(1)+'%'}</b></td><td></td></tr></tfoot></table></div></section>`;
+  }).join('');
+  const teamBoxRows=[...groups.values()].filter(g=>g.team===selectedTeamPerfSheet&&Number(g.actual.box)>0);
+  const dateBoxTotals=new Map();
+  teamBoxRows.forEach(g=>{const cap=capacityFor(g);if(cap)dateBoxTotals.set(g.date,(dateBoxTotals.get(g.date)||0)+Number(g.actual.box)/cap);});
+  sheet.innerHTML=`${stageTables}<section class="team-stage-report team-box-report" style="border-top:5px solid #0ea5e9;margin:16px 0;padding:12px;border-radius:10px;background:#f0f9ff"><h4 style="color:#0369a1;margin:0 0 10px">Box Packing — ${selectedTeamPerfSheet}</h4><div class="table-container"><table class="team-individual-report"><thead><tr><th>Date</th><th>Shift</th><th>Profile</th><th>Item Code</th><th>Length (mm)</th><th>Actual Box Qty</th><th>Total Boxes for Date</th></tr></thead><tbody>${teamBoxRows.map(g=>{const cap=capacityFor(g);return `<tr><td>${g.date}</td><td>${g.shift||''}</td><td>${g.profile}</td><td>${g.itemCode||'—'}</td><td>${g.length}</td><td>${cap?fmt(Number(g.actual.box)/cap):'—'}</td><td class="team-box-date-total">${fmt(dateBoxTotals.get(g.date)||0)}</td></tr>`;}).join('')}</tbody><tfoot><tr><td colspan="5"><b>MONTH TOTAL — ACTUAL BOXES</b></td><td><b>${fmt(monthlyBoxes[selectedTeamPerfSheet].actual)}</b></td><td><b>${fmt(monthlyBoxes[selectedTeamPerfSheet].actual)}</b></td></tr></tfoot></table></div></section>`;
+  const notice=document.getElementById('teamPerfNotice');if(notice)notice.textContent=`${periodLabel} • ${plans.length} saved plan line(s) • ${actuals.length} actual production record(s) • Box quantities are shown separately by team; weights use unique Master Catalog matches. ${unresolved} weight calculation(s) without an unambiguous unit weight are excluded.`;
   if(typeof Chart!=='undefined'){
     const textColor=isDarkMode?'#f8fafc':'#334155';
     const draw=(id,old,labels,sets)=>{const cv=document.getElementById(id);if(!cv)return old;safeChartDestroy(old,id);return new Chart(cv,{type:'bar',data:{labels,datasets:sets},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:textColor,usePointStyle:true,boxWidth:9}},tooltip:{mode:'index',intersect:false}},interaction:{mode:'index',intersect:false},scales:{x:{ticks:{color:textColor},grid:{display:false}},y:{beginAtZero:true,ticks:{color:textColor},grid:{color:isDarkMode?'#334155':'#e2e8f0'}}}}});};
-    teamPlanActualChartInstance=draw('teamPlanActualChart',teamPlanActualChartInstance,teams,[{label:'Plan (Pcs)',data:teams.map(t=>sums[t].plan),backgroundColor:'#94a3b8',borderRadius:6},{label:'Actual Total (Pcs)',data:teams.map(t=>sums[t].actual),backgroundColor:'#0f766e',borderRadius:6},{label:'Additional (included in actual) (Pcs)',data:teams.map(t=>sums[t].additional),backgroundColor:'#168bd2',borderRadius:6}]);
-    teamPlanWeightChartInstance=draw('teamPlanActualWeightChart',teamPlanWeightChartInstance,teams,[{label:'Plan Weight (kg)',data:teams.map(t=>Number(sums[t].planWt.toFixed(2))),backgroundColor:'#93c5fd',borderRadius:6},{label:'Actual Total Weight (kg)',data:teams.map(t=>Number((sums[t].actualWt+sums[t].additionalWt).toFixed(2))),backgroundColor:'#0f766e',borderRadius:6},{label:'Additional Weight (included in actual) (kg)',data:teams.map(t=>Number(sums[t].additionalWt.toFixed(2))),backgroundColor:'#168bd2',borderRadius:6}]);
+    teamPlanActualChartInstance=draw('teamPlanActualChart',teamPlanActualChartInstance,teams,[{label:'Plan (Pcs)',data:teams.map(t=>sums[t].plan),backgroundColor:'#94a3b8',borderRadius:6},{label:'Actual (Pcs)',data:teams.map(t=>sums[t].actual),backgroundColor:'#0f766e',borderRadius:6},{label:'Additional (Pcs)',data:teams.map(t=>sums[t].additional),backgroundColor:'#168bd2',borderRadius:6}]);
+    teamPlanWeightChartInstance=draw('teamPlanActualWeightChart',teamPlanWeightChartInstance,teams,[{label:'Plan Weight (kg)',data:teams.map(t=>Number(sums[t].planWt.toFixed(2))),backgroundColor:'#93c5fd',borderRadius:6},{label:'Actual Weight (kg)',data:teams.map(t=>Number(sums[t].actualWt.toFixed(2))),backgroundColor:'#0f766e',borderRadius:6},{label:'Additional Weight (kg)',data:teams.map(t=>Number(sums[t].additionalWt.toFixed(2))),backgroundColor:'#168bd2',borderRadius:6}]);
+    const contributionCanvas=document.getElementById('teamProductionContributionChart');
+    if(contributionCanvas){safeChartDestroy(teamProductionContributionChartInstance,'teamProductionContributionChart');teamProductionContributionChartInstance=new Chart(contributionCanvas,{type:'doughnut',data:{labels:teams,datasets:[{label:'Actual Production Weight (kg)',data:teams.map(t=>Number(sums[t].actualWt.toFixed(2))),backgroundColor:colors,borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:textColor,usePointStyle:true,boxWidth:10}},tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${Number(ctx.raw||0).toLocaleString('en-US',{maximumFractionDigits:2})} kg`}}}}});}
+
   }
 }
 
+
+
+function loadDailyPlanForSelection(){
+  const ids=['entryDate','shift','productionTeam','selectProfile','selectItemCode','selectLength'];
+  const vals=ids.map(id=>document.getElementById(id)?.value||'');
+  const [date,shift,team,profile,itemCode,length]=vals;
+  if(!vals.every(Boolean))return;
+  const p=dailyTeamPlans.find(x=>x.date===date&&String(x.shift)===shift&&String(x.team)===team&&String(x.profile)===profile&&String(x.itemCode||'')===itemCode&&cleanLen(x.length)===cleanLen(length));
+  const map={planCutQty:p?.cutQty??0,planPunchQty:p?.punchQty??0,planWrapQty:p?.wrapQty??0,planBoxQty:p?.boxQty??0,planCrateQty:p?.crateQty??0};
+  Object.entries(map).forEach(([id,value])=>{const el=document.getElementById(id);if(el)el.value=Number(value)||0;});
+  const btn=document.getElementById('saveDailyPlanOnlyBtn');
+  if(btn)btn.innerHTML=p?'<i class="fa-solid fa-pen-to-square"></i> Update Saved Plan':'<i class="fa-solid fa-calendar-check"></i> Save Plan Only';
+}
+async function saveDailyPlanOnly(){
+  if(isAppBusy)return showToast('A save is already in progress. Please wait.','info');
+  const date=document.getElementById('entryDate')?.value||'',shift=document.getElementById('shift')?.value||'',
+    team=document.getElementById('productionTeam')?.value||'',profile=document.getElementById('selectProfile')?.value||'',
+    itemCode=document.getElementById('selectItemCode')?.value||'',length=cleanLen(document.getElementById('selectLength')?.value||'');
+  if(!date||!shift||!team||!profile||!itemCode||!length)return showToast('Select date, shift, team, profile, item code and length before saving the plan.','warning');
+  const qty={cut:Number(document.getElementById('planCutQty')?.value)||0,punch:Number(document.getElementById('planPunchQty')?.value)||0,wrap:Number(document.getElementById('planWrapQty')?.value)||0,box:Number(document.getElementById('planBoxQty')?.value)||0,crate:Number(document.getElementById('planCrateQty')?.value)||0};
+  if(Object.values(qty).some(v=>!Number.isInteger(v)||v<0))return showToast('Plan quantities must be whole numbers and cannot be negative.','warning');
+  if(!Object.values(qty).some(v=>v>0))return showToast('Enter at least one planned quantity.','warning');
+  isAppBusy=true;const btn=document.getElementById('saveDailyPlanOnlyBtn'),old=btn?.innerHTML;if(btn){btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Saving plan...';}
+  try{
+    const row={plan_date:date,shift,team,profile,item_code:itemCode,length,updated_at:new Date().toISOString(),plan_cut_qty:qty.cut,plan_punch_qty:qty.punch,plan_wrap_qty:qty.wrap,plan_box_qty:qty.box,plan_crate_qty:qty.crate};
+    const {data,error}=await supabaseClient.from('daily_team_plans').upsert(row,{onConflict:'plan_date,shift,team,profile,item_code,length'}).select().single();
+    if(error)throw error;
+    dailyTeamPlans=dailyTeamPlans.filter(x=>!(x.date===date&&String(x.shift)===shift&&String(x.team)===team&&String(x.profile)===profile&&String(x.itemCode||'')===itemCode&&cleanLen(x.length)===length));
+    dailyTeamPlans.push({id:data?.id||null,date,shift,team,profile,itemCode,length,cutQty:qty.cut,punchQty:qty.punch,wrapQty:qty.wrap,boxQty:qty.box,crateQty:qty.crate,updatedAt:data?.updated_at||new Date().toISOString()});
+    renderDailyTeamPerformance();showToast(`Plan saved for ${date} • ${team}. Production stock and history were not changed.`,'success');
+  }catch(e){console.error('Plan-only save failed',e);showToast(`Plan was not saved: ${e.message||e}`,'error');}
+  finally{isAppBusy=false;if(btn){btn.disabled=false;loadDailyPlanForSelection();if(old&&btn.innerHTML.includes('Saving'))btn.innerHTML=old;}}
+}
 
 async function submitDailyEntry() {
   if(isAppBusy) {
@@ -4325,7 +4443,7 @@ async function submitDailyEntry() {
     cardboardToDeduct=Math.min(enteredBoxes,availableCardboard);
     let shortageBoxes=Math.max(0,enteredBoxes-cardboardToDeduct);
 
-    newLog={log_date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,length:cleanLen(lengthVal),cut_qty:cutQty,punch_qty:punchQty,wrap_qty:wrapQty,box_qty:boxPcs,crate_qty:crateQty,log_time:new Date().toLocaleTimeString()};
+    newLog={log_date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,item_code:itemCodeVal,length:cleanLen(lengthVal),cut_qty:cutQty,punch_qty:punchQty,wrap_qty:wrapQty,box_qty:boxPcs,crate_qty:crateQty,log_time:new Date().toLocaleTimeString()};
 
     // If the catalog display combines duplicate DB rows, consolidate the displayed
     // total into the canonical row while zeroing only the matching duplicate stock
@@ -4366,7 +4484,7 @@ async function submitDailyEntry() {
         const localPlan={id:savedPlan?.id||null,date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,itemCode:itemCodeVal,length:cleanLen(lengthVal),cutQty:planQty.cut,punchQty:planQty.punch,wrapQty:planQty.wrap,boxQty:planQty.box,crateQty:planQty.crate,updatedAt:savedPlan?.updated_at||new Date().toISOString()};
         dailyTeamPlans=dailyTeamPlans.filter(x=>!(x.date===dateVal&&x.shift===shiftVal&&x.team===teamVal&&String(x.profile)===profileVal&&String(x.itemCode)===itemCodeVal&&cleanLen(x.length)===cleanLen(lengthVal)));
         dailyTeamPlans.push(localPlan);
-      }catch(planErr){teamPlanSaved=false;console.error('Team plan save failed after production commit:',planErr);}
+      }catch(planErr){teamPlanSaved=false;console.error('Team plan save failed after production commit:',planErr);if(/row-level security|RLS|42501/i.test(String(planErr?.message||planErr||'')))showToast('Production was saved, but its plan was blocked by Supabase RLS. Run the included V250 SQL migration, then refresh.','warning');}
     }
     // Clear quantities immediately after the database commit so a later UI/render
     // exception cannot leave the just-saved quantities ready for an accidental retry.
@@ -6064,18 +6182,103 @@ function renderPackingListTableCore() {
     } catch(e) { console.error('Packing list render error:', e); const body=document.getElementById('packingListTableBody'); if(body) body.innerHTML='<tr><td colspan=12 style="text-align:center;color:#e11d48;font-weight:700;">Packing List could not be rendered. Check browser console for details.</td></tr>'; }
 }
 
+
+let currentPlStageSummaryRows=[];
+function renderCurrentPlStageSummary(){
+  const body=document.getElementById('plCurrentStageSummaryBody');if(!body)return;
+  try{
+    ensurePackingSelection();
+    const active=getActivePackingListSelection();
+    // The active selector is the single source of truth: old/completed PLs are excluded.
+    const records=getPackingContainerRecords(active.month,active.container);
+    const allocations=allocatePackingLineStock(records);
+    const grouped=new Map();
+    records.forEach(item=>{
+      const profile=String(item.profile||'').trim()||'-';
+      const itemCode=String(item.itemCode||'').trim()||resolveMasterItemCode(profile,cleanLen(item.length),'')||'-';
+      const length=cleanLen(item.length)||'-';
+      const key=[profile,itemCode,length].join('||');
+      const g=grouped.get(key)||{profile,itemCode,length,total:0,pendingCut:0,pendingPunch:0,pendingWrap:0,pendingBox:0,complete:0,pos:new Set(),lines:0};
+      const req=Math.max(0,Number(item.pcsQty)||0);
+      const a=allocations.get(item)||{pending:req,cut:0,punch:0,wrap:0,box:0,crate:0};
+      g.total+=req;
+      g.pendingCut+=Math.max(0,Number(a.pending)||0);
+      g.pendingPunch+=Math.max(0,Number(a.cut)||0);
+      g.pendingWrap+=Math.max(0,Number(a.punch)||0);
+      g.pendingBox+=Math.max(0,Number(a.wrap)||0);
+      // A manually marked-complete crate is authoritative even if current stock
+      // balances no longer contain its historical Crate-stage quantity.
+      const manuallyComplete=isManualCrateComplete(item.crateNo,active.container,active.month);
+      g.complete+=manuallyComplete?req:(Math.max(0,Number(a.box)||0)+Math.max(0,Number(a.crate)||0));
+      const po=String(item.poNumber||'').trim();if(po)g.pos.add(po);
+      g.lines++;
+      grouped.set(key,g);
+    });
+    const rows=[...grouped.values()].sort((a,b)=>String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true})||String(a.itemCode).localeCompare(String(b.itemCode))||Number(a.length)-Number(b.length));
+    currentPlStageSummaryRows=rows;
+    const totals=rows.reduce((t,r)=>{['total','pendingCut','pendingPunch','pendingWrap','pendingBox','complete'].forEach(k=>t[k]+=Number(r[k])||0);return t;},{total:0,pendingCut:0,pendingPunch:0,pendingWrap:0,pendingBox:0,complete:0});
+    const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=`${Number(v||0).toLocaleString()} Pcs`;};
+    set('plStageKpiTotal',totals.total);set('plStageKpiCut',totals.pendingCut);set('plStageKpiPunch',totals.pendingPunch);set('plStageKpiWrap',totals.pendingWrap);set('plStageKpiBox',totals.pendingBox);set('plStageKpiComplete',totals.complete);
+    const subtitle=document.getElementById('plStageSummarySubtitle');
+    if(subtitle)subtitle.textContent=`Active Packing List: ${active.month} • ${active.container}. Profile, item code and length are grouped separately.`;
+    const status=document.getElementById('plStageSummaryStatus');
+    if(status)status.textContent=`${rows.length} profile / item / length line(s) • ${records.length} PL record(s) • ${totals.total.toLocaleString()} total Pcs • ${active.month} — ${active.container}.`;
+    const n=v=>Number(v||0).toLocaleString();
+    body.innerHTML=rows.length?rows.map(r=>`<tr>
+      <td><b>${currentPlBalanceEscape(r.profile)}</b></td>
+      <td class="pl-bal-item">${currentPlBalanceEscape(r.itemCode)}</td>
+      <td>${currentPlBalanceEscape(r.length)}</td>
+      <td>${currentPlBalanceEscape([...r.pos].join(', ')||'-')}</td>
+      <td class="pl-stage-total">${n(r.total)}</td>
+      <td class="pl-stage-cut">${n(r.pendingCut)}</td>
+      <td class="pl-stage-punch">${n(r.pendingPunch)}</td>
+      <td class="pl-stage-wrap">${n(r.pendingWrap)}</td>
+      <td class="pl-stage-box">${n(r.pendingBox)}</td>
+      <td class="pl-stage-complete">${n(r.complete)}</td>
+    </tr>`).join(''):'<tr><td colspan="10" class="pl-balance-empty">No records found in the active Packing List.</td></tr>';
+    const foot=document.getElementById('plCurrentStageSummaryFoot');
+    if(foot)foot.innerHTML=rows.length?`<tr><td colspan="4">TOTAL — ACTIVE PACKING LIST</td><td>${n(totals.total)}</td><td>${n(totals.pendingCut)}</td><td>${n(totals.pendingPunch)}</td><td>${n(totals.pendingWrap)}</td><td>${n(totals.pendingBox)}</td><td>${n(totals.complete)}</td></tr>`:'';
+  }catch(e){
+    console.error('Current PL profile stage summary failed:',e);
+    body.innerHTML='<tr><td colspan="10" class="pl-balance-empty">Could not calculate the stage summary. Check Packing List records, Master Catalog stock and browser console.</td></tr>';
+  }
+}
+window.exportCurrentPlStageSummaryExcel=function(){
+  if(typeof XLSX==='undefined')return showToast('Excel export library is not available.','error');
+  renderCurrentPlStageSummary();
+  const table=document.getElementById('plCurrentStageSummaryTable');if(!table)return;
+  try{
+    const active=getActivePackingListSelection();
+    const wb=XLSX.utils.table_to_book(table,{sheet:'PL Stage Summary'});
+    XLSX.writeFile(wb,`AIS_Current_PL_Profile_Stage_Summary_${String(active.month).replace(/\s+/g,'_')}_${String(active.container).replace(/\s+/g,'_')}.xlsx`);
+  }catch(e){console.error(e);showToast('Could not export the current PL stage summary.','error');}
+};
+window.printCurrentPlStageSummary=function(){
+  renderCurrentPlStageSummary();
+  const table=document.getElementById('plCurrentStageSummaryTable');if(!table)return;
+  const active=getActivePackingListSelection();
+  const win=window.open('','_blank');if(!win)return showToast('Allow pop-ups to print this table.','warning');
+  win.document.write(`<html><head><title>AIS Current PL Profile Stage Summary</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#173b55}h2{margin:0 0 5px;color:#075d70}p{font-size:12px;color:#52697b}table{width:100%;border-collapse:collapse;font-size:10px;margin-top:16px}th,td{border:1px solid #cbd5e1;padding:7px 6px;text-align:left}th{background:#0f5365;color:#fff}tfoot td{font-weight:bold;background:#e8f5f3}@media print{body{padding:0}thead{display:table-header-group}tr{break-inside:avoid}}</style></head><body><h2>AIS Tracker — Current PL Profile Stage Summary</h2><p>${currentPlBalanceEscape(active.month)} • ${currentPlBalanceEscape(active.container)}</p>${table.outerHTML}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  win.document.close();
+};
+
 function switchPackingListView(view, button){
   const main=document.getElementById('plMainContent');
   const balance=document.getElementById('plBalanceView');
+  const stage=document.getElementById('plStageSummaryView');
   const mainBtn=document.getElementById('plViewMainBtn');
   const balanceBtn=document.getElementById('plViewBalanceBtn');
-  if(!main||!balance)return;
-  const showBalance=view==='balance';
-  main.style.display=showBalance?'none':'block';
+  const stageBtn=document.getElementById('plViewStageSummaryBtn');
+  if(!main||!balance||!stage)return;
+  const showBalance=view==='balance',showStage=view==='stageSummary';
+  main.style.display=(showBalance||showStage)?'none':'block';
   balance.style.display=showBalance?'block':'none';
-  if(mainBtn)mainBtn.classList.toggle('active',!showBalance);
+  stage.style.display=showStage?'block':'none';
+  if(mainBtn)mainBtn.classList.toggle('active',!showBalance&&!showStage);
   if(balanceBtn)balanceBtn.classList.toggle('active',showBalance);
+  if(stageBtn)stageBtn.classList.toggle('active',showStage);
   if(showBalance)renderCurrentPlShipmentBalanceTable();
+  if(showStage)renderCurrentPlStageSummary();
 }
 window.switchPackingListView=switchPackingListView;
 
@@ -6356,6 +6559,8 @@ window.printCurrentPlShipmentBalance=function(){
 function renderPackingListTable(){
   renderPackingListTableCore();
   renderCurrentPlShipmentBalanceTable();
+  const stageView=document.getElementById('plStageSummaryView');
+  if(stageView&&stageView.style.display!=='none')renderCurrentPlStageSummary();
 }
 
 window.clearRawPackingListFilters = function(){

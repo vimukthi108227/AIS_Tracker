@@ -28,7 +28,7 @@
       }
     });
   </script>
-  <link rel="stylesheet" href="style.css?v=20261029-extrusion-po-cards-v224">
+  <link rel="stylesheet" href="style.css?v=20261111-current-pl-stage-summary-v252">
 
 <style id="ais-nav-v9-theme">
   body{font-family:"Inter","Plus Jakarta Sans",system-ui,sans-serif;}
@@ -600,7 +600,7 @@
 </div></div></div>
 
     <!-- Admin Entry Tab -->
-    <div id="adminEntryTab" class="tab-content"><div class="card"><h3><i class="fa-solid fa-list-check"></i> Enter Production Quantities by Stage</h3><div id="entryStatusBanner" class="status-banner"></div><form id="dailyEntryForm"><div class="form-grid"><div class="form-group"><label>Select Date</label><input type="date" id="entryDate" onchange="checkDateStatus()" required></div><div class="form-group"><label>Shift</label><select id="shift" onchange="checkDateStatus()" required><option value="Day">Day Shift</option><option value="Night">Night Shift</option></select></div><div class="form-group"><label>Production Team</label><select id="productionTeam" required><option value="">-- Select Team --</option><option value="Team A">Team A</option><option value="Team B">Team B</option><option value="Team C">Team C</option></select></div><div class="form-group"><label>1. Select Profile</label><select id="selectProfile" onchange="onProfileSelect()" required><option value="">-- Choose Profile --</option></select></div><div class="form-group"><label>2. Select Item Code</label><select id="selectItemCode" onchange="onItemCodeSelect()" required><option value="">-- Choose Item --</option></select></div><div class="form-group"><label>3. Select Length (mm)</label><select id="selectLength" onchange="onLengthSelect()" required><option value="">-- Choose Length --</option></select></div></div><div class="stage-section"><h4><i class="fa-solid fa-layer-group"></i> Daily Production Stages Entry</h4><p style="margin:0 0 10px;color:var(--text-muted);font-size:11px;">Enter the planned PCS for this date, shift, team and profile. Actual production is entered in the stage fields below; Box plan is also recorded in PCS.</p><div class="form-grid team-plan-input-grid"><div class="form-group"><label>Cut Plan (Pcs)</label><input type="number" id="planCutQty" min="0" step="1" value="0"></div><div class="form-group"><label>Punch Plan (Pcs)</label><input type="number" id="planPunchQty" min="0" step="1" value="0"></div><div class="form-group"><label>Wrapping Plan (Pcs)</label><input type="number" id="planWrapQty" min="0" step="1" value="0"></div><div class="form-group"><label>Box Plan (Pcs)</label><input type="number" id="planBoxQty" min="0" step="1" value="0"></div><div class="form-group"><label>Crate Plan (Pcs)</label><input type="number" id="planCrateQty" min="0" step="1" value="0"></div></div><div class="form-grid"><div class="form-group"><label>1. Cut Stage Qty (Pcs)</label><input type="number" id="cutQty" min="0" value="0"></div><div class="form-group" id="punchGroup"><label>2. Punching Qty (Pcs)</label><input type="number" id="punchQty" min="0" value="0"></div><div class="form-group"><label>3. Wrapping Qty (Pcs)</label><input type="number" id="wrapQty" min="0" value="0"></div><div class="form-group" style="background: rgba(16, 185, 129, 0.1); padding: 8px 10px; border-radius: 8px; border: 1px solid #10b981;"><label style="color: #047857;"><i class="fa-solid fa-box-open"></i> 4. Box Packing Qty (Boxes)</label><input type="number" id="boxQty" min="0" value="0" style="border-color:#10b981;" oninput="enforceProductionCardboardQty()"><div id="productionCardboardAvailability" class="production-cardboard-info neutral"><i class="fa-solid fa-box"></i> Select profile, item code and length to check cardboard stock.</div></div><div class="form-group" style="background: rgba(254, 243, 199, 0.4); padding: 8px 10px; border-radius: 8px; border: 1px solid #fcd34d;"><label style="color: #b45309;"><i class="fa-solid fa-boxes-packing"></i> 5. Crate Stage Qty (Pcs)</label><input type="number" id="crateQty" min="0" value="0"></div></div></div><div style="margin-top: 16px;"><button type="button" class="btn btn-animated" id="saveDailyProductionBtn" onclick="submitDailyEntry()"><i class="fa-solid fa-floppy-disk"></i> Process Movement</button></div></form></div></div>
+    <div id="adminEntryTab" class="tab-content"><div class="card"><h3><i class="fa-solid fa-list-check"></i> Enter Production Quantities by Stage</h3><div id="entryStatusBanner" class="status-banner"></div><form id="dailyEntryForm"><div class="form-grid"><div class="form-group"><label>Select Date</label><input type="date" id="entryDate" onchange="checkDateStatus();loadDailyPlanForSelection()" required></div><div class="form-group"><label>Shift</label><select id="shift" onchange="checkDateStatus();loadDailyPlanForSelection()" required><option value="Day">Day Shift</option><option value="Night">Night Shift</option></select></div><div class="form-group"><label>Production Team</label><select id="productionTeam" onchange="loadDailyPlanForSelection()" required><option value="">-- Select Team --</option><option value="Team A">Team A</option><option value="Team B">Team B</option><option value="Team C">Team C</option></select></div><div class="form-group"><label>1. Select Profile</label><select id="selectProfile" onchange="onProfileSelect();loadDailyPlanForSelection()" required><option value="">-- Choose Profile --</option></select></div><div class="form-group"><label>2. Select Item Code</label><select id="selectItemCode" onchange="onItemCodeSelect();loadDailyPlanForSelection()" required><option value="">-- Choose Item --</option></select></div><div class="form-group"><label>3. Select Length (mm)</label><select id="selectLength" onchange="onLengthSelect();loadDailyPlanForSelection()" required><option value="">-- Choose Length --</option></select></div></div><div class="stage-section"><h4><i class="fa-solid fa-layer-group"></i> Daily Production Stages Entry</h4><p style="margin:0 0 10px;color:var(--text-muted);font-size:11px;">Enter the planned PCS for this date, shift, team and profile. Actual production is entered in the stage fields below; Box plan is also recorded in PCS.</p><div class="form-grid team-plan-input-grid"><div class="form-group"><label>Cut Plan (Pcs)</label><input type="number" id="planCutQty" min="0" step="1" value="0"></div><div class="form-group"><label>Punch Plan (Pcs)</label><input type="number" id="planPunchQty" min="0" step="1" value="0"></div><div class="form-group"><label>Wrapping Plan (Pcs)</label><input type="number" id="planWrapQty" min="0" step="1" value="0"></div><div class="form-group"><label>Box Plan (Pcs)</label><input type="number" id="planBoxQty" min="0" step="1" value="0"></div><div class="form-group"><label>Crate Plan (Pcs)</label><input type="number" id="planCrateQty" min="0" step="1" value="0"></div></div><div class="form-grid"><div class="form-group"><label>1. Cut Stage Qty (Pcs)</label><input type="number" id="cutQty" min="0" value="0"></div><div class="form-group" id="punchGroup"><label>2. Punching Qty (Pcs)</label><input type="number" id="punchQty" min="0" value="0"></div><div class="form-group"><label>3. Wrapping Qty (Pcs)</label><input type="number" id="wrapQty" min="0" value="0"></div><div class="form-group" style="background: rgba(16, 185, 129, 0.1); padding: 8px 10px; border-radius: 8px; border: 1px solid #10b981;"><label style="color: #047857;"><i class="fa-solid fa-box-open"></i> 4. Box Packing Qty (Boxes)</label><input type="number" id="boxQty" min="0" value="0" style="border-color:#10b981;" oninput="enforceProductionCardboardQty()"><div id="productionCardboardAvailability" class="production-cardboard-info neutral"><i class="fa-solid fa-box"></i> Select profile, item code and length to check cardboard stock.</div></div><div class="form-group" style="background: rgba(254, 243, 199, 0.4); padding: 8px 10px; border-radius: 8px; border: 1px solid #fcd34d;"><label style="color: #b45309;"><i class="fa-solid fa-boxes-packing"></i> 5. Crate Stage Qty (Pcs)</label><input type="number" id="crateQty" min="0" value="0"></div></div></div><div style="margin-top: 16px;"><button type="button" class="btn btn-animated" id="saveDailyProductionBtn" onclick="submitDailyEntry()"><i class="fa-solid fa-floppy-disk"></i> Process Movement</button></div></form></div></div>
 
     <!-- Team Plan vs Actual Tab -->
     <div id="teamProductionTab" class="tab-content">
@@ -620,7 +620,7 @@
       <div id="teamPerfCards" class="team-performance-cards"></div>
       <div class="team-performance-charts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin:16px 0;">
         <div class="card"><h4><i class="fa-solid fa-chart-column"></i> Team Plan vs Actual (PCS)</h4><div style="height:260px;position:relative;"><canvas id="teamPlanActualChart"></canvas></div></div>
-        <div class="card"><h4><i class="fa-solid fa-weight-hanging"></i> Team Plan vs Actual Weight (kg)</h4><div style="height:260px;position:relative;"><canvas id="teamPlanActualWeightChart"></canvas></div></div>
+        <div class="card"><h4><i class="fa-solid fa-weight-hanging"></i> Team Plan vs Actual Weight (kg)</h4><div style="height:260px;position:relative;"><canvas id="teamPlanActualWeightChart"></canvas></div></div><div class="card"><h4><i class="fa-solid fa-chart-pie"></i> Team Production Contribution (kg)</h4><div style="height:260px;position:relative;"><canvas id="teamProductionContributionChart"></canvas></div></div>
       </div>
       <div class="card" style="margin-bottom:18px;"><div class="team-sheet-heading"><div><h4 style="margin:0;"><i class="fa-solid fa-table"></i> Individual Team Performance Sheets</h4><small id="teamPerfSheetCaption">Select a team to view and print its separate report.</small></div><button class="btn btn-accent" onclick="printTeamPerformanceSheet()"><i class="fa-solid fa-print"></i> Print Selected Team</button></div><div class="team-sheet-tabs"><button class="active" data-team="Team A" onclick="selectTeamPerfSheet('Team A',this)">Team A</button><button data-team="Team B" onclick="selectTeamPerfSheet('Team B',this)">Team B</button><button data-team="Team C" onclick="selectTeamPerfSheet('Team C',this)">Team C</button></div><div id="teamPerfSheetContent" class="table-container" style="margin-top:12px;"></div></div>
     </div>
@@ -803,6 +803,7 @@
       <div class="pl-view-nav" role="tablist" aria-label="Packing List views">
         <button type="button" class="pl-view-tab active" id="plViewMainBtn" onclick="switchPackingListView('main', this)"><i class="fa-solid fa-boxes-packing"></i> Packing List Tracker</button>
         <button type="button" class="pl-view-tab" id="plViewBalanceBtn" onclick="switchPackingListView('balance', this)"><i class="fa-solid fa-scale-balanced"></i> Current PL vs Shipment Balance</button>
+        <button type="button" class="pl-view-tab" id="plViewStageSummaryBtn" onclick="switchPackingListView('stageSummary', this)"><i class="fa-solid fa-chart-column"></i> Current PL Profile Stage Summary</button>
       </div>
       <div id="plBalanceView" style="display:none;">
         <div class="card pl-current-balance-card">
@@ -862,6 +863,42 @@
             </div>
             <p class="pl-current-balance-note">This breakdown is read-only and is calculated from saved Shipment Tracker records for the selected PO / Profile / Item Code / Length.</p>
           </div>
+        </div>
+      </div>
+      <div id="plStageSummaryView" style="display:none;">
+        <div class="card pl-current-balance-card pl-stage-summary-card">
+          <div class="pl-current-balance-head">
+            <div>
+              <h3><i class="fa-solid fa-chart-column"></i> Current PL — Profile-wise Production Stage Summary</h3>
+              <p id="plStageSummarySubtitle">Pending stage quantities are calculated from the active Packing List and current Master Catalog stage stock.</p>
+            </div>
+            <div class="pl-current-balance-actions">
+              <button type="button" class="btn btn-accent" onclick="exportCurrentPlStageSummaryExcel()"><i class="fa-solid fa-file-excel"></i> Excel</button>
+              <button type="button" class="btn" style="background:#475569;color:#fff;" onclick="printCurrentPlStageSummary()"><i class="fa-solid fa-print"></i> Print</button>
+              <button type="button" class="btn" style="background:#0f766e;color:#fff;" onclick="renderCurrentPlStageSummary()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+            </div>
+          </div>
+          <div class="pl-stage-summary-kpis">
+            <div><span>Total PL Qty</span><strong id="plStageKpiTotal">0 Pcs</strong></div>
+            <div><span>Pending Cut</span><strong id="plStageKpiCut">0 Pcs</strong></div>
+            <div><span>Pending Punch</span><strong id="plStageKpiPunch">0 Pcs</strong></div>
+            <div><span>Pending Wrapping</span><strong id="plStageKpiWrap">0 Pcs</strong></div>
+            <div><span>Pending Box</span><strong id="plStageKpiBox">0 Pcs</strong></div>
+            <div><span>Complete Qty</span><strong id="plStageKpiComplete">0 Pcs</strong></div>
+          </div>
+          <div id="plStageSummaryStatus" class="pl-current-balance-status" aria-live="polite"></div>
+          <div class="table-container pl-current-balance-table-wrap">
+            <table id="plCurrentStageSummaryTable">
+              <thead><tr>
+                <th>Profile</th><th>Item Code</th><th>Length (mm)</th><th>PO Number(s)</th>
+                <th>Total PL Qty (Pcs)</th><th>Pending Cut (Pcs)</th><th>Pending Punch (Pcs)</th>
+                <th>Pending Wrapping (Pcs)</th><th>Pending Box (Pcs)</th><th>Complete Qty (Pcs)</th>
+              </tr></thead>
+              <tbody id="plCurrentStageSummaryBody"><tr><td colspan="10" class="pl-balance-empty">Loading active Packing List stage summary…</td></tr></tbody>
+              <tfoot id="plCurrentStageSummaryFoot"></tfoot>
+            </table>
+          </div>
+          <p class="pl-current-balance-note"><b>Stage calculation:</b> Pending Cut = quantity not yet recorded at Cut; Pending Punch = Cut-stage quantity; Pending Wrapping = Punch-stage quantity; Pending Box = Wrapping-stage quantity; Complete = Box-stage quantity plus manually completed Crate-stage quantity. Each PL line is allocated once using the existing crate stock allocation logic. Only the selected active Packing List is included.</p>
         </div>
       </div>
       <div id="plMainContent">
@@ -1134,7 +1171,7 @@
 .pp-container-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;align-items:end;margin:12px 0}.pp-container-controls .form-group{margin:0}.pp-container-controls-secondary{grid-template-columns:minmax(240px,1.5fr) repeat(3,minmax(130px,auto));align-items:center}.pp-container-check{display:flex;align-items:center;gap:8px;font-weight:700;color:#23465c;padding:10px 0}.pp-container-check input{width:18px;height:18px}.pp-container-stats{grid-template-columns:repeat(auto-fit,minmax(145px,1fr))}.pp-container-layout-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:14px;margin-top:14px}.pp-container-visual{min-height:400px;overflow:auto}.pp-container-selected-meta{background:#f0f8fb;border:1px solid #cde0ea;border-radius:10px;padding:12px;margin:10px 0;line-height:1.7}.pp-position-controls{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}.pp-container-exports{margin:14px 0}.pp-container-table{min-width:1000px}.pp-container-table td,.pp-container-table th{white-space:nowrap}.pp-container-visual svg{width:100%;height:auto;min-width:640px;display:block}.pp-container-planner .pp-note{margin-top:10px}@media(max-width:850px){.pp-container-layout-grid{grid-template-columns:1fr}.pp-container-controls-secondary{grid-template-columns:1fr 1fr}.pp-container-visual{min-height:280px}}
 </style>
 
-<script src="script.js?v=20261029-extrusion-po-cards-v224"></script>
+<script src="script.js?v=20261111-current-pl-stage-summary-v252"></script>
 
 <script>
 (function(){

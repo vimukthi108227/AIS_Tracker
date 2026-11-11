@@ -3648,3 +3648,94 @@ body.dark-mode table tbody tr:hover td,body.dark-mode table tbody tr:hover th{ba
 .team-individual-report tbody tr:nth-child(even){background:#f5f9fb}
 .team-individual-report tfoot td{background:#eaf4f8;font-weight:900}
 @media print{.team-sheet-tabs,.team-sheet-heading button{display:none!important}}
+
+/* V2.46 — historical plan entry and profile-level team history */
+#saveDailyPlanOnlyBtn{background:linear-gradient(135deg,#2563eb,#0e7490);color:#fff;border:0;box-shadow:0 5px 14px rgba(37,99,235,.18)}
+#saveDailyPlanOnlyBtn:hover{filter:brightness(1.06);transform:translateY(-1px)}
+.team-individual-report{min-width:1180px}
+.team-perf-additional-text{color:#0877bd!important;font-weight:900}
+.team-individual-report .team-perf-table-below{background:#fff1f2;color:#be123c;font-weight:900}
+.team-individual-report .team-perf-table-above{background:#ecfdf5;color:#047857;font-weight:900}
+
+/* V2.47 stage-separated team reports */
+.team-stage-report{overflow:hidden}
+.team-stage-report h4{font-weight:900;letter-spacing:.1px}
+.team-stage-report .table-container{overflow-x:auto}
+.team-stage-report .team-individual-report{min-width:1250px}
+.team-perf-stage-breakdown{display:grid;grid-template-columns:1fr;gap:7px}
+.team-perf-stage-row{grid-template-columns:1.1fr 1fr 1fr .9fr 1fr!important;align-items:center}
+.team-perf-stage-row>div{min-width:0}
+.team-perf-stage-row small{display:block}
+@media(max-width:760px){.team-perf-stage-row{grid-template-columns:1fr 1fr!important}}
+@media print{.team-stage-report{break-inside:avoid}.team-stage-report .table-container{overflow:visible}.team-stage-report .team-individual-report{min-width:0;font-size:8px}}
+
+/* V2.48 historical plan correction controls */
+.team-stage-report .btn.btn-sm{padding:5px 9px;font-size:10px;white-space:nowrap;background:#e0f2fe;color:#075985;border:1px solid #7dd3fc;border-radius:7px;font-weight:800}
+.team-stage-report .btn.btn-sm:hover{background:#bae6fd}
+
+/* V2.49 clean team production history and inline plan editing */
+.team-plan-edit-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border:1px solid #7dd3fc;border-radius:8px;background:#eff8ff;color:#075985;font-weight:800;cursor:pointer;white-space:nowrap;transition:all .15s ease}
+.team-plan-edit-chip:hover{background:#dbeafe;border-color:#38bdf8;box-shadow:0 2px 7px #0284c733;transform:translateY(-1px)}
+.team-plan-edit-chip i{font-size:10px;opacity:.7}
+.team-box-report .team-box-date-total{background:#e0f2fe;color:#075985;font-weight:900}
+.team-stage-report tbody tr:hover{background:#f0f9ff}
+@media print{.team-plan-edit-chip{border:0;background:transparent;color:#111;padding:0}.team-plan-edit-chip i{display:none}}
+
+
+/* AIS Tracker V2.51 — branded historical plan editor modal */
+.ais-plan-modal-backdrop{
+  position:fixed;inset:0;z-index:100500;display:flex;align-items:center;justify-content:center;
+  padding:20px;background:rgba(8,29,48,.58);backdrop-filter:blur(5px);
+  opacity:0;visibility:hidden;transition:opacity .18s ease,visibility .18s ease;
+}
+.ais-plan-modal-backdrop.is-open{opacity:1;visibility:visible}
+.ais-plan-modal{
+  width:min(470px,100%);background:#fff;border:1px solid #cfe1e9;border-radius:18px;
+  box-shadow:0 24px 70px rgba(5,35,58,.28);padding:24px;color:#173b55;
+  transform:translateY(10px) scale(.985);transition:transform .18s ease;
+}
+.ais-plan-modal-backdrop.is-open .ais-plan-modal{transform:translateY(0) scale(1)}
+.ais-plan-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px}
+.ais-plan-modal-kicker{font-size:10px;letter-spacing:1.25px;font-weight:800;color:#079b83}
+.ais-plan-modal-head h3{font-size:21px;line-height:1.25;margin:5px 0 0;color:#123d59;font-weight:800}
+.ais-plan-modal-close{border:0;background:#edf5f8;color:#31556d;border-radius:10px;width:36px;height:36px;font-size:25px;line-height:1;cursor:pointer}
+.ais-plan-modal-close:hover{background:#dcecf2;color:#0d5665}
+.ais-plan-modal-meta{padding:12px 14px;border:1px solid #d7e8ed;border-left:4px solid #0b897f;border-radius:10px;background:#f3faf9;color:#36566a;font-size:12px;line-height:1.65;font-weight:650;margin-bottom:19px;overflow-wrap:anywhere}
+.ais-plan-modal-label{display:block;color:#35556d;font-size:13px;font-weight:800;margin-bottom:8px}
+.ais-plan-modal-label span{color:#71889a;font-weight:650}
+.ais-plan-modal-input-wrap{display:flex;align-items:center;gap:10px;border:1.5px solid #b8d2df;border-radius:11px;background:#fbfdff;padding:4px 13px;transition:border-color .15s,box-shadow .15s}
+.ais-plan-modal-input-wrap:focus-within{border-color:#078b87;box-shadow:0 0 0 3px rgba(8,145,137,.12)}
+.ais-plan-modal-input-wrap input{width:100%;min-width:0;border:0!important;outline:0!important;box-shadow:none!important;background:transparent!important;color:#123d59;font-size:22px;font-weight:800;padding:11px 0}
+.ais-plan-modal-input-wrap>span{font-size:11px;letter-spacing:.6px;font-weight:900;color:#078b87}
+.ais-plan-modal-hint{font-size:11px;line-height:1.55;color:#718596;margin:9px 0 20px}
+.ais-plan-modal-actions{display:flex;justify-content:flex-end;gap:10px}
+.ais-plan-modal-actions button{border:0;border-radius:10px;padding:11px 17px;font-size:13px;font-weight:800;cursor:pointer;transition:transform .15s,filter .15s}
+.ais-plan-modal-actions button:hover{filter:brightness(.97);transform:translateY(-1px)}
+.ais-plan-modal-actions button:disabled{opacity:.65;cursor:wait;transform:none}
+.ais-plan-btn-secondary{background:#edf3f7;color:#3c586d;border:1px solid #d5e2e9!important}
+.ais-plan-btn-primary{background:linear-gradient(135deg,#0b5268,#07877f);color:#fff;box-shadow:0 5px 14px rgba(7,111,112,.2)}
+@media(max-width:520px){.ais-plan-modal-backdrop{padding:12px}.ais-plan-modal{padding:19px;border-radius:15px}.ais-plan-modal-head h3{font-size:19px}.ais-plan-modal-actions button{flex:1}}
+
+
+/* V2.52 — current Packing List profile-wise stage summary */
+.pl-stage-summary-kpis{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:10px;margin:16px 0 12px}
+.pl-stage-summary-kpis>div{padding:13px 14px;border:1px solid #d7e5ed;border-radius:12px;background:#f7fbfd;min-width:0}
+.pl-stage-summary-kpis span{display:block;font-size:11px;font-weight:750;color:#647b8c;margin-bottom:7px}
+.pl-stage-summary-kpis strong{display:block;font-size:18px;font-weight:850;color:#173b55;white-space:nowrap}
+.pl-stage-summary-kpis>div:nth-child(2){background:#fff5f5;border-color:#fecaca}
+.pl-stage-summary-kpis>div:nth-child(2) strong,.pl-stage-cut{color:#dc2626!important;font-weight:800}
+.pl-stage-summary-kpis>div:nth-child(3){background:#fff8ed;border-color:#fed7aa}
+.pl-stage-summary-kpis>div:nth-child(3) strong,.pl-stage-punch{color:#c46a0a!important;font-weight:800}
+.pl-stage-summary-kpis>div:nth-child(4){background:#fdf4ff;border-color:#e9d5ff}
+.pl-stage-summary-kpis>div:nth-child(4) strong,.pl-stage-wrap{color:#9333a8!important;font-weight:800}
+.pl-stage-summary-kpis>div:nth-child(5){background:#eff6ff;border-color:#bfdbfe}
+.pl-stage-summary-kpis>div:nth-child(5) strong,.pl-stage-box{color:#2563eb!important;font-weight:800}
+.pl-stage-summary-kpis>div:nth-child(6){background:#ecfdf5;border-color:#a7f3d0}
+.pl-stage-summary-kpis>div:nth-child(6) strong,.pl-stage-complete{color:#047857!important;font-weight:850}
+#plCurrentStageSummaryTable{min-width:1120px}
+#plCurrentStageSummaryTable th{white-space:normal;vertical-align:middle}
+#plCurrentStageSummaryTable td{white-space:nowrap}
+#plCurrentStageSummaryTable .pl-stage-total{font-weight:850;color:#173b55;background:#f0f7fa}
+#plCurrentStageSummaryTable tfoot td{font-weight:850;background:#e8f4f4;color:#123d59}
+@media(max-width:1100px){.pl-stage-summary-kpis{grid-template-columns:repeat(3,minmax(120px,1fr))}}
+@media(max-width:620px){.pl-stage-summary-kpis{grid-template-columns:repeat(2,minmax(110px,1fr))}.pl-stage-summary-kpis strong{font-size:16px}}
