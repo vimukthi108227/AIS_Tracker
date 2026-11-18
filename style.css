@@ -3739,3 +3739,120 @@ body.dark-mode table tbody tr:hover td,body.dark-mode table tbody tr:hover th{ba
 #plCurrentStageSummaryTable tfoot td{font-weight:850;background:#e8f4f4;color:#123d59}
 @media(max-width:1100px){.pl-stage-summary-kpis{grid-template-columns:repeat(3,minmax(120px,1fr))}}
 @media(max-width:620px){.pl-stage-summary-kpis{grid-template-columns:repeat(2,minmax(110px,1fr))}.pl-stage-summary-kpis strong{font-size:16px}}
+
+
+/* V2.53 — Next PL Planning nested under Crate Planning 2D */
+#packingPlannerTab #nextPlPlanningTab{display:none}
+#packingPlannerTab #nextPlPlanningTab.active{display:block}
+#packingPlannerTab .pp-subtab-content#nextPlPlanningTab{padding-top:12px}
+#nextPlPlanningTab .next-pl-hero{border-top:4px solid #0f766e}
+#nextPlPlanningTab .next-pl-table-wrap{overflow-x:auto}
+#nextPlPlanningTab #nextPlPlanningTable{min-width:1450px}
+#nextPlPlanningTab #nextPlPlanningTable th{white-space:normal;line-height:1.25}
+#nextPlPlanningTab #nextPlPlanningTable td{white-space:nowrap;vertical-align:middle}
+#nextPlPlanningTab .next-pl-stage-cut{color:#b45309;font-weight:800;background:#fffbeb}
+#nextPlPlanningTab .next-pl-stage-punch{color:#7c3aed;font-weight:800;background:#f5f3ff}
+#nextPlPlanningTab .next-pl-stage-ready{color:#047857;font-weight:850;background:#ecfdf5}
+#nextPlPlanningTab .next-pl-remaining{color:#0f766e;font-weight:850;background:#f0fdfa}
+#nextPlPlanningTab .next-pl-select-input{width:112px;min-width:95px;border:1.5px solid #0ea5e9;border-radius:9px;padding:8px 9px;background:#effaff;color:#075985;font-weight:850;text-align:center}
+#nextPlPlanningTab .next-pl-select-input:focus{outline:3px solid #bae6fd;border-color:#0284c7;background:white}
+#nextPlPlanningTab .next-pl-remove-line{border:1px solid #fecaca;background:#fff1f2;color:#be123c;border-radius:8px;padding:7px 9px;font-weight:800;cursor:pointer}
+#nextPlPlanningTab .next-pl-remove-line:disabled{opacity:.35;cursor:not-allowed}
+#nextPlPlanningTab .next-pl-excluded{opacity:.55;background:#f8fafc}
+#nextPlPlanningTab .next-pl-summary-actions button{white-space:nowrap}
+#nextPlPlanningTab .next-pl-summary-table{min-width:850px}
+@media(max-width:850px){
+ #nextPlPlanningTab .next-pl-controls{grid-template-columns:repeat(2,minmax(0,1fr))}
+ #nextPlPlanningTab .next-pl-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media print{
+ #nextPlPlanningTab .next-pl-actions,#nextPlPlanningTab .next-pl-controls,#nextPlPlanningTab .next-pl-remove-line{display:none!important}
+ #nextPlPlanningTab .next-pl-table-wrap{overflow:visible!important}
+ #nextPlPlanningTab #nextPlPlanningTable{min-width:0;font-size:8px}
+}
+
+
+/* V2.54 — Selected Packing List + Next PL stage summary */
+#nextPlPlanningTab .next-pl-pl-select-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px;max-width:760px}
+#nextPlPlanningTab .next-pl-pl-select-grid select{color:#111827!important;background:#fff!important;font-weight:800}
+#nextPlPlanningTab .next-pl-quick-qty{color:#111827!important;-webkit-text-fill-color:#111827!important;background:#fff!important;font-weight:900!important;opacity:1!important;caret-color:#111827}
+#nextPlPlanningTab .next-pl-quick-qty::placeholder{color:#6b7280!important;-webkit-text-fill-color:#6b7280!important;opacity:1}
+#nextPlPlanningTab .next-pl-quick-qty:focus{border-color:#0f766e!important;box-shadow:0 0 0 3px rgba(15,118,110,.16)!important;outline:none}
+#nextPlPlanningTab .next-pl-bottom-summary{padding:16px}
+#nextPlPlanningTab .next-pl-bottom-kpis{display:grid;grid-template-columns:repeat(3,minmax(190px,1fr));gap:12px}
+#nextPlPlanningTab .next-pl-bottom-kpi{padding:15px;border:1px solid #cbd5e1;border-left:5px solid #0f766e;border-radius:12px;background:#fff;min-width:0}
+#nextPlPlanningTab .next-pl-bottom-kpi small{display:block;color:#475569;font-weight:800;font-size:11px;margin-bottom:7px}
+#nextPlPlanningTab .next-pl-bottom-kpi b{display:block;color:#111827;font-size:24px;font-weight:950;letter-spacing:.1px}
+#nextPlPlanningTab .next-pl-bottom-kpi.process{border-left-color:#2563eb}
+#nextPlPlanningTab .next-pl-bottom-kpi.complete{border-left-color:#059669}
+#nextPlPlanningTab .next-pl-bottom-chart{height:330px;max-width:680px;margin:18px auto 4px;position:relative}
+#packingPlannerTab .pp-subnav{display:flex;flex-wrap:wrap;gap:8px}
+#packingPlannerTab .pp-subnav .pp-subtab{order:2}
+#packingPlannerTab .pp-subnav .pp-subtab:first-child{order:1}
+@media(max-width:760px){
+ #nextPlPlanningTab .next-pl-pl-select-grid{grid-template-columns:1fr}
+ #nextPlPlanningTab .next-pl-bottom-kpis{grid-template-columns:1fr}
+ #nextPlPlanningTab .next-pl-bottom-kpi b{font-size:21px}
+}
+
+
+/* V2.55 — clear weight cards and Next PL to Crate Plan transfer */
+#nextPlPlanningTab .next-pl-bottom-summary{padding:20px!important;background:linear-gradient(135deg,#ffffff 0%,#f7fbff 100%)!important}
+#nextPlPlanningTab .next-pl-bottom-summary>h4{font-size:17px!important;font-weight:900!important;margin-bottom:16px!important}
+#nextPlPlanningTab .next-pl-bottom-kpis{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:14px!important}
+#nextPlPlanningTab .next-pl-bottom-kpi{position:relative;display:flex!important;flex-direction:column;justify-content:center;min-height:130px;padding:18px 18px 16px 20px!important;border:1px solid #dbe5ef!important;border-left:5px solid #0f766e!important;border-radius:14px!important;background:#fff!important;box-shadow:0 5px 16px rgba(15,55,80,.07)!important}
+#nextPlPlanningTab .next-pl-bottom-kpi.process{border-left-color:#2563eb!important}
+#nextPlPlanningTab .next-pl-bottom-kpi.complete{border-left-color:#059669!important}
+#nextPlPlanningTab .next-pl-bottom-kpi .next-pl-kpi-icon{display:flex;align-items:center;justify-content:center;width:34px;height:34px;margin-bottom:9px;border-radius:10px;background:#e6f6f4;color:#0f766e;font-size:16px}
+#nextPlPlanningTab .next-pl-bottom-kpi.process .next-pl-kpi-icon{background:#eff6ff;color:#2563eb}
+#nextPlPlanningTab .next-pl-bottom-kpi.complete .next-pl-kpi-icon{background:#ecfdf5;color:#059669}
+#nextPlPlanningTab .next-pl-bottom-kpi small{display:block!important;color:#475569!important;font-size:12px!important;font-weight:850!important;line-height:1.4;margin:0 0 5px!important}
+#nextPlPlanningTab .next-pl-bottom-kpi b{display:block!important;color:#102f43!important;font-size:clamp(21px,2vw,28px)!important;font-weight:950!important;line-height:1.2!important;white-space:nowrap}
+#nextPlPlanningTab .next-pl-bottom-kpi em{display:block;color:#64748b;font-size:11px;font-style:normal;font-weight:650;margin-top:6px}
+#nextPlPlanningTab .next-pl-crate-transfer{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:16px;padding:14px 16px;border:1px solid #99f6e4;border-radius:12px;background:#f0fdfa}
+#nextPlPlanningTab .next-pl-crate-transfer b{display:block;color:#0f5365;font-size:14px;font-weight:900}
+#nextPlPlanningTab .next-pl-crate-transfer small{display:block;color:#52677b;font-size:11px;margin-top:4px}
+#nextPlPlanningTab .next-pl-add-crate-btn{background:#0f766e!important;color:#fff!important;border:0!important;border-radius:10px!important;padding:12px 17px!important;font-weight:850!important;box-shadow:0 4px 10px rgba(15,118,110,.18)}
+#nextPlPlanningTab .next-pl-add-crate-btn:hover{background:#115e59!important;transform:translateY(-1px)}
+#nextPlPlanningTab .next-pl-bottom-chart{height:320px!important;max-width:620px!important;margin:20px auto 0!important;position:relative}
+@media(max-width:760px){
+ #nextPlPlanningTab .next-pl-bottom-kpis{grid-template-columns:1fr!important}
+ #nextPlPlanningTab .next-pl-bottom-kpi{min-height:112px}
+ #nextPlPlanningTab .next-pl-crate-transfer{align-items:stretch}
+ #nextPlPlanningTab .next-pl-add-crate-btn{width:100%}
+}
+
+
+/* AIS Extrusion Stock Ledger V256 */
+.ex-stock-qty-edit{display:inline-flex;align-items:center;gap:7px;border:1px solid #7dd3fc;background:#effaff;color:#075985;border-radius:9px;padding:7px 10px;font-weight:900;cursor:pointer}
+.ex-stock-qty-edit:hover{background:#dff4ff;border-color:#0284c7}
+.ex-stock-qty-edit i{font-size:10px;opacity:.7}
+.ex-stock-balance{font-weight:950}
+.ex-stock-balance.negative{color:#b45309}.ex-stock-balance.positive{color:#047857}.ex-stock-balance.zero{color:#475569}
+.ex-stock-actions{display:flex;gap:6px;flex-wrap:wrap}
+.ex-stock-actions button{border:0;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:900;cursor:pointer}
+.ex-stock-in{background:#dcfce7;color:#047857}.ex-stock-out{background:#fee2e2;color:#b91c1c}
+.ex-stock-modal{display:none;position:fixed;inset:0;z-index:10050;align-items:center;justify-content:center;padding:18px}
+.ex-stock-modal.open{display:flex}
+.ex-stock-modal-backdrop{position:absolute;inset:0;background:rgba(8,25,40,.64);backdrop-filter:blur(4px)}
+.ex-stock-modal-card{position:relative;width:min(620px,100%);max-height:calc(100vh - 36px);overflow:auto;background:#fff;border:1px solid #cbdde8;border-radius:18px;box-shadow:0 24px 80px rgba(2,20,36,.3);padding:22px}
+.ex-stock-modal-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:18px}
+.ex-stock-modal-head small{font-size:10px;letter-spacing:1.2px;color:#0f8b79;font-weight:950}
+.ex-stock-modal-head h3{margin:5px 0;color:#123b50;font-size:21px;font-weight:950}
+.ex-stock-modal-head p{margin:0;color:#64748b;font-size:12px;line-height:1.5}
+.ex-stock-modal-head>button{width:34px;height:34px;border:0;border-radius:10px;background:#edf4f7;color:#234458;font-size:24px;cursor:pointer}
+.ex-stock-modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.ex-stock-modal-grid label{display:flex;flex-direction:column;gap:6px;color:#405b70;font-size:11px;font-weight:850}
+.ex-stock-modal-grid label.wide{grid-column:1/-1}
+.ex-stock-modal-grid input,.ex-stock-modal-grid select{width:100%;box-sizing:border-box;min-height:42px;border:1px solid #cbdde8;border-radius:10px;padding:9px 11px;background:#fbfdff;color:#17364a;font:inherit;font-size:13px}
+.ex-stock-modal-grid input:focus,.ex-stock-modal-grid select:focus{outline:3px solid rgba(14,165,160,.14);border-color:#0d9488}
+.ex-stock-current{margin-top:14px;padding:11px 13px;border-radius:10px;background:#eff8ff;border:1px solid #cfe6f7;color:#075985;font-size:12px;font-weight:900}
+.ex-stock-modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:18px}
+@media(max-width:650px){.ex-stock-modal-grid{grid-template-columns:1fr}.ex-stock-modal-grid label.wide{grid-column:auto}.ex-stock-modal-card{padding:16px}}
+
+/* V257 — quick clear control for Next PL → Crate Plan transfer */
+.next-pl-crate-transfer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.next-pl-crate-transfer>div{flex:1;min-width:220px}
+.next-pl-clear-crate-btn{background:linear-gradient(135deg,#fff1f2,#ffe4e6)!important;color:#be123c!important;border:1px solid #fecdd3!important;box-shadow:0 3px 10px rgba(190,24,93,.08)}
+.next-pl-clear-crate-btn:hover{background:#ffe4e6!important;transform:translateY(-1px)}
+.pp-reset-crate-plan{background:#fff1f2!important;color:#be123c!important;border:1px solid #fecdd3!important}

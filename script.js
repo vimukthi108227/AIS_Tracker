@@ -1324,6 +1324,8 @@ let nextPlViewMode = 'suggested';
 let nextPlStateHydrating = false;
 let nextPlStateSaveTimer = null;
 let nextPlStateLoaded = false;
+let nextPlPlansByPacking = {};
+let nextPlActivePlanKey = '';
 const NEXT_PL_STATE_KEY = 'SYS_NEXT_PL_PLAN_STATE';
 let nextPlPoWeightChartInstance = null;
 
@@ -1461,10 +1463,53 @@ function nextPlGetRows(){
   });
   return lines;
 }
+
+function nextPlPackingKey(month,container){return `${String(month||'').trim()}::${String(container||'').trim()}`;}
+function nextPlSaveActivePlanToMap(){
+  if(!activePackingMonth||!activePackingContainer)return;
+  nextPlPlansByPacking[nextPlPackingKey(activePackingMonth,activePackingContainer)]={
+    selection:{...(nextPlSelection||{})},excluded:{...(nextPlExcluded||{})},manualOverride:{...(nextPlManualOverride||{})}
+  };
+}
+function nextPlLoadPlanFromMap(){
+  const key=nextPlPackingKey(activePackingMonth,activePackingContainer);
+  nextPlActivePlanKey=key;
+  const p=nextPlPlansByPacking[key];
+  nextPlSelection={...(p?.selection||{})};
+  nextPlExcluded={...(p?.excluded||{})};
+  nextPlManualOverride={...(p?.manualOverride||{})};
+}
+function nextPlRenderPackingSelectors(){
+  try{ensurePackingSelection();}catch(e){}
+  const month=document.getElementById('nextPlPackingMonth'),container=document.getElementById('nextPlPackingContainer');
+  if(!month||!container)return;
+  const months=getPackingMonths();
+  month.innerHTML=months.map(m=>`<option value="${nextPlEsc(m)}">${nextPlEsc(m)}</option>`).join('');
+  if(months.includes(activePackingMonth))month.value=activePackingMonth;
+  container.value=activePackingContainer||'1st Container';
+  const label=document.getElementById('nextPlSelectedPlLabel');
+  if(label)label.textContent=`${activePackingMonth||'Month'} • ${activePackingContainer||'Container'}`;
+}
+function nextPlChangePackingSelection(){
+  nextPlRestorePersistedState();
+  nextPlSaveActivePlanToMap();
+  const month=document.getElementById('nextPlPackingMonth')?.value||activePackingMonth;
+  const container=document.getElementById('nextPlPackingContainer')?.value||activePackingContainer;
+  activePackingMonth=month;activePackingContainer=container;
+  nextPlLoadPlanFromMap();
+  nextPlSchedulePersist();
+  renderNextPlPlanning();
+}
+window.nextPlChangePackingSelection=nextPlChangePackingSelection;
+
 function nextPlGetStateSnapshot(){
   const val=id=>document.getElementById(id)?.value;
+  nextPlSaveActivePlanToMap();
   return {
-    version: 3,
+    version: 4,
+    packingMonth: activePackingMonth||'',
+    packingContainer: activePackingContainer||'',
+    packingPlans: {...(nextPlPlansByPacking||{})},
     targetWeight: nextPlNum(val('nextPlTargetWeight')||15000),
     minKg: nextPlNum(val('nextPlMinKg')||15000),
     maxKg: nextPlNum(val('nextPlMaxKg')||19000),
@@ -1491,6 +1536,9 @@ function nextPlApplyState(state){
     set('nextPlMaxKg',state.maxKg||19000);
     set('nextPlPriority',state.priority||'oldest');
     nextPlViewMode=state.viewMode||'suggested';
+    nextPlPlansByPacking={...(state.packingPlans||{})};
+    if(state.packingMonth)activePackingMonth=state.packingMonth;
+    if(state.packingContainer)activePackingContainer=state.packingContainer;
     // V3 planning uses shipment-balance-first allocation. Old V2 selections were
     // stock-limited suggestions, so migrate only the temporary planning selection
     // state; PO/Shipment/Stock/Packing List operational data is untouched.
@@ -1502,6 +1550,14 @@ function nextPlApplyState(state){
       nextPlSelection={...(state.selection||{})};
       nextPlExcluded={...(state.excluded||{})};
       nextPlManualOverride={...(state.manualOverride||{})};
+    }
+    if(Number(state.version||0)>=4){
+      const key=nextPlPackingKey(activePackingMonth,activePackingContainer);
+      if(state.packingPlans?.[key])nextPlLoadPlanFromMap();
+      else nextPlSaveActivePlanToMap();
+    }else{
+      nextPlSaveActivePlanToMap();
+      nextPlActivePlanKey=nextPlPackingKey(activePackingMonth,activePackingContainer);
     }
     set('nextPlQuickProfile',state.quickProfile||'');
     set('nextPlQuickLength',state.quickLength||'');
@@ -1710,25 +1766,50 @@ function nextPlQuickPreview(input,po,parts){
 }
 function nextPlQuickAdd(po,parts,button){
   const input=button?.closest('tr')?.querySelector('.next-pl-quick-qty');
-  if(!input)return;
+  if(!input){showToast('PCS input field was not found. Please refresh Next PL Planning and try again.','error');return;}
   let qty=Math.floor(nextPlNum(input.value));
-  if(qty<0)qty=0;
-  const maxTotal=parts.reduce((s,p)=>s+Math.max(0,nextPlNum(p.pendingQty)),0);
-  if(qty>maxTotal){qty=maxTotal;input.value=qty;showToast(`Only ${maxTotal.toLocaleString()} Pcs remain on this PO for the selected Profile + Length.`,'warning');}
-  // IMPORTANT: set the PO's final planned quantity instead of incrementing it.
-  // This prevents the same PO/Profile/Length quantity from being added twice.
+  if(!Number.isFinite(qty)||qty<0)qty=0;
+
+  // Always resolve the PO lines again from the live source data. The table can
+  // be re-rendered after filters/catalog refreshes, making the row keys captured
+  // in an older button handler stale.
+  const profile=document.getElementById('nextPlQuickProfile')?.value||'';
+  const length=cleanLen(document.getElementById('nextPlQuickLength')?.value);
+  const liveRows=nextPlGetRows().filter(r=>
+    String(r.poNumber)===String(po) &&
+    (!profile||nextPlSameProfile(r.profile,profile)) &&
+    (!length||cleanLen(r.length)===length) &&
+    Math.max(0,nextPlNum(r.pendingQty))>0
+  ).sort((a,b)=>String(a.rowKey).localeCompare(String(b.rowKey),undefined,{numeric:true}));
+
+  if(!liveRows.length){
+    showToast('This PO has no remaining shipment balance for the selected Profile / Length. Refresh the page data and try again.','warning');
+    return;
+  }
+  const maxTotal=liveRows.reduce((s,r)=>s+Math.max(0,Math.floor(nextPlNum(r.pendingQty))),0);
+  if(qty>maxTotal){
+    qty=maxTotal;
+    input.value=String(qty);
+    showToast(`Only ${maxTotal.toLocaleString()} Pcs remain on this PO for the selected Profile + Length.`,'warning');
+  }
+
+  // Set the final quantity (not an increment) and allocate it FIFO across any
+  // matching PO lines. This makes repeated Add/Update clicks idempotent.
   let remaining=qty,addedWeight=0;
-  const ordered=[...parts].sort((a,b)=>String(a.rowKey).localeCompare(String(b.rowKey)));
-  ordered.forEach(p=>{
-    const rowCap=Math.max(0,nextPlNum(p.pendingQty));
-    const add=Math.min(remaining,rowCap);
-    nextPlExcluded[p.rowKey]=false;
-    if(add>0){nextPlManualOverride[p.rowKey]=true;nextPlSelection[p.rowKey]=add;addedWeight+=add*Math.max(0,nextPlNum(p.unitWeight));remaining-=add;}
-    else {nextPlManualOverride[p.rowKey]=false;nextPlSelection[p.rowKey]=0;}
+  liveRows.forEach(r=>{
+    const cap=Math.max(0,Math.floor(nextPlNum(r.pendingQty)));
+    const add=Math.min(remaining,cap);
+    nextPlExcluded[r.rowKey]=false;
+    nextPlManualOverride[r.rowKey]=add>0;
+    nextPlSelection[r.rowKey]=add;
+    addedWeight+=add*Math.max(0,nextPlNum(r.unitWeight));
+    remaining-=add;
   });
   nextPlSchedulePersist();
   renderNextPlPlanning();
-  showToast(`${addedWeight.toFixed(2)} kg is now planned from PO ${po}. Existing selection was updated, not duplicated.`,'success');
+  showToast(qty>0
+    ? `Next PL updated: PO ${po} • ${qty.toLocaleString()} Pcs • ${addedWeight.toFixed(2)} kg. This quantity is now included in the Next PL.`
+    : `Next PL selection cleared for PO ${po}.`,'success');
 }
 function nextPlManualProfileChanged(){
   const rows=nextPlGetRows(); nextPlRenderManualControls(rows);
@@ -1897,9 +1978,56 @@ function nextPlRenderPoWeightChart(rows){
   });
 }
 
+
+function nextPlToggleManualMode(enabled){
+  const card=document.getElementById('nextPlManualBuilderCard');
+  const summary=document.getElementById('nextPlManualAddedCard');
+  if(card)card.style.display=enabled?'block':'none';
+  if(summary)summary.style.display=enabled?'block':'none';
+  renderNextPlPlanning();
+}
+function nextPlRenderManualAddedTable(allRows){
+  const card=document.getElementById('nextPlManualAddedCard'),body=document.getElementById('nextPlManualAddedBody');
+  if(!card||!body)return;
+  const manual=(allRows||nextPlGetRows()).filter(r=>nextPlManualOverride[r.rowKey]&&!r.excluded&&nextPlNum(nextPlSelection[r.rowKey])>0);
+  const grouped=new Map();
+  manual.forEach(r=>{
+    const key=`${nextPlProfileKey(r.profile)}|${String(r.itemCode||'').toLowerCase()}|${cleanLen(r.length)}`;
+    const g=grouped.get(key)||{profile:r.profile,itemCode:r.itemCode,length:r.length,pcs:0,weight:0,unitWeight:r.unitWeight,rows:[]};
+    const qty=Math.max(0,Math.floor(nextPlNum(nextPlSelection[r.rowKey])));
+    g.pcs+=qty;g.weight+=qty*Math.max(0,nextPlNum(r.unitWeight));g.rows.push(r);grouped.set(key,g);
+  });
+  const groups=[...grouped.values()].sort((a,b)=>String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true})||Number(a.length)-Number(b.length));
+  body.innerHTML=groups.length?groups.map(g=>`<tr>
+    <td><b>${nextPlEsc(g.profile)}</b></td><td>${nextPlEsc(g.itemCode||'-')}</td><td>${nextPlEsc(g.length)}</td>
+    <td><b>${g.pcs.toLocaleString()}</b></td><td>${Math.max(0,nextPlNum(g.unitWeight)).toFixed(4)}</td><td><b>${g.weight.toFixed(2)} kg</b></td>
+    <td><button type="button" class="btn btn-danger" style="padding:5px 10px;" onclick="nextPlRemoveManualGroup(${JSON.stringify(g.rows.map(r=>r.rowKey))})"><i class="fa-solid fa-trash"></i> Remove</button></td>
+  </tr>`).join(''):'<tr><td colspan="7" class="next-pl-summary-empty">No manual profiles added yet. Enable Manual Planning Mode and use Add.</td></tr>';
+  const pcs=groups.reduce((s,g)=>s+g.pcs,0),wt=groups.reduce((s,g)=>s+g.weight,0);
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
+  set('nextPlManualAddedTotal',`${wt.toFixed(2)} kg`);set('nextPlManualAddedPcs',`${pcs.toLocaleString()} Pcs`);set('nextPlManualAddedWeight',`${wt.toFixed(2)} kg`);
+  const signal=document.getElementById('nextPlManualWeightSignal');
+  if(signal){
+    const current=nextPlCurrentPackingInfo().weight;
+    const allSelectedWeight=(allRows||nextPlGetRows()).reduce((sum,r)=>sum+Math.max(0,Math.floor(nextPlNum(nextPlSelection[r.rowKey])))*Math.max(0,nextPlNum(r.unitWeight)),0);
+    const total=current+allSelectedWeight;
+    if(total>18000){signal.style.background='#fff1f2';signal.style.borderColor='#fda4af';signal.style.color='#be123c';signal.textContent=`OVERWEIGHT WARNING: Current PL + all selected Next PL = ${total.toFixed(2)} kg. This exceeds the 18,000 kg limit by ${(total-18000).toFixed(2)} kg. Reduce PCS before proceeding.`;}
+    else{signal.style.background='#ecfdf5';signal.style.borderColor='#a7f3d0';signal.style.color='#047857';signal.textContent=`Weight OK: Current PL + all selected Next PL = ${total.toFixed(2)} kg. Remaining to 18,000 kg: ${(18000-total).toFixed(2)} kg.`;}
+  }
+  const mode=document.getElementById('nextPlManualMode');
+  if(card)card.style.display=mode?.checked?'block':(groups.length?'block':'none');
+}
+function nextPlRemoveManualGroup(keys){
+  (keys||[]).forEach(k=>{nextPlSelection[String(k)]=0;nextPlManualOverride[String(k)]=false;nextPlExcluded[String(k)]=false;});
+  nextPlSchedulePersist();renderNextPlPlanning();showToast('Manual profile quantity removed from Next PL.','success');
+}
+
 function renderNextPlPlanning(){
   nextPlRestorePersistedState();
   const body=document.getElementById('nextPlPlanningBody'); if(!body)return;
+  nextPlRenderPackingSelectors();
+  const expectedPlanKey=nextPlPackingKey(activePackingMonth,activePackingContainer);
+  if(nextPlActivePlanKey!==expectedPlanKey)nextPlLoadPlanFromMap();
   const all=nextPlGetRows(); nextPlRefreshFilters(all); nextPlRenderManualControls(all); nextPlRenderQuickManual(all); nextPlRenderShipmentBalance(all);
   const rows=nextPlFilteredRows();
   const summary=nextPlGetCurrentSummary();
@@ -1916,11 +2044,18 @@ function renderNextPlPlanning(){
     if(!uniqueStockKeys.has(r.key)){availableWeight+=r.stockTotal*r.unitWeight;uniqueStockKeys.add(r.key);}
   });
   const remainingMin=Math.max(0,summary.targetMin-currentPlWeight), remainingMax=Math.max(0,summary.targetMax-currentPlWeight);
-  if(!rows.length)body.innerHTML='<tr><td colspan="18" style="padding:28px;text-align:center;color:#64748b;font-weight:800;">No pending PO lines with matching Master Catalog data.</td></tr>';
+  if(!rows.length)body.innerHTML='<tr><td colspan="14" style="padding:28px;text-align:center;color:#64748b;font-weight:800;">No pending PO lines with matching Master Catalog data.</td></tr>';
   else body.innerHTML=rows.map((r,i)=>`<tr class="${r.excluded?'next-pl-excluded':''}">
-    <td><span style="display:inline-block;min-width:25px;padding:3px 6px;border-radius:999px;background:${i<3?'#dcfce7':'#f1f5f9'};color:${i<3?'#047857':'#475569'};font-weight:900;">${i+1}</span></td>
-    <td>${nextPlEsc(r.date||'-')}</td><td><b>${nextPlEsc(r.poNumber)}</b></td><td><b>${nextPlEsc(r.profile)}</b></td><td>${nextPlEsc(r.itemCode||'-')}</td><td>${nextPlEsc(r.length)} mm</td>
-    <td>${r.unitWeight.toFixed(4)} kg</td><td class="next-pl-pending"><b>${r.pendingQty.toLocaleString()}</b> <small style="display:block;color:#be123c;font-weight:800;">${r.remainingPoWeight.toFixed(2)} kg</small></td><td>${r.currentPlQty.toLocaleString()} <small style="display:block;color:#047857;font-weight:800;">${r.currentPlWeight.toFixed(2)} kg</small></td><td>${r.stockTotal.toLocaleString()} <small style="display:block;color:#0f766e;font-weight:800;">${(r.stockTotal*r.unitWeight).toFixed(2)} kg</small></td><td>${r.stockReady.toLocaleString()} <small style="display:block;color:#0f766e;font-weight:800;">${(r.stockReady*r.unitWeight).toFixed(2)} kg</small></td><td>${r.stockWip.toLocaleString()} <small style="display:block;color:#b45309;font-weight:800;">${(r.stockWip*r.unitWeight).toFixed(2)} kg</small></td><td class="next-pl-available"><b>${r.availableForPo.toLocaleString()}</b> <small style="display:block;color:#047857;font-weight:800;">${(r.availableForPo*r.unitWeight).toFixed(2)} kg</small></td><td><input class="next-pl-select-input ${nextPlManualOverride[r.rowKey]?'manual':''}" type="number" min="0" max="${Math.floor(r.pendingQty)}" step="1" value="${Math.floor(r.selectedQty)}" ${r.excluded?'disabled':''} title="Click and edit Next PL Select Pcs. Maximum: shipment balance ${Math.floor(r.pendingQty).toLocaleString()} Pcs." onclick="this.select()" onfocus="this.select()" onchange="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)"></td><td class="next-pl-weight"><b>${(r.selectedQty*r.unitWeight).toFixed(2)} kg</b></td><td class="next-pl-pending-cut"><b>${r.planNeedCutQty.toLocaleString()}</b><small style="display:block;color:#be123c;font-weight:800;">pending cut</small></td><td>${r.planNeedCutWeight.toFixed(2)} kg</td><td><label class="next-pl-skip"><input type="checkbox" ${r.excluded?'checked':''} onchange="nextPlToggleExclude('${nextPlEsc(r.rowKey)}',this.checked)"> Skip</label>${nextPlManualOverride[r.rowKey]?'<div class="next-pl-manual-badge">Manual / Cut</div>':''}</td>
+    <td>${nextPlEsc(r.date||'-')}</td><td><b>${nextPlEsc(r.poNumber)}</b></td><td><b>${nextPlEsc(r.profile)}</b></td><td>${nextPlEsc(r.itemCode||'-')}</td><td>${nextPlEsc(r.length)}</td>
+    <td class="next-pl-pending"><b>${Math.floor(r.pendingQty).toLocaleString()}</b></td>
+    <td><b>${Math.floor(r.stockTotal).toLocaleString()}</b></td>
+    <td class="next-pl-stage-cut">${Math.floor(r.stockCut).toLocaleString()}</td>
+    <td class="next-pl-stage-punch">${Math.floor(r.stockPunch).toLocaleString()}</td>
+    <td class="next-pl-stage-ready">${Math.floor(r.stockWrap+r.stockBox).toLocaleString()}</td>
+    <td><input class="next-pl-select-input ${nextPlManualOverride[r.rowKey]?'manual':''}" type="number" min="0" max="${Math.floor(r.pendingQty)}" step="1" value="${Math.floor(r.selectedQty)}" ${r.excluded?'disabled':''} title="Enter Next PL quantity. Maximum remaining PO balance: ${Math.floor(r.pendingQty).toLocaleString()} Pcs." onclick="this.select()" onfocus="this.select()" onchange="nextPlSetQty('${nextPlEsc(r.rowKey)}',this.value)"></td>
+    <td class="next-pl-pending-cut"><b>${Math.floor(r.planNeedCutQty).toLocaleString()}</b></td>
+    <td class="next-pl-remaining"><b>${Math.max(0,Math.floor(r.pendingQty-r.selectedQty)).toLocaleString()}</b></td>
+    <td><button type="button" class="next-pl-remove-line" onclick="nextPlRemoveLine('${nextPlEsc(r.rowKey)}')" ${r.selectedQty<=0?'disabled':''} title="Remove this PO line from the current Next PL selection"><i class="fa-solid fa-trash"></i> Remove</button></td>
   </tr>`).join('');
   const totalBalanceWeight=rows.reduce((s,r)=>s+Math.max(0,r.remainingPoWeight),0);
   const totalCurrentPlWeight=rows.reduce((s,r)=>s+Math.max(0,r.currentPlWeight),0);
@@ -1932,13 +2067,15 @@ function renderNextPlPlanning(){
   const totalSelectedPcs=rows.reduce((s,r)=>s+Math.max(0,r.selectedQty),0);
   const totalSelectedWeight=rows.reduce((s,r)=>s+Math.max(0,r.selectedQty)*Math.max(0,r.unitWeight),0);
   const mainFoot=document.getElementById('nextPlPlanningFoot');
-  const totalBalancePcs=rows.reduce((s,r)=>s+Math.max(0,r.pendingQty),0), totalCurrentPlPcs=rows.reduce((s,r)=>s+Math.max(0,r.currentPlQty),0), totalStockPcs=rows.reduce((s,r)=>s+Math.max(0,r.stockTotal),0), totalReadyPcs=rows.reduce((s,r)=>s+Math.max(0,r.stockReady),0), totalWipPcs=rows.reduce((s,r)=>s+Math.max(0,r.stockWip),0), totalAvailablePcs=rows.reduce((s,r)=>s+Math.max(0,r.availableForPo),0), totalNeedCutPcs=rows.reduce((s,r)=>s+Math.max(0,r.planNeedCutQty||0),0);
-  if(mainFoot)mainFoot.innerHTML=`<tr class="next-pl-total-row"><td colspan="7">TOTAL — VISIBLE PO LINES</td><td><b>${totalBalancePcs.toLocaleString()} Pcs</b><small>${totalBalanceWeight.toFixed(2)} kg</small></td><td><b>${totalCurrentPlPcs.toLocaleString()} Pcs</b><small>${totalCurrentPlWeight.toFixed(2)} kg</small></td><td><b>${totalStockPcs.toLocaleString()} Pcs</b><small>${totalStockWeight.toFixed(2)} kg</small></td><td><b>${totalReadyPcs.toLocaleString()} Pcs</b><small>${totalReadyWeight.toFixed(2)} kg</small></td><td><b>${totalWipPcs.toLocaleString()} Pcs</b><small>${totalWipWeight.toFixed(2)} kg</small></td><td><b>${totalAvailablePcs.toLocaleString()} Pcs</b><small>${totalAvailableWeight.toFixed(2)} kg</small></td><td><b>${totalSelectedPcs.toLocaleString()} Pcs</b></td><td><b>${totalSelectedWeight.toFixed(2)} kg</b></td><td><b>${totalNeedCutPcs.toLocaleString()} Pcs</b></td><td><b>${totalNeedCutWeight.toFixed(2)} kg</b></td><td>-</td></tr>`;
+  const sumKey=k=>rows.reduce((s,r)=>s+Math.max(0,Number(r[k])||0),0);
+  const readyStockPcs=rows.reduce((s,r)=>s+Math.max(0,r.stockWrap+r.stockBox),0);
+  if(mainFoot)mainFoot.innerHTML=`<tr class="next-pl-total-row"><td colspan="5">TOTAL — VISIBLE PO LINES</td><td>${Math.floor(sumKey('pendingQty')).toLocaleString()}</td><td>${Math.floor(sumKey('stockTotal')).toLocaleString()}</td><td>${Math.floor(sumKey('stockCut')).toLocaleString()}</td><td>${Math.floor(sumKey('stockPunch')).toLocaleString()}</td><td>${Math.floor(readyStockPcs).toLocaleString()}</td><td>${Math.floor(sumKey('selectedQty')).toLocaleString()}</td><td>${Math.floor(sumKey('planNeedCutQty')).toLocaleString()}</td><td>${Math.floor(rows.reduce((s,r)=>s+Math.max(0,r.pendingQty-r.selectedQty),0)).toLocaleString()}</td><td>-</td></tr>`;
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
   set('nextPlCurrentPLWeight',`${currentPlWeight.toFixed(2)} kg`); set('nextPlCurrentPLPcs',`${summary.pcs.toLocaleString()} Pcs`); set('nextPlRemainingMin',`${remainingMin.toFixed(2)} kg`); set('nextPlRemainingMax',`${remainingMax.toFixed(2)} kg`);
   set('nextPlSelectedWeight',`${selectedWeight.toFixed(2)} kg`); set('nextPlTotalNextWeight',`${(currentPlWeight+selectedWeight).toFixed(2)} kg`); set('nextPlPendingAfterNextWeight',`${pendingAfterNextWeight.toFixed(2)} kg`); set('nextPlSelectedPcs',selectedPcs.toLocaleString()); set('nextPlSelectedLines',`${selectedLines} selected lines`); set('nextPlAvailableWeight',`${availableWeight.toFixed(2)} kg`); set('nextPlToMin',`${Math.max(0,remainingMin-selectedWeight).toFixed(2)} kg`); set('nextPlToMax',`${Math.max(0,remainingMax-selectedWeight).toFixed(2)} kg`); set('nextPlNeedCutWeight',`${cutWeight.toFixed(2)} kg`);
   nextPlRenderProfileSummary(all);
   nextPlRenderPoWeightChart(all);
+  nextPlRenderBottomSummary(all,summary);
   const totalPlPlusSelection=currentPlWeight+selectedWeight;
   const targetTotal=summary.targetTotal;
   const targetProfiles=[...new Set(rows.filter(r=>r.selectedQty>0).map(r=>String(r.profile||'').trim()).filter(Boolean))];
@@ -1956,8 +2093,109 @@ function renderNextPlPlanning(){
     else if(totalPlPlusSelection>summary.targetMax)alert.innerHTML=`<div style="background:#fff1f2;border:1px solid #fecdd3;color:#be123c;"><i class="fa-solid fa-triangle-exclamation"></i> <b>Over maximum:</b> reduce ${(totalPlPlusSelection-summary.targetMax).toFixed(2)} kg. ${active}.</div>`;
     else alert.innerHTML=`<div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;"><i class="fa-solid fa-circle-info"></i> <b>${active}.</b> Select another ${Math.max(0,targetTotal-totalPlPlusSelection).toFixed(2)} kg to reach the manual target of ${targetTotal.toLocaleString()} kg. <b>Current target profiles: ${nextPlEsc(targetProfileText)}</b>.</div>`;
   }
+  nextPlRenderManualAddedTable(all);
   nextPlSchedulePersist();
 }
+
+
+function nextPlRenderBottomSummary(rows,summary){
+  const selected=(rows||[]).filter(r=>!r.excluded&&nextPlNum(nextPlSelection[r.rowKey])>0);
+  let process=0,complete=0,pendingCut=0,crate=0,planned=0;
+  selected.forEach(r=>{
+    const q=Math.min(nextPlNum(nextPlSelection[r.rowKey]),Math.max(0,r.pendingQty)),uw=Math.max(0,r.unitWeight);
+    planned+=q*uw;
+    let left=Math.min(q,Math.max(0,r.availableForPo));
+    const stages={box:Math.max(0,r.stockBox),wrap:Math.max(0,r.stockWrap),punch:Math.max(0,r.stockPunch),cut:Math.max(0,r.stockCut),crate:Math.max(0,r.stockCrate)};
+    const take={box:0,wrap:0,punch:0,cut:0,crate:0};
+    ['box','wrap','punch','cut','crate'].forEach(k=>{take[k]=Math.min(stages[k],left);left-=take[k];});
+    complete+=(take.box+take.wrap)*uw;
+    process+=(take.cut+take.punch)*uw;
+    crate+=take.crate*uw;
+    pendingCut+=Math.max(0,q-Math.min(q,Math.max(0,r.availableForPo)))*uw;
+  });
+  complete+=Math.max(0,summary?.weight||0);
+  const total=Math.max(0,summary?.weight||0)+planned;
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=`${v.toFixed(2)} kg`;};
+  set('nextPlBottomTotalWeight',total);set('nextPlBottomProcessWeight',process);set('nextPlBottomCompleteWeight',complete);
+  const canvas=document.getElementById('nextPlBottomDoughnut');
+  if(canvas&&typeof Chart!=='undefined'){
+    try{if(window.nextPlBottomDoughnutInstance)window.nextPlBottomDoughnutInstance.destroy();}catch(e){}
+    const vals=[complete,process,pendingCut,crate].map(v=>Number(v.toFixed(2)));
+    window.nextPlBottomDoughnutInstance=new Chart(canvas.getContext('2d'),{
+      type:'doughnut',
+      data:{labels:['Complete — Wrapping + Box (including selected PL)','Process — Cut + Punch','Pending Cut','Crate Stage'],datasets:[{data:vals,backgroundColor:['#059669','#2563eb','#e11d48','#f59e0b'],borderColor:'#ffffff',borderWidth:3,hoverOffset:8}]},
+      options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:18,font:{weight:'700'}}},tooltip:{callbacks:{label:c=>`${c.label}: ${Number(c.raw||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg`}}}}
+    });
+  }
+}
+
+function nextPlRemoveLine(rowKey){
+  const key=String(rowKey||'');
+  if(!key)return;
+  nextPlSelection[key]=0;
+  nextPlExcluded[key]=true;
+  nextPlManualOverride[key]=false;
+  nextPlSchedulePersist();
+  renderNextPlPlanning();
+  showToast('This PO line was removed from the Next PL selection.','success');
+}
+window.nextPlRemoveLine=nextPlRemoveLine;
+
+function nextPlProfileSummaryExportRows(){
+  const rows=nextPlGetRows();
+  const selected=rows.filter(r=>Math.min(nextPlNum(nextPlSelection[r.rowKey]),Math.max(0,r.pendingQty))>0);
+  const map=new Map();
+  selected.forEach(r=>{
+    const pcs=Math.min(nextPlNum(nextPlSelection[r.rowKey]),Math.max(0,r.pendingQty));
+    const key=nextPlProfileKey(r.profile)+'|'+cleanLen(r.length);
+    const g=map.get(key)||{Profile:r.profile,Length:`${r.length} mm`, 'Next PL Pcs':0,'Next PL Weight (kg)':0,'PO Lines':0,'PO Numbers':new Set()};
+    g['Next PL Pcs']+=pcs;g['Next PL Weight (kg)']+=pcs*Math.max(0,r.unitWeight);g['PO Lines']++;g['PO Numbers'].add(r.poNumber);
+    map.set(key,g);
+  });
+  return [...map.values()].map(g=>({...g,'Next PL Weight (kg)':Number(g['Next PL Weight (kg)'].toFixed(2)),'PO Numbers':[...g['PO Numbers']].join(', ')}));
+}
+window.nextPlExportProfileSummaryExcel=function(){
+  const rows=nextPlProfileSummaryExportRows();if(!rows.length)return showToast('No selected profile quantities to export.','warning');
+  if(typeof XLSX==='undefined')return showToast('Excel export library is not loaded.','error');
+  const data=rows.map(r=>({...r}));
+  const wb=XLSX.utils.json_to_sheet(data);const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,wb,'Profile Summary');
+  XLSX.writeFile(book,'AIS_Next_PL_Profile_Summary.xlsx');
+};
+window.nextPlExportProfileSummaryPdf=function(){
+  const rows=nextPlProfileSummaryExportRows();if(!rows.length)return showToast('No selected profile quantities to export.','warning');
+  exportDataToPdf(rows,'AIS_Next_PL_Profile_Summary','AIS Tracker — Next PL Profile Summary','Selected Next PL quantities grouped by profile and length');
+};
+window.nextPlPrintProfileSummary=function(){
+  const table=document.querySelector('#nextPlProfileSummaryBody')?.closest('table');if(!table)return;
+  const win=window.open('','_blank');if(!win)return showToast('Allow pop-ups to print this table.','warning');
+  win.document.write(`<html><head><title>Next PL Profile Summary</title><style>body{font-family:Arial;padding:18px;color:#173b55}table{border-collapse:collapse;width:100%;font-size:9px}th,td{border:1px solid #cbd5e1;padding:6px}th{background:#0f5365;color:#fff}tfoot{font-weight:bold}@media print{tr{break-inside:avoid}}</style></head><body><h2>AIS Tracker — Next PL Profile Summary</h2>${table.outerHTML}<script>window.onload=()=>window.print()<\/script></body></html>`);
+  win.document.close();
+};
+
+
+function nextPlPoSummaryExportRows(){
+  return nextPlGetRows().filter(r=>Math.min(nextPlNum(nextPlSelection[r.rowKey]),Math.max(0,r.pendingQty))>0).map(r=>({
+    'PO Number':r.poNumber,'Profile':r.profile,'Item Code':r.itemCode,'Length (mm)':r.length,
+    'PO Balance (Pcs)':Math.floor(r.pendingQty),'Next PL Pcs':Math.floor(nextPlNum(nextPlSelection[r.rowKey])),
+    'Planning Weight (kg)':Number((nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight).toFixed(2)),
+    'Pending After Next PL (Pcs)':Math.max(0,Math.floor(r.pendingQty-nextPlNum(nextPlSelection[r.rowKey])))
+  }));
+}
+window.nextPlExportPoSummaryExcel=function(){
+ const rows=nextPlPoSummaryExportRows();if(!rows.length)return showToast('No PO plan lines to export.','warning');
+ if(typeof XLSX==='undefined')return showToast('Excel export library is not loaded.','error');
+ const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'PO Summary');XLSX.writeFile(wb,'AIS_Next_PL_PO_Summary.xlsx');
+};
+window.nextPlExportPoSummaryPdf=function(){
+ const rows=nextPlPoSummaryExportRows();if(!rows.length)return showToast('No PO plan lines to export.','warning');
+ exportDataToPdf(rows,'AIS_Next_PL_PO_Summary','AIS Tracker — PO-wise Next PL Plan','PO-wise selected quantity and remaining balance');
+};
+window.nextPlPrintPoSummary=function(){
+ const table=document.querySelector('#nextPlPoSummaryBody')?.closest('table');if(!table)return;
+ const win=window.open('','_blank');if(!win)return showToast('Allow pop-ups to print this table.','warning');
+ win.document.write(`<html><head><title>PO-wise Next PL Plan</title><style>body{font-family:Arial;padding:18px}table{border-collapse:collapse;width:100%;font-size:10px}th,td{border:1px solid #cbd5e1;padding:6px}th{background:#0f5365;color:white}</style></head><body><h2>AIS Tracker — PO-wise Next PL Plan</h2>${table.outerHTML}<script>window.onload=()=>window.print()<\\/script></body></html>`);win.document.close();
+};
+
 function nextPlAutoBuild(){
   const summary=nextPlGetCurrentSummary();
   // Next PL V3: shipment-balance-first. The selected quantity for a PO/Profile/Length
@@ -2004,49 +2242,42 @@ function nextPlAutoBuild(){
 
 function nextPlClearSelection(){nextPlSelection={};nextPlExcluded={};nextPlManualOverride={};nextPlSchedulePersist();renderNextPlPlanning();showToast('Temporary planning selection cleared.','success');}
 function nextPlExportExcel(){
-  const summary=nextPlGetCurrentSummary(); const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
-  if(!rows.length)return showToast('No selected planning lines to export.','warning');
+  const rows=nextPlFilteredRows();
+  if(!rows.length)return showToast('No PO lines to export.','warning');
   if(typeof XLSX==='undefined'||!XLSX.utils||!XLSX.writeFile)return showToast('Excel export library is not loaded.','error');
-  const out=rows.map((r,i)=>({Priority:i+1,'PO Date':r.date,'PO Number':r.poNumber,Profile:r.profile,'Item Code':r.itemCode,Length:r.length,'Unit Weight (kg)':r.unitWeight,'Original PO Pending (Pcs)':r.originalPendingQty,'Already in Current PL (Pcs)':r.currentPlQty,'Remaining PO Qty (Pcs)':r.pendingQty,'Current Stock (Pcs)':r.stockTotal,'Need Cut (Pcs)':r.needCutQty,'Need Cut Weight (kg)':r.needCutWeight,'Selected Pcs':nextPlNum(nextPlSelection[r.rowKey]),'Selected Weight (kg)':nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight}));
-  out.push({'PO Date':'','PO Number':'TOTAL CURRENT PL','Profile':'','Item Code':'','Length':'','Unit Weight (kg)':'','Original PO Pending (Pcs)':'','Already in Current PL (Pcs)':summary.pcs,'Remaining PO Qty (Pcs)':'','Current Stock (Pcs)':'','Need Cut (Pcs)':'','Need Cut Weight (kg)':'','Selected Pcs':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey]),0),'Selected Weight (kg)':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0)+summary.weight});
-  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(out),'Next PL Plan');XLSX.writeFile(wb,`AIS_Next_PL_15-19T_Plan_${new Date().toISOString().slice(0,10)}.xlsx`);showToast('Next PL planning Excel downloaded.','success');
+  const out=rows.map(r=>({
+    'PO Date':r.date,'PO Number':r.poNumber,Profile:r.profile,'Item Code':r.itemCode,'Length (mm)':r.length,
+    'Pending Shipment (Pcs)':Math.floor(r.pendingQty),'Total Stock Balance (Pcs)':Math.floor(r.stockTotal),
+    'Cut Stock (Pcs)':Math.floor(r.stockCut),'Punch Stock (Pcs)':Math.floor(r.stockPunch),
+    'Ready Stock — Wrapping + Box (Pcs)':Math.floor(r.stockWrap+r.stockBox),
+    'Next PL Qty (Pcs)':Math.floor(r.selectedQty),'Pending Cut (Pcs)':Math.floor(r.planNeedCutQty),
+    'Remaining PO Balance (Pcs)':Math.max(0,Math.floor(r.pendingQty-r.selectedQty))
+  }));
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(out),'Next PL Manual Plan');
+  XLSX.writeFile(wb,`AIS_Next_PL_Manual_Planning_${new Date().toISOString().slice(0,10)}.xlsx`);
+  showToast('Next PL planning Excel downloaded.','success');
 }
 function nextPlExportPdf(){
-  const summary=nextPlGetCurrentSummary();
-  const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0);
-  if(!rows.length){ showToast('No selected planning lines to export.','warning'); return; }
-  const data=rows.map((r,i)=>({
-    'Priority':i+1,
-    'PO Date':r.date,
-    'PO Number':r.poNumber,
-    'Profile':r.profile,
-    'Item Code':r.itemCode,
-    'Length':`${r.length} mm`,
-    'Unit Wt (kg)':r.unitWeight.toFixed(4),
-    'Shipment Balance (Pcs)':r.pendingQty,
-    'Current Stock (Pcs)':r.stockTotal,
-    'Next PL Select (Pcs)':nextPlNum(nextPlSelection[r.rowKey]),
-    'Next PL Weight (kg)':(nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight).toFixed(2),
-    'Pending Cut (Pcs)':r.needCutQty,
-    'Pending Cut Weight (kg)':r.needCutWeight.toFixed(2)
+  const rows=nextPlFilteredRows();
+  if(!rows.length)return showToast('No PO lines to export.','warning');
+  const data=rows.map(r=>({
+    'PO Date':r.date,'PO Number':r.poNumber,'Profile':r.profile,'Item Code':r.itemCode,'Length (mm)':r.length,
+    'Pending Shipment (Pcs)':Math.floor(r.pendingQty),'Total Stock (Pcs)':Math.floor(r.stockTotal),
+    'Cut Stock':Math.floor(r.stockCut),'Punch Stock':Math.floor(r.stockPunch),
+    'Ready Wrap + Box':Math.floor(r.stockWrap+r.stockBox),'Next PL Qty':Math.floor(r.selectedQty),
+    'Pending Cut':Math.floor(r.planNeedCutQty),'Remaining PO':Math.max(0,Math.floor(r.pendingQty-r.selectedQty))
   }));
-  data.push({
-    'Priority':'', 'PO Date':'', 'PO Number':'TOTAL', 'Profile':'', 'Item Code':'', 'Length':'',
-    'Unit Wt (kg)':'', 'Shipment Balance (Pcs)':rows.reduce((s,r)=>s+Math.max(0,r.pendingQty),0),
-    'Current Stock (Pcs)':rows.reduce((s,r)=>s+Math.max(0,r.stockTotal),0),
-    'Next PL Select (Pcs)':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey]),0),
-    'Next PL Weight (kg)':rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0).toFixed(2),
-    'Pending Cut (Pcs)':rows.reduce((s,r)=>s+Math.max(0,r.needCutQty),0),
-    'Pending Cut Weight (kg)':rows.reduce((s,r)=>s+Math.max(0,r.needCutWeight),0).toFixed(2)
-  });
-  exportDataToPdf(data,'AIS_Next_PL_15-19T_Plan','AIS Tracker - Next PL 15–19T Planning',`Current PL: ${summary.weight.toFixed(2)} kg • Target: ${summary.targetMin.toLocaleString()}–${summary.targetMax.toLocaleString()} kg • Filtered planning lines`);
+  exportDataToPdf(data,'AIS_Next_PL_Manual_Planning','AIS Tracker — Next PL Manual Planning','Filtered PO / Profile / Length stock and planning balance');
 }
 
 function nextPlPrint(){
-  const summary=nextPlGetCurrentSummary(); const rows=nextPlFilteredRows().filter(r=>nextPlNum(nextPlSelection[r.rowKey])>0); if(!rows.length)return showToast('No selected planning lines to print.','warning');
-  const totalNew=rows.reduce((s,r)=>s+nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight,0),grand=summary.weight+totalNew;
-  const w=window.open('','_blank','width=1300,height=850');if(!w)return;
-  w.document.write(`<html><head><title>AIS Next PL Plan</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#0f172a}h2{margin:0 0 4px;color:#075985}p{color:#475569;font-size:12px}.kpi{display:inline-block;margin:3px 12px 3px 0;padding:7px 10px;border:1px solid #cbd5e1;border-radius:6px}table{width:100%;border-collapse:collapse;margin-top:15px;font-size:10px}th,td{border:1px solid #cbd5e1;padding:5px;text-align:center}th{background:#075985;color:#fff}tfoot td{font-weight:900;background:#f1f5f9}</style></head><body><h2>AIS Tracker • Next PL 15–19T Planning</h2><p><span class="kpi">Current PL: <b>${summary.weight.toFixed(2)} kg</b></span><span class="kpi">New Selection: <b>${totalNew.toFixed(2)} kg</b></span><span class="kpi">Total Planned: <b>${grand.toFixed(2)} kg</b></span><span class="kpi">Target: <b>${summary.targetMin.toLocaleString()}–${summary.targetMax.toLocaleString()} kg</b></span></p><table><thead><tr><th>Priority</th><th>PO</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Remaining PO</th><th>Stock</th><th>Need Cut</th><th>Select Pcs</th><th>Unit Wt</th><th>Weight</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${nextPlEsc(r.poNumber)}</td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.itemCode)}</td><td>${nextPlEsc(r.length)} mm</td><td>${r.pendingQty.toLocaleString()}</td><td>${r.stockTotal.toLocaleString()}</td><td>${r.needCutQty.toLocaleString()}</td><td>${nextPlNum(nextPlSelection[r.rowKey]).toLocaleString()}</td><td>${r.unitWeight.toFixed(4)}</td><td>${(nextPlNum(nextPlSelection[r.rowKey])*r.unitWeight).toFixed(2)}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="10">CURRENT + NEW TOTAL WEIGHT</td><td>${grand.toFixed(2)} kg</td></tr></tfoot></table><script>window.onload=()=>window.print();</script></body></html>`);w.document.close();
+  const summary=nextPlGetCurrentSummary(),rows=nextPlFilteredRows();
+  if(!rows.length)return showToast('No PO lines to print.','warning');
+  const totalNew=rows.reduce((s,r)=>s+Math.max(0,r.selectedQty)*r.unitWeight,0),grand=summary.weight+totalNew;
+  const w=window.open('','_blank','width=1400,height=900');if(!w)return showToast('Allow pop-ups to print this table.','warning');
+  const body=rows.map(r=>`<tr><td>${nextPlEsc(r.poNumber)}</td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.itemCode)}</td><td>${nextPlEsc(r.length)}</td><td>${Math.floor(r.pendingQty).toLocaleString()}</td><td>${Math.floor(r.stockTotal).toLocaleString()}</td><td>${Math.floor(r.stockCut).toLocaleString()}</td><td>${Math.floor(r.stockPunch).toLocaleString()}</td><td>${Math.floor(r.stockWrap+r.stockBox).toLocaleString()}</td><td>${Math.floor(r.selectedQty).toLocaleString()}</td><td>${Math.floor(r.planNeedCutQty).toLocaleString()}</td><td>${Math.max(0,Math.floor(r.pendingQty-r.selectedQty)).toLocaleString()}</td></tr>`).join('');
+  w.document.write(`<html><head><title>AIS Next PL Manual Planning</title><style>body{font-family:Arial,sans-serif;padding:18px;color:#173b55}h2{color:#075985}p{font-size:12px;color:#475569}table{width:100%;border-collapse:collapse;margin-top:14px;font-size:9px}th,td{border:1px solid #cbd5e1;padding:6px;text-align:center}th{background:#075985;color:#fff}tr{break-inside:avoid}@page{size:A4 landscape;margin:10mm}</style></head><body><h2>AIS Tracker — Next PL Manual Planning</h2><p>Current PL: ${summary.weight.toFixed(2)} kg • New plan: ${totalNew.toFixed(2)} kg • Total: ${grand.toFixed(2)} kg</p><table><thead><tr><th>PO</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Pending Shipment</th><th>Total Stock</th><th>Cut</th><th>Punch</th><th>Ready Wrap + Box</th><th>Next PL Qty</th><th>Pending Cut</th><th>Remaining PO</th></tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>window.print()<\\/script></body></html>`);
+  w.document.close();
 }
 
 function switchTab(tabId, btn) {
@@ -2061,7 +2292,6 @@ function switchTab(tabId, btn) {
       if (tabId === 'dashboardTab') renderDashboard(); 
       if (tabId === 'balanceWorkTab') renderBalanceWorkTable();
       if (tabId === 'teamProductionTab') renderDailyTeamPerformance(); 
-      if (tabId === 'nextPlPlanningTab') renderNextPlPlanning(); 
       if (tabId === 'cardboardTab') renderCardboardStock();
       if (tabId === 'extrusionTab') { resetExtrusionForm(); renderExtrusionModule(false); loadExtrusionReceipts(false); switchExtrusionSubTab('exInSubTab',document.querySelectorAll('.extrusion-sub-btn')[1]); } 
       if (tabId === 'historyTab') renderHistoryData(); 
@@ -7962,7 +8192,10 @@ function ppPopulateCrateStandards(){
 function ppGetPlanningRows(){
  try{
   const rows=typeof nextPlGetRows==='function'?nextPlGetRows():[];
-  return rows.map(r=>({...r,planningQty:Math.max(0,ppNum(r.selectedQty)||ppNum((typeof nextPlSelection!=='undefined'?nextPlSelection[r.rowKey]:0))||ppNum(r.pendingQty))})).filter(r=>r.poNumber&&r.profile&&r.length);
+  return rows.map(r=>{
+    const selected=typeof nextPlSelection!=='undefined'?ppNum(nextPlSelection[r.rowKey]):ppNum(r.selectedQty);
+    return {...r,planningQty:Math.min(Math.max(0,ppNum(r.pendingQty)),Math.max(0,selected))};
+  }).filter(r=>r.poNumber&&r.profile&&r.length&&r.planningQty>0);
  }catch(e){console.warn('Next PL rows unavailable',e);return [];}
 }
 function ppRefreshNextPlLines(){
@@ -8035,7 +8268,7 @@ function ppAddCratePlan(){
  const outerL=formL||Math.max(...group.map(x=>x.c.outerL));
  const packingH=formH>0?formH:Math.max(...group.map(x=>x.c.packingH));
  const overallH=packingH+PP_LEG_HEIGHT;
- if(packH>PP_MAX_PACKING_HEIGHT){alert(`Packing height ${packH} mm exceeds the ${PP_MAX_PACKING_HEIGHT} mm limit.`);return;}
+ if(packingH>PP_MAX_PACKING_HEIGHT){alert(`Packing height ${packingH} mm exceeds the ${PP_MAX_PACKING_HEIGHT} mm limit.`);return;}
  let queue=[];group.forEach(x=>{for(let b=0;b<x.boxes;b++)queue.push({r:x.r,m:x.m,pcsPerBox:x.pcsPerBox,unitWeight:ppNum(x.r.unitWeight||x.m.unitWeight),boxIndex:b,boxPCS:Math.min(x.pcsPerBox,Math.max(0,x.r.planningQty-b*x.pcsPerBox))});});
  while(queue.length){
   const part=queue.splice(0,cap),byLength={};part.forEach(x=>{const k=String(x.r.length);byLength[k]??={length:x.r.length,itemCode:x.r.itemCode,boxes:0,pcs:0};byLength[k].boxes++;byLength[k].pcs+=x.boxPCS;});
@@ -8046,6 +8279,45 @@ function ppAddCratePlan(){
  if(ppCratePlans.length>55&&typeof showToast==='function')showToast('Plan exceeds 55 crates. Review the 18,000 kg shipment target and split into another PL if needed.','warning');
  ppRenderCratePlan();const m=group[0].m;ppDrawCratePreview(m,{valid:true,box:group[0].c.box,outerL,outerW:width,packingH,overallH,perLayer,layers:Math.ceil(cap/perLayer),boxesPerCrate:cap},cap);
 }
+function ppAddSelectedNextPLToCratePlan(){
+ ppRefreshNextPlLines();
+ if(!ppCrateNextRows.length){
+  if(typeof showToast==='function')showToast('Next PL එකට select කළ PCS නැහැ. මුලින් Next PL Planning tab එකේ quantities select කරන්න.','warning');
+  else alert('No selected Next PL quantities. Select quantities in Next PL Planning first.');
+  return;
+ }
+ const grouped=new Map();
+ ppCrateNextRows.forEach((r,i)=>{
+  if(!(r.planningQty>0))return;
+  const key=[r.poNumber,r.profile,r.itemCode].join('|');
+  if(!grouped.has(key))grouped.set(key,i);
+ });
+ let added=0,skipped=0,missing=[];
+ for(const i of grouped.values()){
+  const r=ppCrateNextRows[i];
+  const sig=[r.poNumber,r.profile,r.itemCode].join('|');
+  if(ppCratePlans.some(x=>x.groupKey===sig)){skipped++;continue;}
+  const master=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===ppMasterKey(r.profile,r.itemCode,r.length));
+  if(!master||!ppCrateCalc(master).valid){missing.push(`${r.profile} / ${r.itemCode} / ${r.length} mm`);continue;}
+  const selector=document.getElementById('ppNextPlLine');
+  if(selector)selector.value=String(i);
+  ppOnNextPlLineChange();
+  const before=ppCratePlans.length;
+  ppAddCratePlan();
+  if(ppCratePlans.length>before)added+=ppCratePlans.length-before;
+ }
+ ppRenderCratePlan();ppPersistCratePlans();
+ if(typeof ppSwitchSubtab==='function'){
+  const button=[...document.querySelectorAll('#packingPlannerTab .pp-subtab')].find(b=>(b.getAttribute('onclick')||'').includes("'ppCrateSubTab'"));
+  ppSwitchSubtab('ppCrateSubTab',button);
+ }
+ let msg=`${added} crate(s) added from selected Next PL quantities.`;
+ if(skipped)msg+=` ${skipped} PO/Profile/Item group(s) were already in the crate plan.`;
+ if(missing.length)msg+=` Missing Crate Master data: ${missing.slice(0,5).join('; ')}${missing.length>5?'…':''}`;
+ if(typeof showToast==='function')showToast(msg,missing.length?'warning':'success');else alert(msg);
+}
+window.ppAddSelectedNextPLToCratePlan=ppAddSelectedNextPLToCratePlan;
+
 function ppGenerateAllNextPLCrates(){
  ppRefreshNextPlLines();
  if(!ppCrateNextRows.length){alert('No selected Next Planning PL quantities were found.');return;}
@@ -8148,6 +8420,7 @@ function ppSwitchSubtab(id,button){
  document.getElementById(id)?.classList.add('active');button?.classList.add('active');
  if(id==='ppCrateMasterSubTab')ppRenderCrateMaster();
  if(id==='ppCrateSubTab')ppRefreshNextPlLines();
+ if(id==='nextPlPlanningTab' && typeof renderNextPlPlanning==='function')renderNextPlPlanning();
 }
 function ppOnBoxSelect(){const k=document.getElementById('ppBoxSelect')?.value;const r=ppCrateMasterRows.find(x=>ppMasterKey(x.profile,x.itemCode,x.length)===k);if(r)ppDrawCratePreview(r,ppCrateCalc(r));}
 function ppSyncCrateDimensions(){ppCalculateCrate();}
@@ -10675,7 +10948,7 @@ ppSmartRenderContainer = function(){
       node.style.background = '#f0fdf4';
       return;
     }
-    const go = `<button type="button" class="btn btn-sm" style="margin-left:8px" onclick="switchTab('nextPlPlanningTab',null)">Open Next PL Planning</button>`;
+    const go = `<button type="button" class="btn btn-sm" style="margin-left:8px" onclick="switchTab('packingPlannerTab',null);setTimeout(()=>{const b=document.querySelector('#packingPlannerTab .pp-subtab[onclick*=nextPlPlanningTab]');ppSwitchSubtab('nextPlPlanningTab',b)},120)">Open Next PL Planning</button>`;
     if (candidates.length) {
       node.innerHTML = `<i class="fa-solid fa-circle-info"></i> No PCS quantities are selected in Next PL yet. ${candidates.length} eligible PO line(s) are available. Open Next PL Planning, enter/select the PCS quantities, then return here. ${go}`;
     } else {
@@ -10726,7 +10999,7 @@ ppSmartRenderContainer = function(){
   if (typeof originalSwitchTab === 'function' && !originalSwitchTab.__aisCrateRefreshWrapped) {
     const wrappedSwitchTab = function(tabId, btn){
       const result = originalSwitchTab.apply(this, arguments);
-      if (tabId === 'packingPlannerTab' || tabId === 'nextPlPlanningTab') {
+      if (tabId === 'packingPlannerTab') {
         setTimeout(refreshCratePlanner, 80);
         setTimeout(refreshCratePlanner, 450);
       }
@@ -10766,6 +11039,8 @@ ppSmartRenderContainer = function(){
 let extrusionReceipts=[];
 let extrusionReceiptsLoaded=false;
 let extrusionLoading=false;
+let extrusionStockMovements=[];
+let extrusionStockMovementsLoaded=false;
 function switchExtrusionSubTab(id,btn){document.querySelectorAll('.extrusion-sub-content').forEach(x=>x.style.display='none');document.querySelectorAll('.extrusion-sub-btn').forEach(x=>x.classList.remove('active'));const el=document.getElementById(id);if(el)el.style.display='block';if(btn)btn.classList.add('active');if(id==='exInSubTab'){populateExtrusionReceiptPOs();renderExtrusionPoTable();populateExtrusionReceiptProfiles();}if(id==='exHistorySubTab')renderExtrusionHistory();}
 function extrusionLen(v){const n=Number(String(v??'').replace(/mm/gi,'').trim());return Number.isFinite(n)&&n>0?n:0;}
 function extrusionMasterRows(){return (masterData||[]).filter(m=>String(m.profile||'').trim()&&extrusionLen(m.exLength)>0);}
@@ -10816,13 +11091,45 @@ function extrusionPoAllocationRows(){
 function confirmExtrusionPOComplete(poNumber){const po=String(poNumber||'');if(!po)return;const lines=extrusionRequiredByPo().filter(r=>r.poNumber===po);if(!lines.length)return;const total=lines.reduce((s,r)=>s+r.required,0);if(!confirm(`Mark PO ${po} as extrusion received/complete?\n\n${lines.length} line(s), ${total.toLocaleString()} extrusion(s) will be treated as complete in this browser. Actual receipt records and other PO data will not be deleted.`))return;const done=getExtrusionCompletedPOs();done.add(po);if(!saveExtrusionCompletedPOs(done))return;renderExtrusionModule(false);showToast(`PO ${po} marked complete and removed from pending list.`,'success');}
 function undoExtrusionPOComplete(poNumber){const po=String(poNumber||'');const done=getExtrusionCompletedPOs();if(!done.has(po))return;done.delete(po);if(!saveExtrusionCompletedPOs(done))return;renderExtrusionModule(false);showToast(`PO ${po} returned to pending list.`,'success');}
 
-function extrusionStockSummary(){const groups=new Map();extrusionRequiredByPo().filter(r=>!getExtrusionCompletedPOs().has(String(r.poNumber))).forEach(r=>{if(!groups.has(r.masterKey))groups.set(r.masterKey,{profile:r.profile,exLength:r.exLength,required:0,poLines:[]});const g=groups.get(r.masterKey);g.required+=r.required;g.poLines.push(r);});(extrusionReceipts||[]).forEach(r=>{const p=String(r.profile||'').trim(),l=extrusionLen(r.extrusion_length);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});
- groups.forEach(g=>{g.stock=(extrusionReceipts||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.in_qty)||0),0);g.balance=g.stock-g.required;g.status=g.balance>=0?(g.stock===0&&g.required>0?'Short':g.balance>0?'Extra':'Complete'):'Short';});return [...groups.values()].sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);}
-async function loadExtrusionReceipts(showMessage=false){if(extrusionLoading)return;extrusionLoading=true;try{const {data,error}=await supabaseClient.from('extrusion_receipts').select('*').order('receipt_date',{ascending:false}).order('id',{ascending:false});if(error)throw error;extrusionReceipts=(data||[]).map(r=>({...r,receiptDate:r.receipt_date,profile:String(r.profile||''),extrusionLength:extrusionLen(r.extrusion_length),trolleyNo:r.trolley_no||'',inQty:Number(r.in_qty)||0,note:r.note||''}));extrusionReceiptsLoaded=true;renderExtrusionModule(false);if(showMessage)showToast('Extrusion receipts refreshed.','success');}catch(e){console.error('Extrusion receipt load failed',e);if(showMessage)showToast('Extrusion table is not ready. Run supabase_extrusion_module.sql once in Supabase SQL Editor.','error');else{const b=document.getElementById('exHistoryBody');if(b)b.innerHTML='<tr><td colspan="7">Extrusion receipt table is not ready. Run the included supabase_extrusion_module.sql migration, then refresh.</td></tr>';}}finally{extrusionLoading=false;}}
+function extrusionStockSummary(){const groups=new Map();extrusionRequiredByPo().filter(r=>!getExtrusionCompletedPOs().has(String(r.poNumber))).forEach(r=>{if(!groups.has(r.masterKey))groups.set(r.masterKey,{profile:r.profile,exLength:r.exLength,required:0,poLines:[]});const g=groups.get(r.masterKey);g.required+=r.required;g.poLines.push(r);});extrusionMasterRows().forEach(m=>{const p=String(m.profile||'').trim(),l=extrusionLen(m.exLength);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});(extrusionReceipts||[]).forEach(r=>{const p=String(r.profile||'').trim(),l=extrusionLen(r.extrusion_length);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});
+ groups.forEach(g=>{g.receiptStock=(extrusionReceipts||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.in_qty)||0),0);g.movementNet=(extrusionStockMovements||[]).filter(m=>String(m.profile||'').trim()===g.profile&&extrusionLen(m.extrusion_length)===g.exLength).reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.stock=g.receiptStock+g.movementNet;g.balance=g.stock-g.required;g.status=g.balance>=0?(g.stock===0&&g.required>0?'Short':g.balance>0?'Extra':'Complete'):'Short';});return [...groups.values()].sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);}
+async function loadExtrusionReceipts(showMessage=false){if(extrusionLoading)return;extrusionLoading=true;try{const {data,error}=await supabaseClient.from('extrusion_receipts').select('*').order('receipt_date',{ascending:false}).order('id',{ascending:false});if(error)throw error;extrusionReceipts=(data||[]).map(r=>({...r,receiptDate:r.receipt_date,profile:String(r.profile||''),extrusionLength:extrusionLen(r.extrusion_length),trolleyNo:r.trolley_no||'',inQty:Number(r.in_qty)||0,note:r.note||''}));extrusionReceiptsLoaded=true;await loadExtrusionStockMovements();renderExtrusionModule(false);if(showMessage)showToast('Extrusion receipts refreshed.','success');}catch(e){console.error('Extrusion receipt load failed',e);if(showMessage)showToast('Extrusion table is not ready. Run supabase_extrusion_module.sql once in Supabase SQL Editor.','error');else{const b=document.getElementById('exHistoryBody');if(b)b.innerHTML='<tr><td colspan="7">Extrusion receipt table is not ready. Run the included supabase_extrusion_module.sql migration, then refresh.</td></tr>';}}finally{extrusionLoading=false;}}
+async function loadExtrusionStockMovements(){
+ try{
+  const {data,error}=await supabaseClient.from('extrusion_stock_movements').select('*').order('movement_date',{ascending:false}).order('id',{ascending:false});
+  if(error)throw error;
+  extrusionStockMovements=(data||[]).map(r=>({...r,profile:String(r.profile||''),extrusion_length:extrusionLen(r.extrusion_length),qty_change:Number(r.qty_change)||0}));
+  extrusionStockMovementsLoaded=true;
+  return true;
+ }catch(e){
+  console.error('Extrusion stock movement load failed',e);
+  extrusionStockMovementsLoaded=false;
+  extrusionStockMovements=[];
+  const body=document.getElementById('exStockBody');
+  if(body)body.innerHTML=`<tr><td colspan="7" style="color:#b45309;font-weight:800;">Extrusion IN / OUT ledger could not load: ${escapeHtml(e?.message||'Database permission or migration issue')}. Run supabase_extrusion_stock_ledger_v256.sql in Supabase SQL Editor, then refresh. Existing receipt records are preserved.</td></tr>`;
+  return false;
+ }
+}
 function moveExtrusionStockSummaryToBottom(){const target=document.getElementById('exInSubTab');const planner=document.getElementById('exPoCards')?.closest('.card');const form=document.getElementById('exReceiptForm')?.closest('.card');if(target&&planner&&form&&planner.parentElement!==target)target.insertBefore(planner,form);const stockSection=document.getElementById('exStockSubTab');const stock=document.getElementById('exStockBody')?.closest('.card');if(stockSection&&stock&&stock.parentElement!==stockSection)stockSection.appendChild(stock);}
 function renderExtrusionModule(force=false){if(force&&!extrusionReceiptsLoaded){loadExtrusionReceipts(true);return;}moveExtrusionStockSummaryToBottom();populateExtrusionFilters();populateExtrusionReceiptProfiles();renderExtrusionStockTable();renderExtrusionPoTable();renderExtrusionHistory();}
 function populateExtrusionFilters(){const groups=extrusionStockSummary();const fill=(id,label,vals)=>{const s=document.getElementById(id);if(!s)return;const old=s.value;s.innerHTML=`<option value="">${label}</option>`;[...new Set(vals)].forEach(v=>s.add(new Option(v,v)));if([...s.options].some(o=>o.value===old))s.value=old;};fill('exFilterProfile','All Profiles',groups.map(g=>g.profile));fill('exFilterLength','All Lengths',groups.map(g=>String(g.exLength)));fill('exHistProfile','All Profiles',[...new Set(extrusionReceipts.map(r=>r.profile))].sort());}
-function renderExtrusionStockTable(){const body=document.getElementById('exStockBody');if(!body)return;const p=document.getElementById('exFilterProfile')?.value||'',l=document.getElementById('exFilterLength')?.value||'',q=(document.getElementById('exSearch')?.value||'').toLowerCase();const rows=extrusionStockSummary().filter(g=>(!p||g.profile===p)&&(!l||String(g.exLength)===l)&&(!q||`${g.profile} ${g.exLength}`.toLowerCase().includes(q)));body.innerHTML=rows.length?rows.map(g=>`<tr><td><b>${escapeHtml(String(g.profile))}</b></td><td>${g.exLength.toLocaleString()} mm</td><td>${g.required.toLocaleString()}</td><td>${g.stock.toLocaleString()}</td><td><b style="color:${g.balance<0?'#b45309':g.balance>0?'#1d4ed8':'#047857'}">${g.balance.toLocaleString()}</b></td><td><span class="ex-status ${g.balance<0?'short':g.balance>0?'extra':'complete'}">${g.balance<0?'Short by '+Math.abs(g.balance):g.balance>0?'Extra '+g.balance:'Complete'}</span></td></tr>`).join(''):'<tr><td colspan="6">No extrusion lengths matched. Check Master Catalog Ex Length values.</td></tr>';}
+function renderExtrusionStockTable(){
+ const body=document.getElementById('exStockBody');if(!body)return;
+ if(!extrusionStockMovementsLoaded){
+  body.innerHTML='<tr><td colspan="7" style="color:#b45309;font-weight:800;">Stock movement ledger is not connected. Run supabase_extrusion_stock_ledger_v256.sql in Supabase SQL Editor and refresh before using IN / OUT / Edit.</td></tr>';
+  return;
+ }
+ const p=document.getElementById('exFilterProfile')?.value||'',l=document.getElementById('exFilterLength')?.value||'',q=(document.getElementById('exSearch')?.value||'').toLowerCase();
+ const rows=extrusionStockSummary().filter(g=>(!p||g.profile===p)&&(!l||String(g.exLength)===l)&&(!q||`${g.profile} ${g.exLength}`.toLowerCase().includes(q)));
+ body.innerHTML=rows.length?rows.map(g=>`<tr>
+  <td><b>${escapeHtml(String(g.profile))}</b></td><td>${g.exLength.toLocaleString()} mm</td>
+  <td>${g.required.toLocaleString()}</td>
+  <td><button type="button" class="ex-stock-qty-edit" title="Click to edit current stock quantity" onclick="openExtrusionStockModal('SET','${escapeHtml(g.profile)}',${g.exLength},${g.stock})">${g.stock.toLocaleString()} <i class="fa-solid fa-pen"></i></button></td>
+  <td><b class="ex-stock-balance ${g.balance<0?'negative':g.balance>0?'positive':'zero'}">${g.balance.toLocaleString()}</b></td>
+  <td><span class="ex-status ${g.balance<0?'short':g.balance>0?'extra':'complete'}">${g.balance<0?'Short by '+Math.abs(g.balance):g.balance>0?'Extra '+g.balance:'Balanced'}</span></td>
+  <td><div class="ex-stock-actions"><button type="button" class="ex-stock-in" onclick="openExtrusionStockModal('IN','${escapeHtml(g.profile)}',${g.exLength},${g.stock})">+ IN</button><button type="button" class="ex-stock-out" onclick="openExtrusionStockModal('OUT','${escapeHtml(g.profile)}',${g.exLength},${g.stock})">− OUT</button></div></td>
+ </tr>`).join(''):'<tr><td colspan="7">No extrusion lengths matched. Check Master Catalog Ex Length values.</td></tr>';
+}
 let selectedExtrusionPO='';
 function extrusionPoAgeDays(date){if(!date)return null;const d=new Date(`${date}T00:00:00`);if(Number.isNaN(d.getTime()))return null;return Math.max(0,Math.floor((new Date(new Date().toDateString())-d)/86400000));}
 function renderExtrusionPoTable(){
@@ -10887,6 +11194,66 @@ function populateExtrusionReceiptProfiles(){const s=document.getElementById('exR
 function updateExtrusionLengthOptions(){const p=document.getElementById('exReceiptProfile')?.value||'',po=document.getElementById('exReceiptPO')?.value||'',s=document.getElementById('exReceiptLength');if(!s)return;const old=s.value;const poLengths=po?extrusionRequiredByPo().filter(r=>r.poNumber===po&&r.profile===p).map(r=>String(extrusionLen(r.exLength))):[];const lengths=[...new Set(po?poLengths:extrusionMasterRows().filter(m=>String(m.profile).trim()===p).map(m=>String(extrusionLen(m.exLength))))].sort((a,b)=>Number(a)-Number(b));s.innerHTML='<option value="">Select length</option>';lengths.forEach(l=>s.add(new Option(`${Number(l).toLocaleString()} mm`,l)));if(lengths.includes(old))s.value=old;}
 function resetExtrusionForm(){const f=document.getElementById('exReceiptForm');if(f)f.reset();document.getElementById('exEditId').value='';document.getElementById('exReceiptDate').value=new Date().toISOString().slice(0,10);document.getElementById('exSaveBtn').innerHTML='<i class="fa-solid fa-floppy-disk"></i> Save IN';populateExtrusionReceiptProfiles();}
 async function saveExtrusionReceipt(){if(isAppBusy)return;if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return showToast('Admin or Planner access is required.','warning');const id=document.getElementById('exEditId').value,date=document.getElementById('exReceiptDate').value,poNumber=document.getElementById('exReceiptPO')?.value||'',profile=document.getElementById('exReceiptProfile').value,length=extrusionLen(document.getElementById('exReceiptLength').value),trolley=document.getElementById('exTrolley').value.trim(),qty=Math.floor(Number(document.getElementById('exInQty').value)||0),note=document.getElementById('exNote').value.trim();const oldRecord=id?extrusionReceipts.find(r=>String(r.id)===String(id)):null;const allowLegacyEdit=!!oldRecord&&!String(oldRecord.po_number||oldRecord.poNumber||'').trim();if(!date||(!poNumber&&!allowLegacyEdit)||!profile||!length||!trolley||qty<=0)return showToast('Select PO, date, profile, extrusion length, trolley details and a positive IN quantity. Old unassigned receipts may be edited without assigning a PO.','warning');if(poNumber&&!extrusionRequiredByPo().some(r=>r.poNumber===poNumber&&r.profile===profile&&extrusionLen(r.exLength)===length))return showToast('Selected profile and extrusion length do not belong to this PO.','warning');const payload={receipt_date:date,profile,extrusion_length:length,trolley_no:trolley,in_qty:qty,note,po_number:poNumber||null};isAppBusy=true;try{let result;if(id){result=await supabaseClient.from('extrusion_receipts').update(payload).eq('id',id).select().single();}else{result=await supabaseClient.from('extrusion_receipts').insert([payload]).select().single();}if(result.error)throw result.error;resetExtrusionForm();await loadExtrusionReceipts(false);switchExtrusionSubTab('exHistorySubTab',document.querySelectorAll('.extrusion-sub-btn')[2]);showToast(id?'Extrusion receipt updated.':'PO-linked Extrusion IN saved; PO/profile balances recalculated.','success');}catch(e){console.error(e);showToast('Could not save extrusion receipt. Ensure the additive po_number column migration in supabase_extrusion_module.sql has been run. Existing records were not deleted.','error');}finally{isAppBusy=false;}}
+function openExtrusionStockModal(mode,profile,length,currentStock){
+ if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return showToast('Admin or Planner access is required to manage extrusion stock.','warning');
+ const modal=document.getElementById('exStockMovementModal');if(!modal)return;
+ // The Extrusion tab can sit inside transformed/overflow containers. Move the
+ // dialog to <body> before opening so the fixed backdrop and dialog are not
+ // clipped or trapped in an ancestor stacking context (the dim-only symptom).
+ if(modal.parentElement!==document.body)document.body.appendChild(modal);
+ modal.style.position='fixed';modal.style.inset='0';modal.style.zIndex='2147483000';
+ const modalCard=modal.querySelector('.ex-stock-modal-card');
+ const backdrop=modal.querySelector('.ex-stock-modal-backdrop');
+ if(backdrop){backdrop.style.position='absolute';backdrop.style.inset='0';backdrop.style.zIndex='0';}
+ if(modalCard){modalCard.style.position='relative';modalCard.style.zIndex='1';modalCard.style.display='block';modalCard.style.visibility='visible';}
+ const p=document.getElementById('exStockMoveProfile'),l=document.getElementById('exStockMoveLength');
+ const profiles=[...new Set(extrusionMasterRows().map(x=>String(x.profile).trim()))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+ p.innerHTML=profiles.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(x)}</option>`).join('');
+ p.value=profile||profiles[0]||'';
+ function fillLengths(){
+  const vals=[...new Set(extrusionMasterRows().filter(x=>String(x.profile).trim()===p.value).map(x=>extrusionLen(x.exLength)).filter(Boolean))].sort((a,b)=>a-b);
+  l.innerHTML=vals.map(x=>`<option value="${x}">${x.toLocaleString()} mm</option>`).join('');
+  if(vals.includes(Number(length)))l.value=String(Number(length));
+ }
+ p.onchange=fillLengths;fillLengths();
+ document.getElementById('exStockMoveMode').value=mode;
+ document.getElementById('exStockMoveQty').value=mode==='SET'?(Number(currentStock)||0):'';
+ document.getElementById('exStockMoveQty').min=mode==='SET'?'0':'1';
+ document.getElementById('exStockMoveQtyLabel').firstChild.textContent=mode==='SET'?'New Stock Balance (Extrusions)':'Quantity (Extrusions)';
+ document.getElementById('exStockMoveDate').value=new Date().toISOString().slice(0,10);
+ document.getElementById('exStockMoveNote').value='';
+ document.getElementById('exStockModalTitle').textContent=mode==='IN'?'Add Extrusion Stock':mode==='OUT'?'Extrusion Stock OUT':'Edit Extrusion Stock Balance';
+ document.getElementById('exStockModalDescription').textContent=mode==='SET'?'Enter the corrected physical stock balance. The difference is saved as an adjustment; old records remain unchanged.':mode==='IN'?'Record newly received extrusion quantity.':'Record extrusion quantity issued from stock.';
+ document.getElementById('exStockMoveCurrent').textContent=`Current stock balance: ${(Number(currentStock)||0).toLocaleString()} extrusions`;
+ document.getElementById('exStockMoveSave').innerHTML=mode==='IN'?'<i class="fa-solid fa-plus"></i> Save IN':mode==='OUT'?'<i class="fa-solid fa-arrow-up-from-bracket"></i> Save OUT':'<i class="fa-solid fa-check"></i> Save New Balance';
+ modal.classList.add('open');modal.setAttribute('aria-hidden','false');
+ document.body.style.overflow='hidden';
+ setTimeout(()=>document.getElementById('exStockMoveQty')?.focus(),40);
+}
+function closeExtrusionStockModal(){const m=document.getElementById('exStockMovementModal');if(m){m.classList.remove('open');m.setAttribute('aria-hidden','true');}document.body.style.overflow='';}
+async function saveExtrusionStockMovement(){
+ if(isAppBusy)return;
+ if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return showToast('Admin or Planner access is required to manage extrusion stock.','warning');
+ const mode=document.getElementById('exStockMoveMode').value,profile=document.getElementById('exStockMoveProfile').value,length=extrusionLen(document.getElementById('exStockMoveLength').value),qty=Math.floor(Number(document.getElementById('exStockMoveQty').value)),date=document.getElementById('exStockMoveDate').value,note=document.getElementById('exStockMoveNote').value.trim();
+ if(!profile||!length||!date||!Number.isFinite(qty)||qty<0||(mode!=='SET'&&qty<1))return showToast('Enter a valid profile, extrusion length, date and quantity.','warning');
+ const summary=extrusionStockSummary().find(x=>x.profile===profile&&x.exLength===length),current=summary?.stock||0;
+ let delta=mode==='IN'?qty:mode==='OUT'?-qty:qty-current;
+ if(mode==='OUT'&&qty>current)return showToast(`Insufficient stock. Available: ${current.toLocaleString()} extrusions.`,'warning');
+ if(!delta){closeExtrusionStockModal();return showToast('Stock balance is already equal to the entered quantity. No adjustment was needed.','info');}
+ const payload={movement_date:date,profile,extrusion_length:length,movement_type:mode,qty_change:delta,note};
+ isAppBusy=true;
+ try{
+  const {error}=await supabaseClient.from('extrusion_stock_movements').insert([payload]);
+  if(error)throw error;
+  const reloaded=await loadExtrusionStockMovements();
+  if(!reloaded)throw new Error('Movement was saved, but the stock ledger could not be reloaded. Check the migration and table permissions before making another adjustment.');
+  closeExtrusionStockModal();populateExtrusionFilters();renderExtrusionStockTable();renderExtrusionPoTable();
+  showToast(mode==='IN'?`${qty.toLocaleString()} extrusions added to stock.`:mode==='OUT'?`${qty.toLocaleString()} extrusions issued from stock.`:`Stock balance updated to ${qty.toLocaleString()} extrusions.`,'success');
+ }catch(e){
+  console.error('Extrusion stock movement save failed',e);
+  showToast(`Extrusion stock save failed: ${e?.message||'Check Supabase permissions and run supabase_extrusion_stock_ledger_v256.sql.'}`,'error');
+ }finally{isAppBusy=false;}
+}
 function renderExtrusionHistory(){const body=document.getElementById('exHistoryBody');if(!body)return;const p=document.getElementById('exHistProfile')?.value||'',q=(document.getElementById('exHistSearch')?.value||'').toLowerCase();const rows=extrusionReceipts.filter(r=>(!p||r.profile===p)&&(!q||`${r.po_number||r.poNumber||''} ${r.profile} ${r.extrusionLength} ${r.trolleyNo} ${r.note}`.toLowerCase().includes(q)));body.innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHtml(r.receiptDate||'-')}</td><td><b>${escapeHtml(r.po_number||r.poNumber||'Legacy shared stock')}</b></td><td><b>${escapeHtml(r.profile)}</b></td><td>${r.extrusionLength} mm</td><td>${escapeHtml(r.trolleyNo)}</td><td><b>${r.inQty.toLocaleString()}</b></td><td>${escapeHtml(r.note||'-')}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:white" onclick="editExtrusionReceipt('${String(r.id)}')"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteExtrusionReceipt('${String(r.id)}')"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):'<tr><td colspan="8">No extrusion IN records found.</td></tr>';}
 function editExtrusionReceipt(id){const r=extrusionReceipts.find(x=>String(x.id)===String(id));if(!r)return;switchExtrusionSubTab('exInSubTab',document.querySelectorAll('.extrusion-sub-btn')[1]);document.getElementById('exEditId').value=r.id;document.getElementById('exReceiptDate').value=r.receiptDate||'';populateExtrusionReceiptPOs();document.getElementById('exReceiptPO').value=String(r.po_number||r.poNumber||'');populateExtrusionReceiptProfiles();document.getElementById('exReceiptProfile').value=r.profile;updateExtrusionLengthOptions();document.getElementById('exReceiptLength').value=String(r.extrusionLength);document.getElementById('exTrolley').value=r.trolleyNo;document.getElementById('exInQty').value=r.inQty;document.getElementById('exNote').value=r.note;document.getElementById('exSaveBtn').innerHTML='<i class="fa-solid fa-check"></i> Update IN';}
 async function deleteExtrusionReceipt(id){if(currentUserRole!=='Admin')return showToast('Admin access is required to delete receipts.','warning');const r=extrusionReceipts.find(x=>String(x.id)===String(id));if(!r||!confirm(`Delete extrusion IN record for ${r.profile}, ${r.extrusionLength} mm, qty ${r.inQty}? Stock balance will be recalculated.`))return;try{const {error}=await supabaseClient.from('extrusion_receipts').delete().eq('id',id);if(error)throw error;await loadExtrusionReceipts(false);showToast('Extrusion receipt deleted; balance recalculated.','success');}catch(e){showToast('Could not delete receipt. Check table permissions.','error');}}
@@ -10906,6 +11273,7 @@ function ppResetCratePlanning(){
   ppCratePlans=[];
   try{localStorage.setItem(PP_SMART_STATE_KEY,'[]');}catch(e){console.warn('Could not update local crate plan cache:',e);}
   try{localStorage.setItem(PP_CRATE_PLAN_STATE_KEY,'[]');}catch(e){console.warn('Could not update legacy crate plan cache:',e);}
+  if(typeof ppPersistCratePlans==='function')ppPersistCratePlans();
   ppSmartPendingCloudPayload='[]';
   if(ppSmartSaveTimer){clearTimeout(ppSmartSaveTimer);ppSmartSaveTimer=null;}
   ppSmartRenderCrateList();
@@ -10928,13 +11296,13 @@ function ppResetCratePlanning(){
   const boxSummary=document.getElementById('ppNewTotalBoxes');if(boxSummary)boxSummary.textContent='0';
   if(typeof ppSmartSaveNow==='function'){
     Promise.resolve(ppSmartSaveNow()).then(()=>{
-      if(typeof showToast==='function')showToast('Crate planning reset. Next Planning PL and Master Data are preserved.','success');
+      if(typeof showToast==='function')showToast('Crate Plan cleared. Next PL quantities, Production Orders and Crate Master Data are preserved.','success');
     }).catch(err=>{
       console.error('Crate plan reset cloud save failed:',err);
       if(typeof showToast==='function')showToast('Local crate plan cleared, but cloud save failed. Check connection and use Save Crate List.','warning');
       else alert('Local crate plan cleared, but cloud save failed. Check your connection and retry Save Crate List.');
     });
-  }else if(typeof showToast==='function')showToast('Crate planning reset. Next Planning PL and Master Data are preserved.','success');
+  }else if(typeof showToast==='function')showToast('Crate Plan cleared. Next PL quantities, Production Orders and Crate Master Data are preserved.','success');
  }catch(err){
   console.error('Crate planning reset failed:',err);
   alert('Could not safely reset crate planning. No source Next Planning PL or Master Catalog data was intentionally changed.');
@@ -11010,3 +11378,8 @@ ppSmartOrientationMetrics=function(items,manual={}){
 };
 ppSmartCalcDims=function(items,manual={}){const c=ppSmartOrientationMetrics(items,manual);return c.valid?{...c,packingH:c.packingH,overallH:c.overallH,per:c.perLayer,perLayer:c.perLayer,layers:c.layers,boxes:c.boxes,orientation:c.orientation,rowMultiplier:c.rowMultiplier,outerW:c.width,outerL:c.outerL}:c;};
 
+
+/* V258: robust live-row allocation for Manual Next PL Add/Update */
+
+// Close the stock dialog with Escape; safe to register once per page load.
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeExtrusionStockModal();});
