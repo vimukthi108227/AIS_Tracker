@@ -3874,3 +3874,30 @@ body.dark-mode .pp-full-detail-kpi b{color:#6ee7b7}
 body.dark-mode .pp-full-detail-table tfoot td{background:#064e3b;color:#ecfdf5}
 @media(max-width:900px){.pp-full-detail-kpis{grid-template-columns:repeat(2,minmax(130px,1fr))}.pp-full-detail-kpi{padding:11px}.pp-full-detail-kpi b{font-size:19px}.pp-full-detail-table{min-width:1450px}}
 @media(max-width:480px){.pp-full-detail-kpis{gap:8px}.pp-full-detail-kpi small{font-size:10px}.pp-full-detail-kpi b{font-size:17px}}
+
+/* Cardboard Stock: Current PL shortage sub-tab */
+.cb-subtabs{display:flex;gap:8px;flex-wrap:wrap;margin:8px auto 0;justify-content:center}
+.cb-subtab{background:#f0fdfa!important;color:#0f766e!important;border:1px solid #b7e4d8!important;box-shadow:none!important;padding:9px 14px!important}
+.cb-subtab.active{background:linear-gradient(135deg,#0f766e,#115e59)!important;color:#fff!important;border-color:#0f766e!important}
+.cb-shortage-panel{margin-top:8px;padding:20px;border:1px solid var(--emerald-border);border-radius:14px;background:linear-gradient(145deg,rgba(240,253,250,.78),rgba(239,246,255,.7))}
+.cb-shortage-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+.cb-shortage-head h4{margin:0 0 6px;color:var(--primary-dark);font-size:17px}
+.cb-shortage-head p{margin:0 0 5px;color:var(--text-muted);font-size:12px;font-weight:600}
+.cb-shortage-head small{font-weight:800;color:#0f766e}
+.cb-shortage-actions{display:flex;gap:8px;flex-wrap:wrap}
+.cb-shortage-kpis{display:grid;grid-template-columns:repeat(3,minmax(150px,1fr));gap:12px;margin:12px 0 18px}
+.cb-shortage-kpis>div{padding:14px 16px;background:#fff;border:1px solid #cde9e1;border-radius:11px;display:flex;flex-direction:column;gap:5px}
+.cb-shortage-kpis small{font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase}
+.cb-shortage-kpis b{font-size:21px;color:#115e59}
+.cb-shortage-table tfoot th{background:#e0f2fe;color:#0c4a6e}
+.cb-short-qty{display:inline-flex;min-width:58px;justify-content:center;padding:5px 10px;border-radius:7px;background:#fff1f2;color:#be123c;font-weight:900;border:1px solid #fecdd3}
+.cb-shortage-note{margin:12px 0 0;padding:11px 13px;border-radius:9px;background:#eff6ff;color:#1e40af;font-size:12px;font-weight:600}
+@media(max-width:700px){.cb-subtabs{justify-content:stretch}.cb-subtab{flex:1 1 100%}.cb-shortage-kpis{grid-template-columns:1fr}.cb-shortage-head{display:block}.cb-shortage-actions{margin-top:12px}}
+body.dark-mode .cb-shortage-panel{background:#0f172a;border-color:#334155}body.dark-mode .cb-shortage-head h4{color:#6ee7b7}body.dark-mode .cb-shortage-kpis>div{background:#111c2d;border-color:#334155}body.dark-mode .cb-shortage-kpis b{color:#6ee7b7}body.dark-mode .cb-shortage-note{background:#172554;color:#bfdbfe}
+/* Current PL extrusion requirement report */
+.ex-current-pl-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:12px 0;padding:13px 16px;border:1px solid #cce6df;border-radius:12px;background:linear-gradient(110deg,#effaf6,#f0f9ff)}
+.ex-current-pl-banner>div{display:flex;flex-direction:column;gap:4px}.ex-current-pl-banner span{font-size:9px;font-weight:900;letter-spacing:.12em;color:#0f766e}.ex-current-pl-banner strong{font-size:16px;color:#124f60}.ex-current-pl-banner small{font-size:11px;color:#647b8c}
+.ex-current-pl-notice{margin:10px 0;padding:11px 13px;border:1px solid #f5d08a;border-radius:10px;background:#fff8e8;color:#925b08;font-size:11px;font-weight:700;line-height:1.55}.ex-current-pl-notice>div+div{margin-top:5px}
+.ex-current-pl-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.ex-current-pl-kpis>div:nth-child(3){background:linear-gradient(135deg,#fff7ed,#ffedd5);border-color:#fed7aa}.ex-current-pl-kpis>div:nth-child(3) b{color:#c2410c}
+.ex-current-short{display:inline-flex;min-width:42px;justify-content:center;padding:4px 9px;border-radius:999px;font-weight:900}.ex-current-short.is-short{background:#ffedd5;color:#c2410c}.ex-current-short.is-ok{background:#d1fae5;color:#047857}.ex-current-pl-table tfoot th{background:#e8f4f2;color:#104e63;border-top:2px solid #b8d8d2;padding:12px}.ex-current-pl-footnote{margin:13px 0 2px;color:#607889;font-size:11px;line-height:1.55}.ex-current-pl-footnote i{color:#0f766e;margin-right:5px}
+@media(max-width:700px){.ex-current-pl-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ex-current-pl-banner strong{font-size:14px}}

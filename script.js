@@ -4302,7 +4302,76 @@ function renderCardboardStock(){
   const hist=document.getElementById('cardboardHistoryTableBody');
   if(hist){hist.innerHTML=cardboardStockList.length?cardboardStockList.map(c=>{const x=parseCardboardType(c.type); const id=Number(c.db_id||c.id); return `<tr><td>${c.date||'-'}<br><small>${c.timestamp||''}</small></td><td><span class="cb-tx ${Number(c.incoming)>0?'in':'out'}">${Number(c.incoming)>0?'INCOMING':'CONSUMED'}</span></td><td><b>${x.profile||'-'}</b> • ${x.itemCode||'-'} • ${x.length||'-'} mm</td><td>${c.incoming||0}</td><td>${c.used||0}</td><td>${id>0?`<button class="btn" style="padding:5px 8px;background:#64748b;color:#fff;" onclick="editCardboardTransaction(${id})"><i class="fa-solid fa-pen"></i></button>`:'Auto'}</td></tr>`;}).join(''):`<tr><td colspan="6" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No transactions yet.</td></tr>`;}  const manualBody=document.getElementById('cardboardManualDataTableBody');
   if(manualBody){manualBody.innerHTML=cardboardManualData.length?cardboardManualData.map(r=>`<tr><td>${r.date||'-'}</td><td>${r.material||'-'}</td><td>${r.profile||'-'}</td><td>${r.itemCode||'-'}</td><td>${r.length||'-'}</td><td><b>${Number(r.quantity)||0}</b></td><td>${r.note||'-'}</td><td><button class="btn" style="padding:5px 8px;background:#0369a1;color:#fff;" onclick="editCardboardManualData(${Number(r.db_id||r.id)})"><i class="fa-solid fa-pen"></i></button> <button class="btn" style="padding:5px 8px;background:#dc2626;color:#fff;" onclick="deleteCardboardManualData(${Number(r.db_id||r.id)})"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):`<tr><td colspan="8" style="text-align:center;padding:18px;color:var(--text-muted);font-weight:700;">No manual cardboard data.</td></tr>`;}
+  if(document.getElementById('cardboardShortagePanel')?.style.display!=='none')window.renderCurrentPlCardboardShortage?.();
 }
+
+
+// Cardboard Stock sub-tab: Current PL shortage report (read-only).
+window.switchCardboardSubTab = function(tab){
+  const overview=document.getElementById('cardboardOverviewPanel');
+  const shortage=document.getElementById('cardboardShortagePanel');
+  const overviewBtn=document.getElementById('cbOverviewTabBtn');
+  const shortageBtn=document.getElementById('cbShortageTabBtn');
+  const showShort=tab==='shortage';
+  if(overview)overview.style.display=showShort?'none':'';
+  if(shortage)shortage.style.display=showShort?'':'none';
+  overviewBtn?.classList.toggle('active',!showShort);
+  shortageBtn?.classList.toggle('active',showShort);
+  if(showShort)window.renderCurrentPlCardboardShortage();
+};
+window.getCurrentPlCardboardShortageRows = function(){
+  try{ if(typeof ensurePackingSelection==='function')ensurePackingSelection(); }catch(e){}
+  const active=(typeof getActivePackingListSelection==='function')?getActivePackingListSelection():{month:activePackingMonth||'',container:activePackingContainer||''};
+  const records=(typeof getPackingContainerRecords==='function')?getPackingContainerRecords(active.month,active.container):[];
+  const groups=new Map();
+  records.forEach(r=>{
+    const profile=String(r?.profile||'').trim(),itemCode=String(r?.itemCode||'').trim(),length=cleanLen(r?.length);
+    const pcs=Math.max(0,Number(r?.pcsQty)||0);
+    if(!profile||!itemCode||!length||pcs<=0)return;
+    const master=masterData.find(m=>String(m.profile||'').trim().toLowerCase()===profile.toLowerCase()&&String(m.itemCode||'').trim().toLowerCase()===itemCode.toLowerCase()&&cleanLen(m.length)===length)
+      ||masterData.find(m=>String(m.profile||'').trim().toLowerCase()===profile.toLowerCase()&&cleanLen(m.length)===length);
+    const key=`${profile.toLowerCase()}|${itemCode.toLowerCase()}|${length}`;
+    const g=groups.get(key)||{material:master?.material||'-',profile,itemCode,length,pcs:0,pcsPerBox:Math.max(1,Number(master?.boxCapacity)||100)};
+    g.pcs+=pcs; if(g.material==='-'&&master?.material)g.material=master.material;
+    groups.set(key,g);
+  });
+  const rows=[];
+  groups.forEach(g=>{
+    const requiredBoxes=Math.ceil(g.pcs/g.pcsPerBox);
+    const bal=getCardboardTransactionsBalance(g.profile,g.itemCode,g.length);
+    const available=bal.incoming-bal.used;
+    const shortQty=Math.max(0,requiredBoxes-available);
+    if(shortQty>0)rows.push({...g,requiredBoxes,available,shortQty});
+  });
+  rows.sort((a,b)=>String(a.material).localeCompare(String(b.material),undefined,{numeric:true})||String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true})||String(a.itemCode).localeCompare(String(b.itemCode),undefined,{numeric:true}));
+  return {rows,active};
+};
+window.renderCurrentPlCardboardShortage = function(){
+  const result=window.getCurrentPlCardboardShortageRows();
+  const rows=result.rows||[];
+  const label=document.getElementById('cbShortagePlLabel');
+  if(label)label.textContent=`Current PL: ${result.active.month||'-'} • ${result.active.container||'-'} | ${rows.length} shortage item(s)`;
+  const total=rows.reduce((s,r)=>s+r.shortQty,0),required=rows.reduce((s,r)=>s+r.requiredBoxes,0);
+  const count=document.getElementById('cbShortMaterialCount'),qty=document.getElementById('cbShortTotalQty'),req=document.getElementById('cbShortRequiredQty');
+  if(count)count.textContent=String(rows.length);if(qty)qty.textContent=`${total.toLocaleString()} Boxes`;if(req)req.textContent=`${required.toLocaleString()} Boxes`;
+  const body=document.getElementById('cbShortageTableBody'),foot=document.getElementById('cbShortageTableFoot');
+  if(body)body.innerHTML=rows.length?rows.map(r=>`<tr><td><b>${nextPlEsc(r.material||'-')}</b></td><td>${nextPlEsc(r.profile)}</td><td>${nextPlEsc(r.itemCode)}</td><td>${nextPlEsc(r.length)}</td><td><span class="cb-short-qty">${r.shortQty.toLocaleString()}</span></td></tr>`).join(''):`<tr><td colspan="5" style="text-align:center;padding:22px;color:var(--text-muted);font-weight:700;">No short cardboard for the selected Current PL.</td></tr>`;
+  if(foot)foot.innerHTML=rows.length?`<tr><th colspan="4" style="text-align:right;">TOTAL SHORT CARDBOARD</th><th>${total.toLocaleString()} Boxes</th></tr>`:'';
+  return rows;
+};
+window.exportCurrentPlCardboardShortExcel = function(){
+  const {rows,active}=window.getCurrentPlCardboardShortageRows();
+  if(!rows.length)return showToast('No short cardboard rows to export.','info');
+  const data=rows.map(r=>({'Material Code':r.material,'Profile':r.profile,'Item Code':r.itemCode,'Length (mm)':r.length,'Short Cardboard Qty (Boxes)':r.shortQty,'Current PL Required (Boxes)':r.requiredBoxes,'Available Cardboard (Boxes)':r.available}));
+  exportTableToExcel(data,`AIS_Current_PL_Short_Cardboard_${String(active.container||'PL').replace(/\s+/g,'_')}`,'Short Cardboard');
+};
+window.exportCurrentPlCardboardShortPdf = function(){
+  const {rows,active}=window.getCurrentPlCardboardShortageRows();
+  if(!rows.length)return showToast('No short cardboard rows to export.','info');
+  const data=rows.map(r=>({'Material Code':r.material,'Profile':r.profile,'Item Code':r.itemCode,'Length (mm)':r.length,'Short Cardboard Qty (Boxes)':r.shortQty}));
+  exportDataToPdf(data,'AIS_Current_PL_Short_Cardboard','AIS Tracker — Current PL Short Cardboard',`${active.month||''} • ${active.container||''} • Total shortage: ${rows.reduce((s,r)=>s+r.shortQty,0)} Boxes`);
+};
+
 function onCbMaterialSelect(){
   const raw=(document.getElementById('cbMaterialInput')?.value||'').trim();
   const norm=v=>String(v??'').trim().toLocaleLowerCase();
@@ -11088,7 +11157,7 @@ let extrusionReceiptsLoaded=false;
 let extrusionLoading=false;
 let extrusionStockMovements=[];
 let extrusionStockMovementsLoaded=false;
-function switchExtrusionSubTab(id,btn){document.querySelectorAll('.extrusion-sub-content').forEach(x=>x.style.display='none');document.querySelectorAll('.extrusion-sub-btn').forEach(x=>x.classList.remove('active'));const el=document.getElementById(id);if(el)el.style.display='block';if(btn)btn.classList.add('active');if(id==='exInSubTab'){populateExtrusionReceiptPOs();renderExtrusionPoTable();populateExtrusionReceiptProfiles();}if(id==='exHistorySubTab')renderExtrusionHistory();}
+function switchExtrusionSubTab(id,btn){document.querySelectorAll('.extrusion-sub-content').forEach(x=>x.style.display='none');document.querySelectorAll('.extrusion-sub-btn').forEach(x=>x.classList.remove('active'));const el=document.getElementById(id);if(el)el.style.display='block';if(btn)btn.classList.add('active');if(id==='exInSubTab'){populateExtrusionReceiptPOs();renderExtrusionPoTable();populateExtrusionReceiptProfiles();}if(id==='exHistorySubTab')renderExtrusionHistory();if(id==='exCurrentPlSubTab')renderCurrentPlExtrusionRequirement(false);}
 function extrusionLen(v){const n=Number(String(v??'').replace(/mm/gi,'').trim());return Number.isFinite(n)&&n>0?n:0;}
 function extrusionMasterRows(){return (masterData||[]).filter(m=>String(m.profile||'').trim()&&extrusionLen(m.exLength)>0);}
 function extrusionRequiredByPo(){
@@ -11158,7 +11227,7 @@ async function loadExtrusionStockMovements(){
  }
 }
 function moveExtrusionStockSummaryToBottom(){const target=document.getElementById('exInSubTab');const planner=document.getElementById('exPoCards')?.closest('.card');const form=document.getElementById('exReceiptForm')?.closest('.card');if(target&&planner&&form&&planner.parentElement!==target)target.insertBefore(planner,form);const stockSection=document.getElementById('exStockSubTab');const stock=document.getElementById('exStockBody')?.closest('.card');if(stockSection&&stock&&stock.parentElement!==stockSection)stockSection.appendChild(stock);}
-function renderExtrusionModule(force=false){if(force&&!extrusionReceiptsLoaded){loadExtrusionReceipts(true);return;}moveExtrusionStockSummaryToBottom();populateExtrusionFilters();populateExtrusionReceiptProfiles();renderExtrusionStockTable();renderExtrusionPoTable();renderExtrusionHistory();}
+function renderExtrusionModule(force=false){if(force&&!extrusionReceiptsLoaded){loadExtrusionReceipts(true);return;}moveExtrusionStockSummaryToBottom();populateExtrusionFilters();populateExtrusionReceiptProfiles();renderExtrusionStockTable();renderExtrusionPoTable();renderExtrusionHistory();if(document.getElementById('exCurrentPlSubTab')?.style.display!=='none')renderCurrentPlExtrusionRequirement(false);}
 function populateExtrusionFilters(){const groups=extrusionStockSummary();const fill=(id,label,vals)=>{const s=document.getElementById(id);if(!s)return;const old=s.value;s.innerHTML=`<option value="">${label}</option>`;[...new Set(vals)].forEach(v=>s.add(new Option(v,v)));if([...s.options].some(o=>o.value===old))s.value=old;};fill('exFilterProfile','All Profiles',groups.map(g=>g.profile));fill('exFilterLength','All Lengths',groups.map(g=>String(g.exLength)));fill('exHistProfile','All Profiles',[...new Set(extrusionReceipts.map(r=>r.profile))].sort());}
 function renderExtrusionStockTable(){
  const body=document.getElementById('exStockBody');if(!body)return;
@@ -11301,6 +11370,48 @@ async function saveExtrusionStockMovement(){
   showToast(`Extrusion stock save failed: ${e?.message||'Check Supabase permissions and run supabase_extrusion_stock_ledger_v256.sql.'}`,'error');
  }finally{isAppBusy=false;}
 }
+// Current PL extrusion requirement report — read-only, sourced from active packing list + extrusion stock ledger.
+window.getCurrentPlExtrusionRequirementRows=function(){
+ try{if(typeof ensurePackingSelection==='function')ensurePackingSelection();}catch(e){}
+ const active=(typeof getActivePackingListSelection==='function')?getActivePackingListSelection():{month:activePackingMonth||'',container:activePackingContainer||''};
+ const records=(typeof getPackingContainerRecords==='function')?getPackingContainerRecords(active.month,active.container):[];
+ const groups=new Map(),unmatched=[];
+ records.forEach(r=>{
+  const profile=String(r?.profile||'').trim(),itemCode=String(r?.itemCode||'').trim(),cutLength=cleanLen(r?.length),pcs=Math.max(0,Number(r?.pcsQty)||0);
+  if(!profile||!cutLength||pcs<=0)return;
+  let master=masterData.find(m=>String(m.profile||'').trim().toLowerCase()===profile.toLowerCase()&&String(m.itemCode||'').trim().toLowerCase()===itemCode.toLowerCase()&&cleanLen(m.length)===cutLength);
+  if(!master)master=masterData.find(m=>String(m.profile||'').trim().toLowerCase()===profile.toLowerCase()&&cleanLen(m.length)===cutLength);
+  const plan=getExtrusionPlan(profile,master?.itemCode||itemCode,cutLength,pcs);
+  if(!plan.matched||!plan.exLength||!plan.pcsPerEx){unmatched.push({profile,itemCode,cutLength,pcs});return;}
+  const exLength=extrusionLen(plan.exLength),key=`${profile.toLowerCase()}|${exLength}`;
+  const g=groups.get(key)||{profile,exLength,required:0,currentPlPcs:0,cutLengths:new Set()};
+  g.required+=plan.requiredExtrusions;g.currentPlPcs+=pcs;g.cutLengths.add(cutLength);groups.set(key,g);
+ });
+ const stockMap=new Map();
+ (typeof extrusionStockSummary==='function'?extrusionStockSummary():[]).forEach(g=>stockMap.set(`${String(g.profile||'').trim().toLowerCase()}|${extrusionLen(g.exLength)}`,Math.max(0,Number(g.stock)||0)));
+ const rows=[...groups.values()].map(g=>{const available=stockMap.get(`${g.profile.toLowerCase()}|${g.exLength}`)||0;const shortage=Math.max(0,g.required-available);return {...g,available,shortage,status:shortage>0?'SHORT':available>=g.required?'AVAILABLE':'NO REQUIREMENT'};})
+  .sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);
+ return {rows,active,records,unmatched};
+};
+window.renderCurrentPlExtrusionRequirement=function(showToastAfter=false){
+ const result=window.getCurrentPlExtrusionRequirementRows(),rows=result.rows||[];
+ const label=document.getElementById('exCurrentPlLabel'),meta=document.getElementById('exCurrentPlMeta'),notice=document.getElementById('exCurrentPlNotice');
+ if(label)label.textContent=`${result.active.month||'-'} • ${result.active.container||'-'}`;
+ if(meta)meta.textContent=`${result.records.length} packing row(s) • ${rows.length} profile / extrusion-length line(s)`;
+ const required=rows.reduce((s,r)=>s+r.required,0),available=rows.reduce((s,r)=>s+r.available,0),short=rows.reduce((s,r)=>s+r.shortage,0);
+ const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=Number(v||0).toLocaleString();};
+ set('exCurrentPlRequired',required);set('exCurrentPlAvailable',available);set('exCurrentPlShort',short);set('exCurrentPlLines',rows.length);
+ if(notice){const messages=[];if(!extrusionReceiptsLoaded||!extrusionStockMovementsLoaded)messages.push('Extrusion stock ledger data is not fully loaded. Refresh the Extrusion page and confirm the Stock Summary loads before relying on available-stock values.');if(result.unmatched.length)messages.push(`${result.unmatched.length} packing line(s) could not be matched to Master Catalog extrusion length and are excluded from the calculation.`);notice.style.display=messages.length?'block':'none';notice.innerHTML=messages.map(m=>`<div><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(m)}</div>`).join('');}
+ const body=document.getElementById('exCurrentPlBody'),foot=document.getElementById('exCurrentPlFoot');
+ if(body)body.innerHTML=rows.length?rows.map(r=>`<tr><td><b>${escapeHtml(r.profile)}</b></td><td>${r.exLength.toLocaleString()} mm</td><td><b>${r.required.toLocaleString()}</b></td><td>${r.available.toLocaleString()}</td><td><span class="ex-current-short ${r.shortage>0?'is-short':'is-ok'}">${r.shortage.toLocaleString()}</span></td><td><span class="ex-status ${r.shortage>0?'short':'complete'}">${r.shortage>0?'SHORT':'AVAILABLE'}</span></td></tr>`).join(''):`<tr><td colspan="6" style="text-align:center;padding:22px;color:var(--text-muted);font-weight:700;">${result.records.length?'No valid extrusion requirements found for this PL. Check Master Catalog extrusion lengths.':'No packing rows found for the selected Current PL.'}</td></tr>`;
+ if(foot)foot.innerHTML=rows.length?`<tr><th colspan="2" style="text-align:right">TOTAL</th><th>${required.toLocaleString()}</th><th>${available.toLocaleString()}</th><th>${short.toLocaleString()}</th><th>${short?'SHORT':'READY'}</th></tr>`:'';
+ if(showToastAfter)showToast('Current PL extrusion requirement refreshed.','success');
+ return rows;
+};
+function currentPlExtrusionExportRows(){const {rows,active}=window.getCurrentPlExtrusionRequirementRows();const data=rows.map(r=>({'Profile':r.profile,'Extrusion Length (mm)':r.exLength,'Required Extrusion':r.required,'Available Stock Extrusion':r.available,'Short Extrusion':r.shortage,'Status':r.status,'Current PL PCS':r.currentPlPcs,'Cut Lengths (mm)':[...r.cutLengths].sort((a,b)=>a-b).join(', ')}));if(data.length){data.push({'Profile':'TOTAL','Extrusion Length (mm)':'','Required Extrusion':rows.reduce((s,r)=>s+r.required,0),'Available Stock Extrusion':rows.reduce((s,r)=>s+r.available,0),'Short Extrusion':rows.reduce((s,r)=>s+r.shortage,0),'Status':'','Current PL PCS':rows.reduce((s,r)=>s+r.currentPlPcs,0),'Cut Lengths (mm)':''});}return {data,active,rows};}
+window.exportCurrentPlExtrusionExcel=function(){const {data,active,rows}=currentPlExtrusionExportRows();if(!rows.length)return showToast('No Current PL extrusion rows to export.','warning');exportTableToExcel(data,`AIS_Current_PL_Extrusion_${String(active.container||'PL').replace(/\s+/g,'_')}`,'Current PL Extrusion');};
+window.exportCurrentPlExtrusionPdf=function(){const {data,active,rows}=currentPlExtrusionExportRows();if(!rows.length)return showToast('No Current PL extrusion rows to export.','warning');exportDataToPdf(data,'AIS_Current_PL_Extrusion','AIS Tracker — Current PL Extrusion Requirement',`${active.month||''} • ${active.container||''} • Required: ${rows.reduce((s,r)=>s+r.required,0)} • Available: ${rows.reduce((s,r)=>s+r.available,0)} • Short: ${rows.reduce((s,r)=>s+r.shortage,0)}`);};
+
 function renderExtrusionHistory(){const body=document.getElementById('exHistoryBody');if(!body)return;const p=document.getElementById('exHistProfile')?.value||'',q=(document.getElementById('exHistSearch')?.value||'').toLowerCase();const rows=extrusionReceipts.filter(r=>(!p||r.profile===p)&&(!q||`${r.po_number||r.poNumber||''} ${r.profile} ${r.extrusionLength} ${r.trolleyNo} ${r.note}`.toLowerCase().includes(q)));body.innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHtml(r.receiptDate||'-')}</td><td><b>${escapeHtml(r.po_number||r.poNumber||'Legacy shared stock')}</b></td><td><b>${escapeHtml(r.profile)}</b></td><td>${r.extrusionLength} mm</td><td>${escapeHtml(r.trolleyNo)}</td><td><b>${r.inQty.toLocaleString()}</b></td><td>${escapeHtml(r.note||'-')}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:white" onclick="editExtrusionReceipt('${String(r.id)}')"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteExtrusionReceipt('${String(r.id)}')"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):'<tr><td colspan="8">No extrusion IN records found.</td></tr>';}
 function editExtrusionReceipt(id){const r=extrusionReceipts.find(x=>String(x.id)===String(id));if(!r)return;switchExtrusionSubTab('exInSubTab',document.querySelectorAll('.extrusion-sub-btn')[1]);document.getElementById('exEditId').value=r.id;document.getElementById('exReceiptDate').value=r.receiptDate||'';populateExtrusionReceiptPOs();document.getElementById('exReceiptPO').value=String(r.po_number||r.poNumber||'');populateExtrusionReceiptProfiles();document.getElementById('exReceiptProfile').value=r.profile;updateExtrusionLengthOptions();document.getElementById('exReceiptLength').value=String(r.extrusionLength);document.getElementById('exTrolley').value=r.trolleyNo;document.getElementById('exInQty').value=r.inQty;document.getElementById('exNote').value=r.note;document.getElementById('exSaveBtn').innerHTML='<i class="fa-solid fa-check"></i> Update IN';}
 async function deleteExtrusionReceipt(id){if(currentUserRole!=='Admin')return showToast('Admin access is required to delete receipts.','warning');const r=extrusionReceipts.find(x=>String(x.id)===String(id));if(!r||!confirm(`Delete extrusion IN record for ${r.profile}, ${r.extrusionLength} mm, qty ${r.inQty}? Stock balance will be recalculated.`))return;try{const {error}=await supabaseClient.from('extrusion_receipts').delete().eq('id',id);if(error)throw error;await loadExtrusionReceipts(false);showToast('Extrusion receipt deleted; balance recalculated.','success');}catch(e){showToast('Could not delete receipt. Check table permissions.','error');}}
