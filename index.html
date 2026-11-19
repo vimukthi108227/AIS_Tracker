@@ -28,7 +28,7 @@
       }
     });
   </script>
-  <link rel="stylesheet" href="style.css?v=20261118-extrusion-stock-ledger-v256">
+  <link rel="stylesheet" href="style.css?v=20261119-final-crate-report-v261">
 
 <style id="ais-nav-v9-theme">
   body{font-family:"Inter","Plus Jakarta Sans",system-ui,sans-serif;}
@@ -1095,8 +1095,14 @@
           <div class="table-container pp-saved-crate-wrap"><table class="pp-table pp-saved-crate-table"><thead><tr><th><i class="fa-solid fa-hashtag"></i> Crate No.</th><th><i class="fa-solid fa-file-lines"></i> PO</th><th><i class="fa-solid fa-barcode"></i> Profile(s)</th><th>Item Code(s)</th><th>Length(s) mm</th><th><i class="fa-solid fa-cubes"></i> PCS Qty</th><th>PCS/Box</th><th><i class="fa-solid fa-box"></i> Box Qty</th><th><i class="fa-solid fa-arrows-left-right"></i> Width (mm)</th><th><i class="fa-solid fa-ruler-horizontal"></i> Length (mm)</th><th><i class="fa-solid fa-arrows-up-down"></i> Height (mm)</th><th>Weight (kg)</th><th>3D View</th><th>Actions</th></tr></thead><tbody id="ppCratePlanBody"><tr><td colspan="14">Select a Next PL line and allocate PCS to create the first crate.</td></tr></tbody></table></div><div id="ppSmartCompletionSummary" class="pp-note" style="display:none;margin-top:12px"></div>
         </div>
         <div class="card pp-full-detail-card">
-          <div class="pp-section-head pp-full-detail-head"><div><h3><i class="fa-solid fa-table-list"></i> Full Crate Details</h3><p>Identical crates are grouped by crate number without Roman suffixes. PCS is shown per PO per crate; Total PCS = PCS × number of matching crates.</p></div><div class="pp-actions"><button class="btn btn-accent" onclick="ppExportFullCrateDetailsExcel()"><i class="fa-solid fa-file-excel"></i> Excel</button><button class="btn" onclick="ppExportFullCrateDetailsPdf()"><i class="fa-solid fa-file-pdf"></i> PDF</button><button class="btn" onclick="ppPrintFullCrateDetails()"><i class="fa-solid fa-print"></i> Print</button></div></div>
-          <div class="table-container pp-full-detail-wrap"><table class="pp-table pp-full-detail-table"><thead><tr><th>Crate No.</th><th>PO Number</th><th>Profile</th><th>Item Code</th><th>Profile Length (mm)</th><th>Crate Width (mm)</th><th>Crate Height (mm)</th><th>Crate Length (mm)</th><th>Number of Crates</th><th>PCS / Crate (PO)</th><th>Total PCS</th></tr></thead><tbody id="ppFullCrateDetailsBody"><tr><td colspan="11">Crate details will appear here after crates are created.</td></tr></tbody><tfoot id="ppFullCrateDetailsFoot"></tfoot></table></div>
+          <div class="pp-section-head pp-full-detail-head"><div><h3><i class="fa-solid fa-table-list"></i> Final Crate List — Complete Details</h3><p>Matching physical crates are grouped only when their crate number, dimensions and complete contents match. Weight is the aluminium profile weight and excludes timber tare.</p></div><div class="pp-actions"><button class="btn btn-accent" onclick="ppExportFullCrateDetailsExcel()"><i class="fa-solid fa-file-excel"></i> Download Excel</button><button class="btn" onclick="ppExportFullCrateDetailsPdf()"><i class="fa-solid fa-file-pdf"></i> Download PDF</button><button class="btn" onclick="ppPrintFullCrateDetails()"><i class="fa-solid fa-print"></i> Print</button></div></div>
+          <div class="pp-full-detail-kpis">
+            <div class="pp-full-detail-kpi"><small>Total Boxes</small><b id="ppFullTotalBoxes">0</b></div>
+            <div class="pp-full-detail-kpi"><small>Total Crates</small><b id="ppFullTotalCrates">0</b></div>
+            <div class="pp-full-detail-kpi"><small>Total PCS</small><b id="ppFullTotalPcs">0</b></div>
+            <div class="pp-full-detail-kpi"><small>Total Weight</small><b id="ppFullTotalWeight">0.0 kg</b></div>
+          </div>
+          <div class="table-container pp-full-detail-wrap"><table class="pp-table pp-full-detail-table"><thead><tr><th>Crate No.</th><th>PO Number</th><th>Profile</th><th>Item Code</th><th>Profile Length (mm)</th><th>Crate Width (mm)</th><th>Crate Height (mm)</th><th>Crate Length (mm)</th><th>Number of Crates</th><th>PCS / Crate</th><th>Total Qty (PCS)</th><th>Boxes / Crate</th><th>Total Boxes</th><th>Crate Weight (kg)</th><th>Total Weight (kg)</th></tr></thead><tbody id="ppFullCrateDetailsBody"><tr><td colspan="15">Crate details will appear here after crates are created.</td></tr></tbody><tfoot id="ppFullCrateDetailsFoot"></tfoot></table></div>
           <div id="ppFullCrateDetailsSummary" class="pp-full-detail-summary">No crate details to display.</div>
         </div>
       </div>
@@ -1215,7 +1221,7 @@
 .pp-container-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;align-items:end;margin:12px 0}.pp-container-controls .form-group{margin:0}.pp-container-controls-secondary{grid-template-columns:minmax(240px,1.5fr) repeat(3,minmax(130px,auto));align-items:center}.pp-container-check{display:flex;align-items:center;gap:8px;font-weight:700;color:#23465c;padding:10px 0}.pp-container-check input{width:18px;height:18px}.pp-container-stats{grid-template-columns:repeat(auto-fit,minmax(145px,1fr))}.pp-container-layout-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:14px;margin-top:14px}.pp-container-visual{min-height:400px;overflow:auto}.pp-container-selected-meta{background:#f0f8fb;border:1px solid #cde0ea;border-radius:10px;padding:12px;margin:10px 0;line-height:1.7}.pp-position-controls{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}.pp-container-exports{margin:14px 0}.pp-container-table{min-width:1000px}.pp-container-table td,.pp-container-table th{white-space:nowrap}.pp-container-visual svg{width:100%;height:auto;min-width:640px;display:block}.pp-container-planner .pp-note{margin-top:10px}@media(max-width:850px){.pp-container-layout-grid{grid-template-columns:1fr}.pp-container-controls-secondary{grid-template-columns:1fr 1fr}.pp-container-visual{min-height:280px}}
 </style>
 
-<script src="script.js?v=20261118-extrusion-modal-stack-fix-v260"></script>
+<script src="script.js?v=20261119-final-crate-report-v261"></script>
 
 <script>
 (function(){

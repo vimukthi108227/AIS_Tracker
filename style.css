@@ -3856,3 +3856,21 @@ body.dark-mode table tbody tr:hover td,body.dark-mode table tbody tr:hover th{ba
 .next-pl-clear-crate-btn{background:linear-gradient(135deg,#fff1f2,#ffe4e6)!important;color:#be123c!important;border:1px solid #fecdd3!important;box-shadow:0 3px 10px rgba(190,24,93,.08)}
 .next-pl-clear-crate-btn:hover{background:#ffe4e6!important;transform:translateY(-1px)}
 .pp-reset-crate-plan{background:#fff1f2!important;color:#be123c!important;border:1px solid #fecdd3!important}
+
+
+/* AIS Tracker V3.0 — Final Crate List report */
+.pp-full-detail-kpis{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin:14px 0 16px}
+.pp-full-detail-kpi{display:flex;flex-direction:column;gap:5px;padding:14px 16px;border:1px solid var(--emerald-border);border-radius:12px;background:linear-gradient(135deg,rgba(236,253,245,.96),rgba(240,253,250,.9));min-width:0}
+.pp-full-detail-kpi small{font-size:11px;font-weight:800;color:#477066;text-transform:uppercase;letter-spacing:.45px}
+.pp-full-detail-kpi b{font-size:22px;line-height:1.25;color:#065f46;font-variant-numeric:tabular-nums}
+.pp-full-detail-wrap{overflow-x:auto!important}
+.pp-full-detail-table{min-width:1500px;width:100%;font-size:12px}
+.pp-full-detail-table th,.pp-full-detail-table td{padding:8px 9px;white-space:nowrap;vertical-align:middle}
+.pp-full-detail-table tfoot td{font-weight:900;background:#d1fae5;color:#064e3b;border-top:2px solid #059669}
+.pp-full-detail-summary{margin-top:12px;padding:12px 14px;border:1px solid var(--emerald-border);border-radius:10px;background:var(--emerald-light);font-size:12px;line-height:1.6;color:var(--text-color)}
+body.dark-mode .pp-full-detail-kpi{background:linear-gradient(135deg,rgba(6,78,59,.42),rgba(15,23,42,.9));border-color:#166534}
+body.dark-mode .pp-full-detail-kpi small{color:#a7f3d0}
+body.dark-mode .pp-full-detail-kpi b{color:#6ee7b7}
+body.dark-mode .pp-full-detail-table tfoot td{background:#064e3b;color:#ecfdf5}
+@media(max-width:900px){.pp-full-detail-kpis{grid-template-columns:repeat(2,minmax(130px,1fr))}.pp-full-detail-kpi{padding:11px}.pp-full-detail-kpi b{font-size:19px}.pp-full-detail-table{min-width:1450px}}
+@media(max-width:480px){.pp-full-detail-kpis{gap:8px}.pp-full-detail-kpi small{font-size:10px}.pp-full-detail-kpi b{font-size:17px}}

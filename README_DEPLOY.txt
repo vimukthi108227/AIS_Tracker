@@ -1,95 +1,41 @@
-AIS Tracker V2.59 — Manual Next PL + Extrusion Stock Fix
-======================================================
+AIS TRACKER — FINAL CRATE LIST UPDATE (V3.0)
 
-New Extrusion Stock Summary features
-------------------------------------
-- Stock rows are generated from Master Catalog Profile + Extrusion Length,
-  so lengths remain visible even when there is no open PO or no stock yet.
-- Received extrusion receipts already stored in extrusion_receipts remain
-  included as opening/current stock.
-- New Stock IN records add extrusion quantity.
-- Stock OUT records issue extrusion quantity and cannot exceed available stock.
-- Click the Stock quantity in the table to set/correct the physical stock
-  balance. The difference is recorded as an adjustment; no prior receipt or
-  movement record is overwritten.
-- Extrusion Balance Qty = Current Stock Qty - Total Required Qty.
-- The stock table continues to show Profile, Extrusion Length, Total Required,
-  Current Stock, Extrusion Balance Qty and status.
+What changed
+- Enhanced the existing Full Crate Details report into a Final Crate List.
+- Columns include Crate No., PO Number, Profile, Item Code, Profile Length,
+  Crate Width, Crate Height, Crate Length, Number of Crates, PCS / Crate,
+  Total Qty (PCS), Boxes / Crate, Total Boxes, Crate Weight (kg), and Total
+  Weight (kg).
+- Adds summary totals for Total Boxes, Total Crates, Total PCS, and Total Weight.
+- Adds Excel and PDF downloads and a landscape A3 print layout.
+- Groups repeated Roman-suffix crates only when the base crate number,
+  dimensions, and complete crate contents/quantities match.
+- Report is read-only. It does not change saved crate records, localStorage
+  crate data, Supabase data, table schemas, or existing crate planning flows.
+- Crate Weight is calculated from profile unit weight × PCS. Timber tare is
+  excluded; enter tare separately in the existing Container Planner if gross
+  cargo weight is required.
 
-Supabase setup
---------------
-Run supabase_extrusion_stock_ledger_v256.sql in Supabase SQL Editor once.
-It creates only the new extrusion_stock_movements table and indexes/policies.
-It does not modify or delete existing PO, Master Catalog, shipment or
-extrusion_receipts records.
+Installation (GitHub Pages)
+1. Download and extract this ZIP.
+2. Keep a backup of the currently deployed AIS Tracker folder and database.
+3. In the AIS_Tracker GitHub repository, replace index.html, script.js and
+   style.css with the files from this package.
+4. Upload the included Alumex image assets to the repository root, keeping
+   the filenames exactly as provided.
+5. Commit and push the changes to the same GitHub Pages branch.
+6. Open https://vimukthi108227.github.io/AIS_Tracker/ and hard-refresh
+   (Ctrl + F5). Navigate to Crate Planning 2D > Crate List Generate and
+   scroll below Saved Crate List to Final Crate List — Complete Details.
+7. Test a repeated crate group (e.g. 1-i to 1-iv), a crate with multiple PO
+   lines, crates with different PCS, and crates with different dimensions.
+   Confirm Excel and PDF totals match the on-screen summary.
 
-You may alternatively run the updated supabase_extrusion_module.sql; it is
-idempotent and now includes the new additive stock ledger migration.
-
-Access
-------
-Stock IN / OUT / balance correction requires Admin or Planner role.
-Existing PO-wise receipt workflow and receipt history are retained.
-
-GitHub deployment
------------------
-Upload/replace the root index.html, script.js, style.css and the SQL migration
-file(s) from this ZIP. After deployment, run the SQL migration in Supabase,
-then hard refresh the website (Ctrl+F5).
-
-Validation
-----------
-JavaScript syntax and HTML structure checks passed; ZIP integrity checked.
-Live Supabase/browser integration was not executed in this environment.
-
-
-V257 — Clear Next PL → Crate Plan
----------------------------------
-- Added a visible "Clear Crate Plan" action beside "Add Selected Next PL to Crate Plan".
-- The same clear action is available in the Crate List Generate tab.
-- Clear asks for confirmation and clears saved crate allocations / generated crate
-  records only. It does NOT delete the selected Next Planning PL quantities,
-  Production Orders, Master Catalog, or Crate Master Data.
-- The empty crate-plan state is saved to the existing crate-plan cloud storage
-  and local cache so it stays cleared after refresh/login.
-
-
-V259 — Manual Next PL + Extrusion Stock Reliability
-----------------------------------------------------
-- Added an explicit Manual Planning Mode checkbox before the manual Profile +
-  Length planner. Enable it before entering manual Next PL quantities.
-- Added a separate review table showing manually added Profile, Item Code,
-  Length, PCS, unit weight and calculated total weight.
-- Added a Remove action for each manual Profile / Length line. Removing a line
-  sets its temporary Next PL allocation to zero; it does not delete PO records.
-- Added an 18,000 kg warning based on Current PL weight plus all selected Next
-  PL quantities. The warning shows the excess and asks the user to reduce PCS.
-- Manual Add / Update re-resolves matching PO lines from live data and allocates
-  FIFO, preventing stale row-key submissions and duplicate increments.
-- Extrusion stock table now clearly reports when its stock movement ledger
-  cannot load. IN / OUT / Edit are blocked until the ledger migration is ready,
-  avoiding misleading zero balances.
-- Stock movement save verifies that the ledger reload succeeds before showing
-  a success message. The actual database error is shown when it fails.
-- Stock quantity Edit remains an additive SET adjustment: it records only the
-  difference and does not overwrite old receipt or movement records.
-
-Important Supabase step
------------------------
-After uploading, run supabase_extrusion_stock_ledger_v256.sql in Supabase SQL
-Editor if it has not already been run. It is safe to run repeatedly and adds
-only the stock movement table/indexes/policies/REST grants. Existing data is
-not deleted or rewritten. Then refresh the site with Ctrl+F5.
-
-
-V260 — Extrusion Stock IN / OUT / Edit Dialog Fix
-------------------------------------------------
-- Fixed the stock IN, OUT and quantity Edit dialog appearing as a dimmed
-  screen without its form. The dialog is moved to the document body before
-  opening, outside transformed/overflow tab containers, and the form is
-  explicitly layered above its backdrop.
-- Restored page scrolling when the dialog closes and added Escape-to-close.
-- No database schema or existing records are changed by this UI fix.
-
-Validation: JavaScript syntax check and HTML parser check passed; ZIP integrity
-was checked. Live Supabase/browser testing was not available in this build.
+Important
+- This package contains the updated front-end files; it does not deploy to
+  GitHub automatically.
+- No Supabase SQL migration is required for this report update.
+- Full live Supabase/browser end-to-end testing has not been performed.
+- The website references ais_2.jpg as an optional login background image,
+  but that image was not among the supplied current assets. The Alumex
+  background image is included as alumex-global.png.

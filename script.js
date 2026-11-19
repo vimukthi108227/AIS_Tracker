@@ -10041,8 +10041,8 @@ ppNewAddToCrate=function(){
 function ppV29Rows(v){return Math.max(1,Math.min(3,Math.floor(ppNum(v)||1)));}
 window.ppV29Rows=ppV29Rows;
 
-/* AIS Tracker V2.10 — grouped full crate details report and exports.
-   This is a read-only report over existing crate records; it does not rewrite saved data. */
+/* AIS Tracker V2.10+ — Final Crate List report.
+   Read-only report over saved crate rows: no crate records or database schema are changed. */
 function ppFullDetailsNormalizeId(id){
   const display=typeof ppDisplayCrateId==='function'?ppDisplayCrateId(id):String(id||'');
   const match=String(display).match(/^(\d+)(?:-([ivxlcdm]+))?$/i);
@@ -10056,12 +10056,21 @@ function ppFullDetailsCrateMetrics(crate){
   const height=Math.max(0,ppNum(crate?.overallH)||(packing+ppNum(typeof PP_LEG_HEIGHT!=='undefined'?PP_LEG_HEIGHT:100)));
   return {width,length,height};
 }
+function ppFullDetailsItemMetrics(it){
+  const pcs=Math.max(0,Math.floor(ppNum(it?.pcs)));
+  const pcsPerBox=Math.max(0,ppNum(it?.pcsPerBox));
+  const boxes=pcsPerBox>0?Math.ceil(pcs/pcsPerBox):Math.max(0,Math.ceil(ppNum(it?.boxes)));
+  const weight=pcs*Math.max(0,ppNum(it?.unitWeight));
+  return {pcs,pcsPerBox,boxes,weight};
+}
 function ppFullDetailsItemsSignature(crate){
-  return (crate?.items||[]).map(it=>({
-    po:String(it.po??''),profile:String(it.profile??''),itemCode:String(it.itemCode??''),length:ppNum(it.length),
-    pcs:Math.max(0,Math.floor(ppNum(it.pcs))),pcsPerBox:Math.max(0,ppNum(it.pcsPerBox)),
-    boxes:Math.max(0,ppNum(it.boxes)),unitWeight:Math.round(ppNum(it.unitWeight)*10000)/10000
-  })).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  return (crate?.items||[]).map(it=>{
+    const m=ppFullDetailsItemMetrics(it);
+    return {
+      po:String(it.po??''),profile:String(it.profile??''),itemCode:String(it.itemCode??''),length:ppNum(it.length),
+      pcs:m.pcs,pcsPerBox:m.pcsPerBox,boxes:m.boxes,unitWeight:Math.round(ppNum(it.unitWeight)*10000)/10000
+    };
+  }).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
 }
 function ppFullCrateDetailsData(){
   const groups=new Map();
@@ -10074,62 +10083,90 @@ function ppFullCrateDetailsData(){
   });
   const rows=[];
   for(const group of groups.values()){
-    const crateCount=group.indexes.length;
-    const metrics=group.metrics;
-    const items=(group.items||[]).filter(it=>Math.max(0,ppNum(it.pcs))>0);
+    const crateCount=group.indexes.length,metrics=group.metrics;
+    const items=(group.items||[]).filter(it=>ppFullDetailsItemMetrics(it).pcs>0);
     if(!items.length){
       rows.push({
         'Crate No.':group.base,'PO Number':'—','Profile':'—','Item Code':'—','Profile Length (mm)':'—',
         'Crate Width (mm)':metrics.width||'—','Crate Height (mm)':metrics.height||'—','Crate Length (mm)':metrics.length||'—',
-        'Number of Crates':crateCount,'PCS / Crate (PO)':0,'Total PCS':0
+        'Number of Crates':crateCount,'PCS / Crate':0,'Total Qty (PCS)':0,'Boxes / Crate':0,'Total Boxes':0,
+        'Crate Weight (kg)':0,'Total Weight (kg)':0
       });
       continue;
     }
     items.forEach(it=>{
-      const pcs=Math.max(0,Math.floor(ppNum(it.pcs)));
+      const m=ppFullDetailsItemMetrics(it);
       rows.push({
         'Crate No.':group.base,'PO Number':it.po||'—','Profile':it.profile||'—','Item Code':it.itemCode||'—',
         'Profile Length (mm)':it.length??'—','Crate Width (mm)':metrics.width||'—','Crate Height (mm)':metrics.height||'—',
-        'Crate Length (mm)':metrics.length||'—','Number of Crates':crateCount,'PCS / Crate (PO)':pcs,
-        'Total PCS':pcs*crateCount
+        'Crate Length (mm)':metrics.length||'—','Number of Crates':crateCount,'PCS / Crate':m.pcs,
+        'Total Qty (PCS)':m.pcs*crateCount,'Boxes / Crate':m.boxes,'Total Boxes':m.boxes*crateCount,
+        'Crate Weight (kg)':Number(m.weight.toFixed(2)),'Total Weight (kg)':Number((m.weight*crateCount).toFixed(2))
       });
     });
   }
   return rows;
+}
+function ppFullDetailsTotals(rows){
+  const totalCrates=(Array.isArray(ppSmartCrates)?ppSmartCrates:[]).length;
+  return {
+    totalCrates,
+    totalPcs:(rows||[]).reduce((s,r)=>s+Math.max(0,ppNum(r['Total Qty (PCS)'])),0),
+    totalBoxes:(rows||[]).reduce((s,r)=>s+Math.max(0,ppNum(r['Total Boxes'])),0),
+    totalWeight:(rows||[]).reduce((s,r)=>s+Math.max(0,ppNum(r['Total Weight (kg)'])),0)
+  };
 }
 function ppRenderFullCrateDetails(){
   const body=document.getElementById('ppFullCrateDetailsBody');
   if(!body)return;
   const rows=ppFullCrateDetailsData(),foot=document.getElementById('ppFullCrateDetailsFoot'),summary=document.getElementById('ppFullCrateDetailsSummary');
   const esc=v=>typeof ppEsc==='function'?ppEsc(v):String(v??'');
-  if(!rows.length){body.innerHTML='<tr><td colspan="11">No crate details yet. Add PCS to crates to build this report.</td></tr>';if(foot)foot.innerHTML='';if(summary)summary.textContent='No crate details to display.';return;}
-  // Merge the Crate No. cell vertically when consecutive detail rows belong to the same physical crate.
-  // Keep the underlying records untouched; only the report presentation is merged.
+  const totals=ppFullDetailsTotals(rows);
+  const set=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=value;};
+  set('ppFullTotalBoxes',totals.totalBoxes.toLocaleString());
+  set('ppFullTotalCrates',totals.totalCrates.toLocaleString());
+  set('ppFullTotalPcs',totals.totalPcs.toLocaleString());
+  set('ppFullTotalWeight',totals.totalWeight.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' kg');
+  if(!rows.length){
+    body.innerHTML='<tr><td colspan="15">No crate details yet. Add PCS to crates to build this report.</td></tr>';
+    if(foot)foot.innerHTML='';
+    if(summary)summary.textContent='No crate details to display.';
+    return;
+  }
+  // Merge crate-number cells for consecutive PO/profile rows belonging to the same grouped crate design.
   const cols=Object.keys(rows[0]),noCol='Crate No.',rendered=[];
   for(let i=0;i<rows.length;){
     let end=i+1;
-    while(end<rows.length && String(rows[end][noCol]??'')===String(rows[i][noCol]??'')) end++;
+    while(end<rows.length && String(rows[end][noCol]??'')===String(rows[i][noCol]??''))end++;
     for(let j=i;j<end;j++){
       const other=cols.filter(k=>k!==noCol).map(k=>`<td>${esc(rows[j][k])}</td>`).join('');
-      rendered.push(`<tr>${j===i?`<td class=\"pp-merged-crate\" rowspan=\"${end-i}\">${esc(rows[i][noCol])}</td>`:''}${other}</tr>`);
+      rendered.push(`<tr>${j===i?`<td class="pp-merged-crate" rowspan="${end-i}">${esc(rows[i][noCol])}</td>`:''}${other}</tr>`);
     }
     i=end;
   }
   body.innerHTML=rendered.join('');
-  const totalCrates=(Array.isArray(ppSmartCrates)?ppSmartCrates:[]).length;
-  const totalPcs=rows.reduce((s,r)=>s+Math.max(0,ppNum(r['Total PCS'])),0);
-  if(foot)foot.innerHTML=`<tr><td colspan="8">TOTAL</td><td>${totalCrates.toLocaleString()}</td><td>—</td><td>${totalPcs.toLocaleString()}</td></tr>`;
-  if(summary)summary.textContent=`${totalCrates.toLocaleString()} physical crate(s) · ${rows.length.toLocaleString()} PO/profile detail row(s) · Total PCS across all matching crates: ${totalPcs.toLocaleString()}. Roman suffixes are grouped only when crate number, dimensions and complete contents match.`;
+  if(foot)foot.innerHTML=`<tr><td colspan="8">TOTAL</td><td>${totals.totalCrates.toLocaleString()}</td><td>—</td><td>${totals.totalPcs.toLocaleString()}</td><td>—</td><td>${totals.totalBoxes.toLocaleString()}</td><td>—</td><td>${totals.totalWeight.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`;
+  if(summary)summary.textContent=`${totals.totalCrates.toLocaleString()} physical crate(s) · ${totals.totalBoxes.toLocaleString()} box(es) · ${rows.length.toLocaleString()} PO/profile detail row(s) · ${totals.totalPcs.toLocaleString()} PCS · ${totals.totalWeight.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} kg profile weight. Timber tare is excluded. Roman-suffix crates are grouped only when crate number, dimensions and complete contents match.`;
 }
 function ppFullDetailsRowsForExport(rows){
-  // The XLS/PDF/print copy uses a blank continuation cell instead of repeating the same crate number.
   const copy=rows.map(r=>({...r}));let previous=null;
   for(const row of copy){
     const key=String(row['Crate No.']??'');
-    if(key===previous) row['Crate No.']='';
+    if(key===previous)row['Crate No.']='';
     previous=key;
   }
   return copy;
+}
+function ppFullDetailsExportRows(rows){
+  const copy=ppFullDetailsRowsForExport(rows),t=ppFullDetailsTotals(rows);
+  const total={};
+  Object.keys(rows[0]||{}).forEach(k=>total[k]='');
+  total['Crate No.']='TOTAL';
+  total['Number of Crates']=t.totalCrates;
+  total['Total Qty (PCS)']=t.totalPcs;
+  total['Total Boxes']=t.totalBoxes;
+  total['Total Weight (kg)']=Number(t.totalWeight.toFixed(2));
+  return [...copy,total];
 }
 function ppFullDetailsRequireRows(){
   const rows=ppFullCrateDetailsData();
@@ -10137,37 +10174,47 @@ function ppFullDetailsRequireRows(){
   return rows;
 }
 function ppExportFullCrateDetailsExcel(){
-  const sourceRows=ppFullDetailsRequireRows();if(!sourceRows)return;const rows=ppFullDetailsRowsForExport(sourceRows);
-  if(typeof exportTableToExcel==='function')exportTableToExcel(rows,'AIS_Full_Crate_Details','Full Crate Details');
+  const sourceRows=ppFullDetailsRequireRows();if(!sourceRows)return;
+  const rows=ppFullDetailsExportRows(sourceRows);
+  if(typeof exportTableToExcel==='function')exportTableToExcel(rows,'AIS_Final_Crate_List','Final Crate List');
   else{
     const cols=Object.keys(rows[0]),escape=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const html=`<!doctype html><html><head><meta charset="utf-8"></head><body><table border="1"><thead><tr>${cols.map(c=>`<th>${escape(c)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${escape(r[c])}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
-    const url=URL.createObjectURL(new Blob(['\ufeff',html],{type:'application/vnd.ms-excel;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='AIS_Full_Crate_Details.xls';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    const url=URL.createObjectURL(new Blob(['\ufeff',html],{type:'application/vnd.ms-excel;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='AIS_Final_Crate_List.xls';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
 }
 function ppExportFullCrateDetailsPdf(){
-  const sourceRows=ppFullDetailsRequireRows();if(!sourceRows)return;const rows=ppFullDetailsRowsForExport(sourceRows);
-  if(typeof exportDataToPdf==='function')exportDataToPdf(rows,'AIS_Full_Crate_Details','AIS Tracker — Full Crate Details','Crate dimensions and PCS totals grouped by matching crate design');
-  else ppPrintFullCrateDetails();
+  const sourceRows=ppFullDetailsRequireRows();if(!sourceRows)return;
+  const rows=ppFullDetailsExportRows(sourceRows);
+  if(!window.jspdf||!window.jspdf.jsPDF){showToast('PDF library is not loaded. Please check the internet connection.','error');return;}
+  const doc=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a3'});
+  if(typeof doc.autoTable!=='function'){showToast('PDF table plugin is not loaded. Please check the internet connection.','error');return;}
+  const cols=Object.keys(rows[0]),body=rows.map(row=>cols.map(key=>row[key]===null||row[key]===undefined?'':String(row[key])));
+  doc.setFont('helvetica','bold');doc.setFontSize(16);doc.text('AIS Tracker — Final Crate List',12,14);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);
+  doc.text('Generated: '+new Date().toLocaleString('en-GB')+' | Profile weight; timber tare excluded',12,20);
+  doc.autoTable({head:[cols],body,startY:25,theme:'grid',styles:{font:'helvetica',fontSize:7,cellPadding:2,overflow:'linebreak'},headStyles:{fillColor:[6,78,59],textColor:255,fontStyle:'bold'},alternateRowStyles:{fillColor:[240,253,244]},margin:{left:10,right:10}});
+  doc.save('AIS_Final_Crate_List.pdf');
+  showToast('Final Crate List PDF downloaded.','success');
 }
 function ppPrintFullCrateDetails(){
-  const sourceRows=ppFullDetailsRequireRows();if(!sourceRows)return;const rows=ppFullDetailsRowsForExport(sourceRows);
+  const sourceRows=ppFullDetailsRequireRows();if(!sourceRows)return;
+  const rows=ppFullDetailsRowsForExport(sourceRows),totals=ppFullDetailsTotals(sourceRows);
   const w=window.open('','_blank');
-  if(!w){alert('Please allow pop-ups to print the full crate details.');return;}
+  if(!w){alert('Please allow pop-ups to print the final crate list.');return;}
   const cols=Object.keys(rows[0]),esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  const totalCrates=(Array.isArray(ppSmartCrates)?ppSmartCrates:[]).length,totalPcs=rows.reduce((s,r)=>s+Math.max(0,ppNum(r['Total PCS'])),0);
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>AIS Tracker — Full Crate Details</title><style>body{font:11px Arial,sans-serif;color:#17364c;padding:14px}h1{font-size:18px;margin:0 0 6px}p{color:#52677b}table{border-collapse:collapse;width:100%;font-size:10px}th,td{border:1px solid #a9bfcd;padding:6px;text-align:left}th{background:#075b63;color:#fff}tbody tr:nth-child(even){background:#eff6f9}tfoot{font-weight:bold;background:#e5f2f7}@page{size:landscape A4;margin:8mm}.meta{margin-bottom:12px}</style></head><body><h1>AIS Tracker — Full Crate Details</h1><p class="meta">Generated ${esc(new Date().toLocaleString())} · Physical crates: ${totalCrates} · Total PCS: ${totalPcs.toLocaleString()}</p><table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${esc(r[c])}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="8">TOTAL</td><td>${totalCrates}</td><td>—</td><td>${totalPcs.toLocaleString()}</td></tr></tfoot></table><script>window.onload=()=>window.print();<\/script></body></html>`);
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>AIS Tracker — Final Crate List</title><style>body{font:10px Arial,sans-serif;color:#17364c;padding:14px}h1{font-size:18px;margin:0 0 6px}p{color:#52677b}table{border-collapse:collapse;width:100%;font-size:8px}th,td{border:1px solid #a9bfcd;padding:5px;text-align:left;white-space:nowrap}th{background:#075b63;color:#fff}tbody tr:nth-child(even){background:#eff6f9}tfoot{font-weight:bold;background:#e5f2f7}@page{size:landscape A3;margin:8mm}.meta{margin-bottom:12px}</style></head><body><h1>AIS Tracker — Final Crate List</h1><p class="meta">Generated ${esc(new Date().toLocaleString())} · Total Boxes: ${totals.totalBoxes.toLocaleString()} · Total Crates: ${totals.totalCrates.toLocaleString()} · Total PCS: ${totals.totalPcs.toLocaleString()} · Total Weight: ${totals.totalWeight.toFixed(2)} kg (profile weight; timber tare excluded)</p><table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${esc(r[c])}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="8">TOTAL</td><td>${totals.totalCrates}</td><td>—</td><td>${totals.totalPcs.toLocaleString()}</td><td>—</td><td>${totals.totalBoxes.toLocaleString()}</td><td>—</td><td>${totals.totalWeight.toFixed(2)}</td></tr></tfoot></table><script>window.onload=()=>window.print();<\/script></body></html>`);
   w.document.close();
 }
 const ppV210OriginalRenderCrateList=ppSmartRenderCrateList;
 ppSmartRenderCrateList=function(){
   const result=ppV210OriginalRenderCrateList.apply(this,arguments);
-  try{ppRenderFullCrateDetails();}catch(e){console.warn('Full crate detail render skipped:',e);}
+  try{ppRenderFullCrateDetails();}catch(e){console.warn('Final crate report render skipped:',e);}
   return result;
 };
 window.ppFullCrateDetailsData=ppFullCrateDetailsData;
 window.ppRenderFullCrateDetails=ppRenderFullCrateDetails;
-document.addEventListener('DOMContentLoaded',()=>{try{ppRenderFullCrateDetails();}catch(e){console.warn('Initial full crate details render skipped:',e);}});
+document.addEventListener('DOMContentLoaded',()=>{try{ppRenderFullCrateDetails();}catch(e){console.warn('Initial final crate report render skipped:',e);}});
 
 /* AIS Tracker V2.11 — merged crate-number report cells and clearer container stacking workflow. */
 
