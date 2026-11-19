@@ -3901,3 +3901,86 @@ body.dark-mode .cb-shortage-panel{background:#0f172a;border-color:#334155}body.d
 .ex-current-pl-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.ex-current-pl-kpis>div:nth-child(3){background:linear-gradient(135deg,#fff7ed,#ffedd5);border-color:#fed7aa}.ex-current-pl-kpis>div:nth-child(3) b{color:#c2410c}
 .ex-current-short{display:inline-flex;min-width:42px;justify-content:center;padding:4px 9px;border-radius:999px;font-weight:900}.ex-current-short.is-short{background:#ffedd5;color:#c2410c}.ex-current-short.is-ok{background:#d1fae5;color:#047857}.ex-current-pl-table tfoot th{background:#e8f4f2;color:#104e63;border-top:2px solid #b8d8d2;padding:12px}.ex-current-pl-footnote{margin:13px 0 2px;color:#607889;font-size:11px;line-height:1.55}.ex-current-pl-footnote i{color:#0f766e;margin-right:5px}
 @media(max-width:700px){.ex-current-pl-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ex-current-pl-banner strong{font-size:14px}}
+
+
+/* V257 — trolley-wise physical extrusion stock ledger */
+.ex-stock-kpi-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0 16px}
+.ex-stock-kpi-strip>div{padding:13px 15px;border:1px solid #cfe5e4;border-radius:12px;background:linear-gradient(135deg,#f0fdfa,#ecfeff);display:flex;flex-direction:column;gap:5px}
+.ex-stock-kpi-strip span{font-size:10px;font-weight:850;letter-spacing:.35px;color:#557181;text-transform:uppercase}
+.ex-stock-kpi-strip b{font-size:21px;font-weight:950;color:#0f5261;font-variant-numeric:tabular-nums}
+.ex-stock-in-total{color:#047857}.ex-stock-out-total{color:#b91c1c}
+#exStockFoot th{padding:12px;background:#e8f5f3;color:#124f60;font-size:12px;border-top:2px solid #b8dcd5}
+.ex-stock-history-wrap{margin-top:22px;padding-top:16px;border-top:1px solid #dce9e8}
+.ex-stock-history-wrap .ex-section-title{margin-bottom:10px}
+#exStockMovementBody td{white-space:nowrap}
+#exStockMovementBody td:last-child{white-space:normal;min-width:160px}
+@media(max-width:850px){.ex-stock-kpi-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.ex-stock-kpi-strip{grid-template-columns:1fr 1fr}.ex-stock-kpi-strip b{font-size:17px}}
+
+
+/* Team Plan vs Actual V3.0 visual upgrade */
+.team-perf-overall-summary{margin:0 0 14px;padding:15px 17px;border:1px solid var(--emerald-border,#b9ded4);border-radius:14px;background:linear-gradient(135deg,rgba(15,118,110,.08),rgba(37,99,235,.045));}
+.team-perf-summary-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:11px;color:var(--text-color,#123);}
+.team-perf-summary-heading small{display:block;font-size:10px;letter-spacing:1px;font-weight:900;color:var(--text-muted);}
+.team-perf-summary-heading strong{font-size:16px;}
+.team-perf-summary-date{font-size:11px;color:var(--text-muted);font-weight:700;}
+.team-perf-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;}
+.team-perf-summary-grid>div{padding:11px;border-radius:10px;background:var(--surface-color,#fff);border:1px solid var(--border-color,#d8e5e8);min-width:0;}
+.team-perf-summary-grid small{display:block;font-size:10px;color:var(--text-muted);font-weight:800;}
+.team-perf-summary-grid b{display:block;font-size:18px;margin:3px 0;color:var(--text-color,#123);}
+.team-perf-summary-grid strong{font-size:13px;}
+.team-perf-summary-grid .below b,.team-perf-summary-grid .below strong{color:#be123c;}
+.team-perf-summary-grid .above b,.team-perf-summary-grid .above strong{color:#047857;}
+.team-perf-latest{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;margin-top:9px;padding:8px 10px;border-radius:9px;font-size:11px;}
+.team-perf-latest span,.team-perf-latest small{font-weight:700;}
+.team-perf-latest b{font-size:14px;}
+.team-perf-latest.below{background:#fff1f2;color:#be123c;}
+.team-perf-latest.above{background:#ecfdf5;color:#047857;}
+.team-perf-latest.neutral{background:#f1f5f9;color:#475569;}
+.team-perf-details-btn{width:100%;margin-top:10px;padding:10px 12px;border:0;border-radius:9px;background:#123f59;color:#fff;font-weight:800;cursor:pointer;transition:transform .15s,background .15s;}
+.team-perf-details-btn:hover{background:#0f766e;transform:translateY(-1px);}
+.team-perf-chart-best{min-height:24px;margin:-2px 0 5px;color:#087e79;font-weight:900;font-size:12px;}
+.team-perf-chart-card h4{margin-bottom:8px;}
+.team-perf-modal-backdrop{display:none;position:fixed;inset:0;z-index:10050;background:rgba(9,28,42,.66);padding:18px;align-items:center;justify-content:center;}
+.team-perf-modal-backdrop.open{display:flex;}
+.team-perf-modal{width:min(1500px,98vw);max-height:92vh;overflow:auto;background:var(--surface-color,#fff);color:var(--text-color,#123);border-radius:16px;padding:18px;box-shadow:0 25px 80px rgba(0,0,0,.28);}
+.team-perf-modal>header{display:flex;justify-content:space-between;gap:15px;align-items:flex-start;margin-bottom:12px;}
+.team-perf-modal>header small{font-weight:900;letter-spacing:1px;color:#0f766e;}
+.team-perf-modal>header h3{margin:3px 0;font-size:20px;}
+.team-perf-modal>header p{margin:0;color:var(--text-muted);font-size:12px;}
+.team-perf-modal>header button{border:0;background:#e2e8f0;border-radius:9px;width:36px;height:36px;font-size:24px;cursor:pointer;}
+.team-perf-modal-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;}
+.team-perf-modal .table-container{max-height:65vh;overflow:auto;}
+.team-perf-modal table{min-width:1200px;}
+.team-perf-modal thead{position:sticky;top:0;z-index:2;}
+@media(max-width:800px){.team-perf-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.team-perf-modal-backdrop{padding:6px}.team-perf-modal{width:100%;max-height:96vh;padding:12px}.team-perf-modal table{min-width:1150px}}
+
+
+/* AIS Team Performance V302 - planned vs unplanned production */
+.team-perf-summary-grid{grid-template-columns:repeat(5,minmax(0,1fr));}
+.team-perf-unplanned-summary{margin-top:9px;padding:9px 12px;border-radius:9px;background:#eff6ff;color:#075985;font-size:12px;font-weight:700;}
+.team-perf-main-v3{grid-template-columns:repeat(2,minmax(0,1fr));}
+.team-perf-stage-row{grid-template-columns:.8fr 1fr 1fr 1.1fr 1fr!important;gap:7px;}
+.team-perf-stage-row>div{padding:7px 5px;border-radius:7px;background:rgba(15,118,110,.035);}
+.team-perf-stage-head{grid-template-columns:.8fr 1fr 1fr 1.1fr 1fr!important;}
+.team-perf-monthly-variation{margin-top:8px;padding:8px 10px;border-radius:9px;display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;font-weight:800;}
+.team-perf-monthly-variation small{width:100%;font-weight:700;opacity:.85;}
+.team-perf-monthly-variation.below{background:#fff1f2;color:#be123c;border:1px solid #fecdd3;}
+.team-perf-monthly-variation.above{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;}
+.team-perf-monthly-variation.neutral{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;}
+.team-month-report{margin:14px 0;padding:13px;border:1px solid var(--border-color,#d6e4e8);border-top:5px solid var(--team-color,#0f766e);border-radius:12px;background:var(--surface-color,#fff);}
+.team-month-report>header{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+.team-month-report>header h4{margin:0;color:var(--team-color,#0f766e);}
+.team-month-report>header small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px;}
+.team-month-report .table-container{overflow:auto;max-width:100%;}
+.team-month-table{min-width:1250px;width:100%;border-collapse:collapse;}
+.team-month-table th{position:sticky;top:0;z-index:1;white-space:nowrap;}
+.team-month-table td{white-space:nowrap;}
+.team-month-table tfoot{background:rgba(15,118,110,.08);font-weight:900;}
+.team-month-table td:nth-child(5),.team-month-table td:nth-child(6),.team-month-table td:nth-child(9){font-variant-numeric:tabular-nums;}
+@media(max-width:1050px){.team-perf-summary-grid{grid-template-columns:repeat(3,minmax(0,1fr));}}
+@media(max-width:760px){.team-perf-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.team-perf-stage-row,.team-perf-stage-head{grid-template-columns:1fr 1fr!important}.team-perf-main-v3{grid-template-columns:1fr 1fr}.team-month-report{padding:9px}}
+@media print{.team-month-report{break-inside:avoid}.team-month-report .table-container{overflow:visible}.team-month-table{min-width:0;font-size:8px}}
+
+/* V303 safe rendering feedback */
+.team-perf-render-warning{padding:18px;border:1px solid #fca5a5;background:#fff7ed;color:#9a3412;border-radius:10px;font-size:13px;font-weight:700;grid-column:1/-1;}

@@ -7,7 +7,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentUserRole = null; let isAdminUnlocked = false; let isDarkMode = false; let isAppBusy = false;
 let masterChartInstance = null, overallPoChartInstance = null, overallPlChartInstance = null, plChartInstance = null, monthlyShiftChartInstance = null, monthlyTeamContributionChartInstance = null, poChartInstances = [], rejectDashChart = null, rejectProfileChartInstance = null;
 let cardboardStockList = [], cardboardManualData = [], dailyInstructionsList = [], masterData = [], historyLogs = [], dailyTeamPlans = [], poList = [], shipmentList = [], packingLists = [], rejectLogs = [], recoverLogs = [], recoveryCutLogs = [], recoveryWrapLogs = [];
-let teamPlanActualChartInstance = null, teamPlanWeightChartInstance = null, teamProductionContributionChartInstance = null; 
+let teamPlanActualChartInstance = null, teamPlanWeightChartInstance = null, teamProductionContributionChartInstance = null, teamPlanAchievementChartInstance = null; 
 let globalManualCrates = {};
 let stockResetInProgress = false;
 let shipmentStates = {};
@@ -2291,7 +2291,7 @@ function switchTab(tabId, btn) {
   setTimeout(() => {
       if (tabId === 'dashboardTab') renderDashboard(); 
       if (tabId === 'balanceWorkTab') renderBalanceWorkTable();
-      if (tabId === 'teamProductionTab') renderDailyTeamPerformance(); 
+      if (tabId === 'teamProductionTab') { renderDailyTeamPerformance(); setTimeout(renderDailyTeamPerformance, 300); } 
       if (tabId === 'cardboardTab') renderCardboardStock();
       if (tabId === 'extrusionTab') { resetExtrusionForm(); renderExtrusionModule(false); loadExtrusionReceipts(false); switchExtrusionSubTab('exInSubTab',document.querySelectorAll('.extrusion-sub-btn')[1]); } 
       if (tabId === 'historyTab') renderHistoryData(); 
@@ -4475,6 +4475,7 @@ function teamPerfWeightFor(profile,itemCode,length,pcs){
   return weights.length===1 ? (Number(pcs)||0)*weights[0] : null;
 }
 let selectedTeamPerfSheet='Team A';
+let teamPerfDetailRowsSnapshot = []; let teamPerfPeriodSnapshot = ''; let teamPerfMonthlyRowsSnapshot = []; let teamPerfMonthlyPeriodSnapshot = '';
 function onTeamPerfDateChange(){
   const date=document.getElementById('teamPerfDate')?.value||'';
   if(date){const month=document.getElementById('teamPerfMonth');if(month)month.value=date.slice(0,7);}
@@ -4550,79 +4551,218 @@ async function saveTeamPlanEditModal(){
   }
 }
 
-function renderDailyTeamPerformance(){
+function renderDailyTeamPerformanceCore(){
   const sheet=document.getElementById('teamPerfSheetContent'); if(!sheet)return;
   const date=document.getElementById('teamPerfDate')?.value||'';
   const month=document.getElementById('teamPerfMonth')?.value||new Date().toISOString().slice(0,7);
-  const isDaily=!!date, periodMatch=d=>isDaily?String(d||'')===date:String(d||'').startsWith(month);
+  const isDaily=!!date, periodLabel=isDaily?`Daily: ${date}`:`Monthly: ${month}`;
   const teams=['Team A','Team B','Team C'], colors=['#0f766e','#2563eb','#d97706'];
   const stages=[['Cut','cutQty'],['Punch','punchQty'],['Wrapping','wrapQty']];
-  const norm=v=>String(v??'').trim().toLowerCase(), fmt=n=>Number(n||0).toLocaleString('en-US',{maximumFractionDigits:2});
-  const plans= dailyTeamPlans.filter(p=>periodMatch(p.date)&&teams.includes(String(p.team||'')));
-  const actuals=historyLogs.filter(a=>periodMatch(a.date)&&teams.includes(String(a.team||'')));
+  const norm=v=>String(v??'').trim().toLowerCase();
+  const fmt=n=>Number(n||0).toLocaleString('en-US',{maximumFractionDigits:2});
   const resolveCode=x=>teamPerfResolveItemCode(x.profile,x.itemCode,x.length);
-  const keyOf=x=>[x.date,x.shift,x.team,x.profile,resolveCode(x),cleanLen(x.length)].map(norm).join('|');
-  const groups=new Map();
-  plans.forEach(p=>{const k=keyOf(p);if(!groups.has(k))groups.set(k,{date:p.date,shift:p.shift,team:p.team,profile:p.profile,itemCode:resolveCode(p),length:cleanLen(p.length),plan:{cut:0,punch:0,wrap:0,box:0},actual:{cut:0,punch:0,wrap:0,box:0}});const g=groups.get(k);g.plan.cut+=Number(p.cutQty)||0;g.plan.punch+=Number(p.punchQty)||0;g.plan.wrap+=Number(p.wrapQty)||0;g.plan.box+=Number(p.boxQty)||0;});
-  actuals.forEach(a=>{const k=keyOf(a);if(!groups.has(k))groups.set(k,{date:a.date,shift:a.shift,team:a.team,profile:a.profile,itemCode:resolveCode(a),length:cleanLen(a.length),plan:{cut:0,punch:0,wrap:0,box:0},actual:{cut:0,punch:0,wrap:0,box:0}});const g=groups.get(k);g.actual.cut+=Number(a.cutQty)||0;g.actual.punch+=Number(a.punchQty)||0;g.actual.wrap+=Number(a.wrapQty)||0;g.actual.box+=Number(a.boxQty)||0;});
-  const detailRows=[], sums=Object.fromEntries(teams.map(t=>[t,{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0,planBoxes:0,actualBoxes:0,stages:Object.fromEntries(stages.map(([s])=>[s,{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0}]))}]));
   const monthPlans=dailyTeamPlans.filter(p=>String(p.date||'').startsWith(month)&&teams.includes(String(p.team||'')));
   const monthActuals=historyLogs.filter(a=>String(a.date||'').startsWith(month)&&teams.includes(String(a.team||'')));
-  const monthlyBoxes=Object.fromEntries(teams.map(t=>[t,{plan:0,actual:0}]));
-  const capacityFor=x=>{const ms=masterData.filter(m=>norm(m.profile)===norm(x.profile)&&norm(m.itemCode)===norm(x.itemCode)&&cleanLen(m.length)===cleanLen(x.length));const cs=[...new Set(ms.map(m=>Number(m.boxCapacity)||0).filter(v=>v>0))];return cs.length===1?cs[0]:null;};
-  monthPlans.forEach(p=>{const c=capacityFor(p);if(c)monthlyBoxes[p.team].plan+=(Number(p.boxQty)||0)/c;});
-  monthActuals.forEach(a=>{const c=capacityFor(a);if(c)monthlyBoxes[a.team].actual+=(Number(a.boxQty)||0)/c;});
-  let unresolved=0;
-  [...groups.values()].sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.team).localeCompare(String(b.team))||String(a.profile).localeCompare(String(b.profile))||String(a.itemCode).localeCompare(String(b.itemCode))).forEach(g=>{
-    const itemMatches=masterData.filter(m=>norm(m.profile)===norm(g.profile)&&norm(m.itemCode)===norm(g.itemCode)&&cleanLen(m.length)===cleanLen(g.length));
-    const capVals=[...new Set(itemMatches.map(m=>Number(m.boxCapacity)||0).filter(v=>v>0))], capacity=capVals.length===1?capVals[0]:null;
-    const team=sums[g.team];
-    stages.forEach(([stage,key])=>{
-      const st=key.replace('Qty',''), plan=Number(g.plan[st])||0, actual=Number(g.actual[st])||0;
-      const additional=Math.max(0,actual-plan), diff=actual-plan, pct=plan>0?diff/plan*100:null;
-      const pw=plan>0?teamPerfWeightFor(g.profile,g.itemCode,g.length,plan):0;
-      const aw=actual>0?teamPerfWeightFor(g.profile,g.itemCode,g.length,actual):0;
-      const adw=additional>0?teamPerfWeightFor(g.profile,g.itemCode,g.length,additional):0;
-      if(plan>0&&pw==null)unresolved++;if(actual>0&&aw==null)unresolved++;if(additional>0&&adw==null)unresolved++;
-      const row={...g,stage,plan,actual,additional,diff,pct,planWt:pw==null?0:pw,actualWt:aw==null?0:aw,additionalWt:adw==null?0:adw,status:plan<=0?(actual>0?'Additional':'No plan'):actual<plan?'Below plan':actual>plan?'Above plan':'On plan'};
-      detailRows.push(row);
-      const s=team.stages[stage];s.plan+=plan;s.actual+=actual;s.additional+=additional;s.planWt+=row.planWt;s.actualWt+=row.actualWt;s.additionalWt+=row.additionalWt;
-      team.plan+=plan;team.actual+=actual;team.additional+=additional;team.planWt+=row.planWt;team.actualWt+=row.actualWt;team.additionalWt+=row.additionalWt;
+  const plans=dailyTeamPlans.filter(p=>(isDaily?String(p.date||'')===date:String(p.date||'').startsWith(month))&&teams.includes(String(p.team||'')));
+  const actuals=historyLogs.filter(a=>(isDaily?String(a.date||'')===date:String(a.date||'').startsWith(month))&&teams.includes(String(a.team||'')));
+
+  // Keep planned production and work with no matching plan as separate records.
+  // A plan of 1,000 and actual of 800 is a -200 shortfall, not "additional".
+  const buildRows=(planRows,actualRows)=>{
+    const keyOf=x=>[x.date,x.shift,x.team,x.profile,resolveCode(x),cleanLen(x.length)].map(norm).join('|');
+    const groups=new Map();
+    const makeGroup=x=>({date:x.date,shift:x.shift||'',team:x.team,profile:x.profile,itemCode:resolveCode(x),length:cleanLen(x.length),plan:{cut:0,punch:0,wrap:0,box:0},actual:{cut:0,punch:0,wrap:0,box:0}});
+    planRows.forEach(p=>{
+      const k=keyOf(p);if(!groups.has(k))groups.set(k,makeGroup(p));
+      const g=groups.get(k);
+      g.plan.cut+=Number(p.cutQty)||0;g.plan.punch+=Number(p.punchQty)||0;g.plan.wrap+=Number(p.wrapQty)||0;g.plan.box+=Number(p.boxQty)||0;
     });
-    if(capacity){team.planBoxes+=(Number(g.plan.box)||0)/capacity;team.actualBoxes+=(Number(g.actual.box)||0)/capacity;}
-  });
+    actualRows.forEach(a=>{
+      const k=keyOf(a);if(!groups.has(k))groups.set(k,makeGroup(a));
+      const g=groups.get(k);
+      g.actual.cut+=Number(a.cutQty)||0;g.actual.punch+=Number(a.punchQty)||0;g.actual.wrap+=Number(a.wrapQty)||0;g.actual.box+=Number(a.boxQty)||0;
+    });
+    const rows=[];let unresolved=0;
+    [...groups.values()].sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.team).localeCompare(String(b.team))||String(a.profile).localeCompare(String(b.profile))||String(a.length).localeCompare(String(b.length))).forEach(g=>{
+      stages.forEach(([stage,key])=>{
+        const st=key.replace('Qty',''),plan=Number(g.plan[st])||0,actual=Number(g.actual[st])||0;
+        if(plan<=0&&actual<=0)return;
+        const plannedActual=plan>0?actual:0;
+        const unplanned=plan<=0?actual:0;
+        const diff=plan>0?actual-plan:null;
+        const pct=plan>0?diff/plan*100:null;
+        const planWeight=plan>0?teamPerfWeightFor(g.profile,g.itemCode,g.length,plan):0;
+        const actualWeight=actual>0?teamPerfWeightFor(g.profile,g.itemCode,g.length,actual):0;
+        const plannedActualWeight=plan>0?(actualWeight??0):0;
+        const unplannedWeight=plan<=0?(actualWeight??0):0;
+        const varianceWeight=plan>0&&planWeight!=null&&actualWeight!=null?actualWeight-planWeight:null;
+        if(plan>0&&planWeight==null)unresolved++;
+        if(actual>0&&actualWeight==null)unresolved++;
+        rows.push({...g,stage,plan,actual,plannedActual,unplanned,diff,pct,planWt:planWeight??0,actualWt:actualWeight??0,plannedActualWt:plannedActualWeight,unplannedWt:unplannedWeight,varianceWt:varianceWeight,status:plan<=0?'Unplanned':actual<plan?'Shortfall':actual>plan?'Above plan':'Achieved'});
+      });
+    });
+    return {rows,unresolved};
+  };
+  const periodBuilt=buildRows(plans,actuals);
+  const monthlyBuilt=isDaily?buildRows(monthPlans,monthActuals):periodBuilt;
+  const detailRows=periodBuilt.rows, monthDetailRows=monthlyBuilt.rows;
+  let unresolved=periodBuilt.unresolved;
+
+  const emptyTotals=()=>({plan:0,actual:0,unplanned:0,planWt:0,actualWt:0,unplannedWt:0,varianceWt:0,varianceWtKnown:true,stages:Object.fromEntries(stages.map(([s])=>[s,{plan:0,actual:0,unplanned:0,planWt:0,actualWt:0,unplannedWt:0,varianceWt:0,varianceWtKnown:true}]))});
+  const summarize=(rows,team)=>{
+    const total=emptyTotals();
+    rows.filter(r=>r.team===team).forEach(r=>{
+      total.plan+=r.plan;total.actual+=r.plannedActual;total.unplanned+=r.unplanned;
+      total.planWt+=r.planWt;total.actualWt+=r.plannedActualWt;total.unplannedWt+=r.unplannedWt;
+      if(r.plan>0&&r.varianceWt===null)total.varianceWtKnown=false;else if(r.plan>0)total.varianceWt+=r.varianceWt;
+      const st=total.stages[r.stage];
+      st.plan+=r.plan;st.actual+=r.plannedActual;st.unplanned+=r.unplanned;
+      st.planWt+=r.planWt;st.actualWt+=r.plannedActualWt;st.unplannedWt+=r.unplannedWt;
+      if(r.plan>0&&r.varianceWt===null)st.varianceWtKnown=false;else if(r.plan>0)st.varianceWt+=r.varianceWt;
+    });
+    total.diff=total.actual-total.plan;total.pct=total.plan>0?total.diff/total.plan*100:null;
+    total.varianceWt=total.varianceWtKnown?total.varianceWt:null;
+    Object.values(total.stages).forEach(s=>{s.diff=s.actual-s.plan;s.pct=s.plan>0?s.diff/s.plan*100:null;s.varianceWt=s.varianceWtKnown?s.varianceWt:null;});
+    return total;
+  };
+  const sums=Object.fromEntries(teams.map(t=>[t,summarize(detailRows,t)]));
+  const monthSums=Object.fromEntries(teams.map(t=>[t,summarize(monthDetailRows,t)]));
+  const latestDate=[...new Set(monthDetailRows.map(r=>String(r.date||'')).filter(Boolean))].sort().slice(-1)[0]||'';
+  const latestDateByTeam=Object.fromEntries(teams.map(t=>[t,[...new Set(monthDetailRows.filter(r=>r.team===t).map(r=>String(r.date||'')).filter(Boolean))].sort().slice(-1)[0]||'']));
+  const latestByTeam=Object.fromEntries(teams.map(t=>[t,summarize(monthDetailRows.filter(r=>r.team===t&&String(r.date||'')===latestDateByTeam[t]),t)]));
+  const overallPlan=teams.reduce((v,t)=>v+sums[t].plan,0);
+  const overallActual=teams.reduce((v,t)=>v+sums[t].actual,0);
+  const overallDiff=overallActual-overallPlan,overallPct=overallPlan>0?overallDiff/overallPlan*100:null;
+  const monthlyPlan=teams.reduce((v,t)=>v+monthSums[t].plan,0),monthlyActual=teams.reduce((v,t)=>v+monthSums[t].actual,0);
+  const monthlyDiff=monthlyActual-monthlyPlan,monthlyPct=monthlyPlan>0?monthlyDiff/monthlyPlan*100:null;
+  const latestPlan=teams.reduce((v,t)=>v+latestByTeam[t].plan,0),latestActual=teams.reduce((v,t)=>v+latestByTeam[t].actual,0);
+  const latestDiff=latestActual-latestPlan,latestPct=latestPlan>0?latestDiff/latestPlan*100:null;
+  const overallEl=document.getElementById('teamPerfOverallSummary');
+  if(overallEl)overallEl.innerHTML=`<div class="team-perf-summary-heading"><div><small>PERIOD PERFORMANCE SUMMARY</small><strong>${periodLabelSafe(isDaily,date,month)}</strong></div><span class="team-perf-summary-date">Latest production date: ${latestDate||'No production date'}</span></div><div class="team-perf-summary-grid"><div><small>Period Plan</small><b>${fmt(overallPlan)} PCS</b></div><div><small>Planned-line Actual</small><b>${fmt(overallActual)} PCS</b></div><div class="${overallDiff<0?'below':'above'}"><small>Period Variation</small><b>${overallDiff>0?'+':''}${fmt(overallDiff)} PCS</b><strong>${overallPct===null?'—':`${overallPct>0?'+':''}${overallPct.toFixed(1)}%`}</strong></div><div class="${monthlyDiff<0?'below':'above'}"><small>Monthly Variation (${month})</small><b>${monthlyDiff>0?'+':''}${fmt(monthlyDiff)} PCS</b><strong>${monthlyPct===null?'—':`${monthlyPct>0?'+':''}${monthlyPct.toFixed(1)}%`}</strong></div><div class="${latestDiff<0?'below':'above'}"><small>Latest Date Variation</small><b>${latestDiff>0?'+':''}${fmt(latestDiff)} PCS</b><strong>${latestPct===null?'—':`${latestPct>0?'+':''}${latestPct.toFixed(1)}%`}</strong></div></div><div class="team-perf-unplanned-summary">Unplanned process (not included in plan achievement): <b>${fmt(teams.reduce((v,t)=>v+monthSums[t].unplanned,0))} PCS</b> · <b>${teams.reduce((v,t)=>v+monthSums[t].unplannedWt,0).toFixed(2)} kg</b> for ${month}</div>`;
+
+  teamPerfDetailRowsSnapshot=detailRows.slice();
+  teamPerfPeriodSnapshot=periodLabel;
+  teamPerfMonthlyRowsSnapshot=monthDetailRows.slice();
+  teamPerfMonthlyPeriodSnapshot=month;
   const cards=document.getElementById('teamPerfCards');
-  if(cards)cards.innerHTML=teams.map((team,i)=>{const t=sums[team],diff=t.actual-t.plan,pct=t.plan>0?diff/t.plan*100:null,cls=pct===null?'neutral':pct<0?'below':'above';
-    const stageRows=stages.map(([name])=>{const s=t.stages[name],d=s.actual-s.plan,p=s.plan>0?d/s.plan*100:null,c=p===null?'neutral':p<0?'below':'above';return `<div class="team-perf-stage-row"><div class="team-perf-stage-name">${name}</div><div><small>Plan</small><b>${fmt(s.plan)} Pcs</b><small>${s.planWt.toFixed(2)} kg</small></div><div><small>Actual</small><b>${fmt(s.actual)} Pcs</b><small>${s.actualWt.toFixed(2)} kg</small></div><div><small>Variance</small><b class="${p===null?'neutral':p<0?'below':'above'}">${p===null?'—':`${p>0?'+':''}${p.toFixed(1)}%`}</b><small>${d>0?'+':''}${fmt(d)} Pcs</small></div><div><small>Additional</small><b class="team-perf-additional-text">${fmt(s.additional)} Pcs</b><small class="team-perf-additional-text">${s.additionalWt.toFixed(2)} kg</small></div></div>`;}).join('');
-    return `<div class="team-perf-card" style="--team-color:${colors[i]}"><h4><i class="fa-solid fa-people-group"></i> ${team}</h4><div class="team-perf-main"><div class="team-perf-metric"><small>Planned Output</small><b>${fmt(t.plan)} Pcs</b><small>${t.planWt.toFixed(2)} kg</small></div><div class="team-perf-metric"><small>Total Actual Output</small><b>${fmt(t.actual)} Pcs</b><small>${t.actualWt.toFixed(2)} kg</small></div><div class="team-perf-metric team-perf-additional"><small>Additional Production</small><b>${fmt(t.additional)} Pcs</b><small>${t.additionalWt.toFixed(2)} kg</small></div><div class="team-perf-metric"><small>Plan Variance</small><b class="${cls}">${pct===null?'—':`${pct>0?'+':''}${pct.toFixed(1)}%`}</b><small>${diff>0?'+':''}${fmt(diff)} Pcs</small></div><div class="team-perf-metric"><small>Plan Box Qty</small><b>${fmt(t.planBoxes)} Boxes</b></div><div class="team-perf-metric"><small>Actual Box Qty (selected period)</small><b>${fmt(t.actualBoxes)} Boxes</b></div><div class="team-perf-metric"><small>Monthly Plan Box Qty</small><b>${fmt(monthlyBoxes[team].plan)} Boxes</b></div><div class="team-perf-metric"><small>Monthly Actual Box Qty</small><b>${fmt(monthlyBoxes[team].actual)} Boxes</b></div></div><div class="team-perf-stage-breakdown"><div class="team-perf-stage-head"><span>Stage</span><span>Plan</span><span>Actual</span><span>Additional</span></div>${stageRows}</div><div class="team-perf-variance ${cls}"><span>${pct===null?'No plan entered':pct<0?'Below plan':pct>0?'Above plan':'Plan achieved'}</span><strong>${pct===null?'—':`${pct>0?'+':''}${pct.toFixed(1)}%`}</strong></div></div>`;}).join('');
-  const periodLabel=isDaily?`Daily: ${date}`:`Monthly: ${month}`;
-  const caption=document.getElementById('teamPerfSheetCaption');if(caption)caption.textContent=`${selectedTeamPerfSheet} • ${periodLabel} • Cut, Punch and Wrapping with profile-level plan/actual history`;
-  const teamRows=detailRows.filter(r=>r.team===selectedTeamPerfSheet);
-  const total=teamRows.reduce((a,r)=>{['plan','actual','additional','planWt','actualWt','additionalWt'].forEach(k=>a[k]+=r[k]);return a;},{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0});
-  const stageColors={Cut:'#2563eb',Punch:'#d97706',Wrapping:'#0f766e'};
-  const stageTables=stages.map(([stage])=>{
-    const rows=teamRows.filter(r=>r.stage===stage&&Number(r.actual)>0);
-    const sum=rows.reduce((a,r)=>{['plan','actual','additional','planWt','actualWt','additionalWt'].forEach(k=>a[k]+=r[k]);return a;},{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0});
-    const pct=sum.planWt>0?(sum.actualWt-sum.planWt)/sum.planWt*100:null;
-    return `<section class="team-stage-report" style="--stage-color:${stageColors[stage]};border-top:5px solid ${stageColors[stage]};margin:14px 0;padding:12px;border-radius:10px;background:#fff;box-shadow:0 2px 9px #0f172a10"><h4 style="margin:0 0 10px;color:${stageColors[stage]}">${stage} Stage — ${selectedTeamPerfSheet}</h4><div class="table-container"><table class="team-individual-report"><thead><tr><th>Date</th><th>Shift</th><th>Profile</th><th>Item Code</th><th>Length (mm)</th><th>Plan (Pcs) • Click to edit</th><th>Plan Weight (kg)</th><th>Production (Pcs)</th><th>Production Weight (kg)</th><th>Additional (Pcs)</th><th>Additional Weight (kg)</th><th>Balance (Pcs)</th><th>Variance %</th><th>Status</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.date}</td><td>${r.shift||''}</td><td>${r.profile}</td><td>${r.itemCode||'—'}</td><td>${r.length}</td><td><button type="button" class="team-plan-edit-chip" title="Click to add or edit planned PCS" onclick='editTeamPlanStage(${JSON.stringify(r.date)},${JSON.stringify(r.shift||'')},${JSON.stringify(r.team)},${JSON.stringify(String(r.profile||''))},${JSON.stringify(String(r.itemCode||''))},${JSON.stringify(String(r.length||''))},${JSON.stringify(stage)},${Number(r.plan)||0})'>${fmt(r.plan)} <i class="fa-solid fa-pen"></i></button></td><td>${r.planWt.toFixed(2)}</td><td>${fmt(r.actual)}</td><td>${r.actualWt.toFixed(2)}</td><td class="team-perf-additional-text">${fmt(r.additional)}</td><td class="team-perf-additional-text">${r.additionalWt.toFixed(2)}</td><td class="${r.diff<0?'team-perf-table-below':'team-perf-table-above'}">${r.diff>0?'+':''}${fmt(r.diff)}</td><td class="${r.diff<0?'team-perf-table-below':'team-perf-table-above'}">${r.pct===null?'—':`${r.pct>0?'+':''}${r.pct.toFixed(1)}%`}</td><td>${r.status}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="5"><b>${stage} TOTAL</b></td><td><b>${fmt(sum.plan)}</b></td><td><b>${sum.planWt.toFixed(2)}</b></td><td><b>${fmt(sum.actual)}</b></td><td><b>${sum.actualWt.toFixed(2)}</b></td><td class="team-perf-additional-text"><b>${fmt(sum.additional)}</b></td><td class="team-perf-additional-text"><b>${sum.additionalWt.toFixed(2)}</b></td><td><b>${fmt(sum.actual-sum.plan)}</b></td><td><b>${pct===null?'—':pct.toFixed(1)+'%'}</b></td><td></td></tr></tfoot></table></div></section>`;
+  if(cards)cards.innerHTML=teams.map((team,i)=>{
+    const t=sums[team],m=monthSums[team],last=latestByTeam[team];
+    const pct=t.pct,cls=pct===null?'neutral':pct<0?'below':'above';
+    const lastCls=last.pct===null?'neutral':last.pct<0?'below':'above';
+    const stageRows=stages.map(([name])=>{
+      const s=t.stages[name],c=s.pct===null?'neutral':s.pct<0?'below':'above';
+      return `<div class="team-perf-stage-row"><div class="team-perf-stage-name">${name}</div><div><small>Plan</small><b>${fmt(s.plan)} PCS</b><small>${s.planWt.toFixed(2)} kg</small></div><div><small>Actual vs plan</small><b>${fmt(s.actual)} PCS</b><small>${s.actualWt.toFixed(2)} kg</small></div><div><small>Variation</small><b class="${c}">${s.pct===null?'—':`${s.pct>0?'+':''}${s.pct.toFixed(1)}%`}</b><small>${s.diff>0?'+':''}${fmt(s.diff)} PCS · ${s.varianceWt===null?'—':`${s.varianceWt>0?'+':''}${s.varianceWt.toFixed(2)} kg`}</small></div><div><small>Unplanned</small><b class="team-perf-additional-text">${fmt(s.unplanned)} PCS</b><small class="team-perf-additional-text">${s.unplannedWt.toFixed(2)} kg</small></div></div>`;
+    }).join('');
+    return `<div class="team-perf-card" style="--team-color:${colors[i]}"><h4><i class="fa-solid fa-people-group"></i> ${team}</h4><div class="team-perf-main team-perf-main-v3"><div class="team-perf-metric"><small>Planned Output</small><b>${fmt(t.plan)} PCS</b><small>${t.planWt.toFixed(2)} kg</small></div><div class="team-perf-metric"><small>Actual vs Plan Lines</small><b>${fmt(t.actual)} PCS</b><small>${t.actualWt.toFixed(2)} kg</small></div><div class="team-perf-metric team-perf-additional"><small>Unplanned Process</small><b>${fmt(t.unplanned)} PCS</b><small>${t.unplannedWt.toFixed(2)} kg</small></div><div class="team-perf-metric"><small>Plan Variation</small><b class="${cls}">${pct===null?'—':`${pct>0?'+':''}${pct.toFixed(1)}%`}</b><small>${t.diff>0?'+':''}${fmt(t.diff)} PCS · ${t.varianceWt===null?'—':`${t.varianceWt>0?'+':''}${t.varianceWt.toFixed(2)} kg`}</small></div></div><div class="team-perf-stage-breakdown"><div class="team-perf-stage-head"><span>Process</span><span>Plan</span><span>Actual</span><span>Variation</span><span>Unplanned</span></div>${stageRows}</div><div class="team-perf-variance ${cls}"><span>${pct===null?'No plan entered':pct<0?'Below plan':pct>0?'Above plan':'Plan achieved'}</span><strong>${pct===null?'—':`${pct>0?'+':''}${pct.toFixed(1)}%`}</strong></div><div class="team-perf-latest ${lastCls}"><span>Latest date (${latestDateByTeam[team]||'—'})</span><b>${last.pct===null?'No planned process':`${last.pct>0?'+':''}${last.pct.toFixed(1)}%`}</b><small>${fmt(last.actual)} actual / ${fmt(last.plan)} planned PCS</small></div><div class="team-perf-monthly-variation ${m.pct===null?'neutral':m.pct<0?'below':'above'}"><span>Month variation (${month})</span><b>${m.diff>0?'+':''}${fmt(m.diff)} PCS · ${m.pct===null?'—':`${m.pct>0?'+':''}${m.pct.toFixed(1)}%`}</b><small>Unplanned: ${fmt(m.unplanned)} PCS / ${m.unplannedWt.toFixed(2)} kg</small></div></div>`;
   }).join('');
-  const teamBoxRows=[...groups.values()].filter(g=>g.team===selectedTeamPerfSheet&&Number(g.actual.box)>0);
-  const dateBoxTotals=new Map();
-  teamBoxRows.forEach(g=>{const cap=capacityFor(g);if(cap)dateBoxTotals.set(g.date,(dateBoxTotals.get(g.date)||0)+Number(g.actual.box)/cap);});
-  sheet.innerHTML=`${stageTables}<section class="team-stage-report team-box-report" style="border-top:5px solid #0ea5e9;margin:16px 0;padding:12px;border-radius:10px;background:#f0f9ff"><h4 style="color:#0369a1;margin:0 0 10px">Box Packing — ${selectedTeamPerfSheet}</h4><div class="table-container"><table class="team-individual-report"><thead><tr><th>Date</th><th>Shift</th><th>Profile</th><th>Item Code</th><th>Length (mm)</th><th>Actual Box Qty</th><th>Total Boxes for Date</th></tr></thead><tbody>${teamBoxRows.map(g=>{const cap=capacityFor(g);return `<tr><td>${g.date}</td><td>${g.shift||''}</td><td>${g.profile}</td><td>${g.itemCode||'—'}</td><td>${g.length}</td><td>${cap?fmt(Number(g.actual.box)/cap):'—'}</td><td class="team-box-date-total">${fmt(dateBoxTotals.get(g.date)||0)}</td></tr>`;}).join('')}</tbody><tfoot><tr><td colspan="5"><b>MONTH TOTAL — ACTUAL BOXES</b></td><td><b>${fmt(monthlyBoxes[selectedTeamPerfSheet].actual)}</b></td><td><b>${fmt(monthlyBoxes[selectedTeamPerfSheet].actual)}</b></td></tr></tfoot></table></div></section>`;
-  const notice=document.getElementById('teamPerfNotice');if(notice)notice.textContent=`${periodLabel} • ${plans.length} saved plan line(s) • ${actuals.length} actual production record(s) • Box quantities are shown separately by team; weights use unique Master Catalog matches. ${unresolved} weight calculation(s) without an unambiguous unit weight are excluded.`;
+
+  const monthlyTableHtml=teams.map((team,i)=>{
+    const rows=monthDetailRows.filter(r=>r.team===team).sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.profile).localeCompare(String(b.profile))||String(a.length).localeCompare(String(b.length))||String(a.stage).localeCompare(String(b.stage)));
+    const t=monthSums[team],rowHtml=rows.map(r=>`<tr><td>${teamPerfEscape(r.date)}</td><td>${teamPerfEscape(r.profile)}</td><td>${teamPerfEscape(r.length)}</td><td>${teamPerfEscape(r.stage)}</td><td><button type="button" class="team-plan-edit-chip" title="Click to edit planned PCS" onclick='editTeamPlanStage(${JSON.stringify(r.date)},${JSON.stringify(r.shift||'')},${JSON.stringify(team)},${JSON.stringify(String(r.profile||''))},${JSON.stringify(String(r.itemCode||''))},${JSON.stringify(String(r.length||''))},${JSON.stringify(r.stage)},${Number(r.plan)||0})'>${fmt(r.plan)} <i class="fa-solid fa-pen"></i></button></td><td>${fmt(r.actual)}</td><td>${r.planWt.toFixed(2)}</td><td>${r.actualWt.toFixed(2)}</td><td class="${r.diff===null?'':r.diff<0?'team-perf-table-below':'team-perf-table-above'}">${r.diff===null?'—':`${r.diff>0?'+':''}${fmt(r.diff)}`}</td><td>${r.pct===null?'—':`${r.pct>0?'+':''}${r.pct.toFixed(1)}%`}</td><td class="team-perf-additional-text">${fmt(r.unplanned)}</td><td class="team-perf-additional-text">${r.unplannedWt.toFixed(2)}</td></tr>`).join('');
+    return `<section class="team-month-report" style="--team-color:${colors[i]}"><header><div><h4>${team} — Monthly Production Details</h4><small>${month} · ${rows.length} process line(s)</small></div><button type="button" class="btn btn-accent" onclick="exportMonthlyTeamPerformance('${team}')"><i class="fa-solid fa-file-excel"></i> Download ${team} Excel</button></header><div class="table-container"><table class="team-individual-report team-month-table"><thead><tr><th>Date</th><th>Profile</th><th>Length (mm)</th><th>Process</th><th>Plan PCS · Edit</th><th>Process PCS</th><th>Plan Weight (kg)</th><th>Process Weight (kg)</th><th>Variation PCS</th><th>Variation %</th><th>Unplanned PCS</th><th>Unplanned Weight (kg)</th></tr></thead><tbody>${rowHtml||'<tr><td colspan="12">No production or plan records for this team in the selected month.</td></tr>'}</tbody><tfoot><tr><td colspan="4"><b>${team} MONTH TOTAL</b></td><td><b>${fmt(t.plan)}</b></td><td><b>${fmt(t.actual)}</b></td><td><b>${t.planWt.toFixed(2)}</b></td><td><b>${t.actualWt.toFixed(2)}</b></td><td><b>${t.diff>0?'+':''}${fmt(t.diff)}</b></td><td><b>${t.pct===null?'—':`${t.pct>0?'+':''}${t.pct.toFixed(1)}%`}</b></td><td><b>${fmt(t.unplanned)}</b></td><td><b>${t.unplannedWt.toFixed(2)}</b></td></tr></tfoot></table></div></section>`;
+  }).join('');
+  const caption=document.getElementById('teamPerfSheetCaption');if(caption)caption.textContent=`Monthly report for ${month}. Each team has a separate table and Excel download. Unplanned process quantities are excluded from plan achievement.`;
+  sheet.innerHTML=monthlyTableHtml;
+
+  const notice=document.getElementById('teamPerfNotice');
+  if(notice)notice.textContent=`${periodLabel} • ${plans.length} saved plan line(s) • ${actuals.length} actual production record(s) • Monthly team tables always follow selected month ${month}. Weights use unique Master Catalog unit-weight matches; ${unresolved} period weight calculation(s) without an unambiguous unit weight are excluded.`;
+
   if(typeof Chart!=='undefined'){
+    try {
     const textColor=isDarkMode?'#f8fafc':'#334155';
     const draw=(id,old,labels,sets)=>{const cv=document.getElementById(id);if(!cv)return old;safeChartDestroy(old,id);return new Chart(cv,{type:'bar',data:{labels,datasets:sets},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:textColor,usePointStyle:true,boxWidth:9}},tooltip:{mode:'index',intersect:false}},interaction:{mode:'index',intersect:false},scales:{x:{ticks:{color:textColor},grid:{display:false}},y:{beginAtZero:true,ticks:{color:textColor},grid:{color:isDarkMode?'#334155':'#e2e8f0'}}}}});};
-    teamPlanActualChartInstance=draw('teamPlanActualChart',teamPlanActualChartInstance,teams,[{label:'Plan (Pcs)',data:teams.map(t=>sums[t].plan),backgroundColor:'#94a3b8',borderRadius:6},{label:'Actual (Pcs)',data:teams.map(t=>sums[t].actual),backgroundColor:'#0f766e',borderRadius:6},{label:'Additional (Pcs)',data:teams.map(t=>sums[t].additional),backgroundColor:'#168bd2',borderRadius:6}]);
-    teamPlanWeightChartInstance=draw('teamPlanActualWeightChart',teamPlanWeightChartInstance,teams,[{label:'Plan Weight (kg)',data:teams.map(t=>Number(sums[t].planWt.toFixed(2))),backgroundColor:'#93c5fd',borderRadius:6},{label:'Actual Weight (kg)',data:teams.map(t=>Number(sums[t].actualWt.toFixed(2))),backgroundColor:'#0f766e',borderRadius:6},{label:'Additional Weight (kg)',data:teams.map(t=>Number(sums[t].additionalWt.toFixed(2))),backgroundColor:'#168bd2',borderRadius:6}]);
+    teamPlanActualChartInstance=draw('teamPlanActualChart',teamPlanActualChartInstance,teams,[{label:'Plan (PCS)',data:teams.map(t=>sums[t].plan),backgroundColor:'#94a3b8',borderRadius:6},{label:'Actual on planned lines (PCS)',data:teams.map(t=>sums[t].actual),backgroundColor:'#0f766e',borderRadius:6},{label:'Unplanned process (PCS)',data:teams.map(t=>sums[t].unplanned),backgroundColor:'#168bd2',borderRadius:6}]);
+    teamPlanWeightChartInstance=draw('teamPlanActualWeightChart',teamPlanWeightChartInstance,teams,[{label:'Plan Weight (kg)',data:teams.map(t=>Number(sums[t].planWt.toFixed(2))),backgroundColor:'#93c5fd',borderRadius:6},{label:'Actual on planned lines (kg)',data:teams.map(t=>Number(sums[t].actualWt.toFixed(2))),backgroundColor:'#0f766e',borderRadius:6},{label:'Unplanned process weight (kg)',data:teams.map(t=>Number(sums[t].unplannedWt.toFixed(2))),backgroundColor:'#168bd2',borderRadius:6}]);
+    const planScores=teams.map(t=>sums[t].plan>0?Number((sums[t].actual/sums[t].plan*100).toFixed(1)):0);
+    const bestPlanIndex=teams.reduce((best,t,i)=>sums[t].plan>0&&(best<0||planScores[i]>planScores[best])?i:best,-1);
+    const totalWeight=t=>sums[t].actualWt+sums[t].unplannedWt;
+    const bestWeightIndex=teams.reduce((best,t,i)=>totalWeight(t)>totalWeight(teams[best])?i:best,0);
+    const bestPlanEl=document.getElementById('teamPlanAchievementBest');
+    if(bestPlanEl)bestPlanEl.textContent=bestPlanIndex>=0?`Best: ${teams[bestPlanIndex]} • ${planScores[bestPlanIndex].toFixed(1)}% of plan`:'No team plan available';
+    const bestWeightEl=document.getElementById('teamProductionWeightBest');
+    if(bestWeightEl)bestWeightEl.textContent=`Highest: ${teams[bestWeightIndex]} • ${totalWeight(teams[bestWeightIndex]).toFixed(2)} kg`;
+    const planCanvas=document.getElementById('teamPlanAchievementChart');
+    if(planCanvas){safeChartDestroy(teamPlanAchievementChartInstance,'teamPlanAchievementChart');teamPlanAchievementChartInstance=new Chart(planCanvas,{type:'doughnut',data:{labels:teams,datasets:[{label:'Plan Achievement (%)',data:planScores,backgroundColor:colors,borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:textColor,usePointStyle:true,boxWidth:10}},tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${Number(ctx.raw||0).toFixed(1)}% plan achievement`}}}}});}
     const contributionCanvas=document.getElementById('teamProductionContributionChart');
-    if(contributionCanvas){safeChartDestroy(teamProductionContributionChartInstance,'teamProductionContributionChart');teamProductionContributionChartInstance=new Chart(contributionCanvas,{type:'doughnut',data:{labels:teams,datasets:[{label:'Actual Production Weight (kg)',data:teams.map(t=>Number(sums[t].actualWt.toFixed(2))),backgroundColor:colors,borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:textColor,usePointStyle:true,boxWidth:10}},tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${Number(ctx.raw||0).toLocaleString('en-US',{maximumFractionDigits:2})} kg`}}}}});}
-
+    if(contributionCanvas){safeChartDestroy(teamProductionContributionChartInstance,'teamProductionContributionChart');teamProductionContributionChartInstance=new Chart(contributionCanvas,{type:'doughnut',data:{labels:teams,datasets:[{label:'Total production weight (kg)',data:teams.map(t=>Number(totalWeight(t).toFixed(2))),backgroundColor:colors,borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:textColor,usePointStyle:true,boxWidth:10}},tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${Number(ctx.raw||0).toLocaleString('en-US',{maximumFractionDigits:2})} kg`}}}}});}
+    } catch(chartError) { console.error('[AIS Team Performance] Chart error:',chartError); const notice=document.getElementById('teamPerfNotice'); if(notice)notice.textContent+=' • Chart display warning: '+String(chartError?.message||chartError); }
+  } else {
+    const notice=document.getElementById('teamPerfNotice');
+    if(notice)notice.textContent+=' • Chart library unavailable; team data tables remain available.';
   }
 }
 
 
+function teamPerfEscape(value){
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  }[ch]));
+}
+function periodLabelSafe(isDaily, date, month){
+  return isDaily
+    ? `Daily: ${teamPerfEscape(date)}`
+    : `Monthly: ${teamPerfEscape(month)}`;
+}
+
+function renderDailyTeamPerformance(){
+  const monthEl=document.getElementById('teamPerfMonth');
+  if(monthEl&&!monthEl.value){
+    const localNow=new Date();
+    monthEl.value=`${localNow.getFullYear()}-${String(localNow.getMonth()+1).padStart(2,'0')}`;
+  }
+  try{
+    renderDailyTeamPerformanceCore();
+  }catch(error){
+    console.error('[AIS Team Performance] Render failed:',error);
+    const notice=document.getElementById('teamPerfNotice');
+    if(notice){notice.textContent=`Team report could not be displayed: ${String(error?.message||error)}. Please refresh or check the browser console.`;notice.style.color='#b91c1c';}
+    const summary=document.getElementById('teamPerfOverallSummary');
+    if(summary&&!summary.innerHTML.trim())summary.innerHTML='<div class="team-perf-render-warning">Team summary could not load. Existing production records have not been modified.</div>';
+    const cards=document.getElementById('teamPerfCards');
+    if(cards&&!cards.innerHTML.trim())cards.innerHTML='<div class="team-perf-render-warning">Team cards could not load. Click Refresh after checking your connection.</div>';
+  }
+}
+
+function exportMonthlyTeamPerformance(team){
+  const rows=teamPerfMonthlyRowsSnapshot.filter(r=>r.team===team).map(r=>({
+    'Date':r.date,'Team':r.team,'Profile':r.profile,'Length (mm)':r.length,'Process':r.stage,
+    'Plan PCS':r.plan,'Process PCS':r.actual,'Plan Weight (kg)':Number(r.planWt.toFixed(2)),
+    'Process Weight (kg)':Number(r.actualWt.toFixed(2)),'Variation PCS':r.diff===null?'':r.diff,
+    'Variation (%)':r.pct===null?'':Number(r.pct.toFixed(2)),
+    'Unplanned PCS':r.unplanned,'Unplanned Weight (kg)':Number(r.unplannedWt.toFixed(2))
+  }));
+  exportTableToExcel(rows,`AIS_${team.replace(' ','_')}_Monthly_Performance_${teamPerfMonthlyPeriodSnapshot}`,team.slice(0,31));
+}
+
+function openTeamPerformanceDetails(team){
+  const rows=teamPerfDetailRowsSnapshot.filter(r=>r.team===team);
+  let modal=document.getElementById('teamPerfDetailsModal');
+  if(!modal){
+    document.body.insertAdjacentHTML('beforeend',`<div class="team-perf-modal-backdrop" id="teamPerfDetailsModal" onclick="if(event.target===this)closeTeamPerformanceDetails()"><section class="team-perf-modal"><header><div><small>TEAM PRODUCTION DETAIL</small><h3 id="teamPerfDetailsTitle"></h3><p id="teamPerfDetailsCaption"></p></div><button type="button" onclick="closeTeamPerformanceDetails()" aria-label="Close">×</button></header><div class="team-perf-modal-actions"><button type="button" class="btn btn-accent" onclick="exportTeamPerformanceDetails()"><i class="fa-solid fa-file-excel"></i> Download Excel</button><button type="button" class="btn" onclick="printTeamPerformanceDetails()"><i class="fa-solid fa-print"></i> Print</button></div><div id="teamPerfDetailsTable" class="table-container"></div></section></div>`);
+    modal=document.getElementById('teamPerfDetailsModal');
+  }
+  document.getElementById('teamPerfDetailsTitle').textContent=`${team} — Daily Plan vs Actual`;
+  document.getElementById('teamPerfDetailsCaption').textContent=`${teamPerfPeriodSnapshot} • Date, profile, length, planned PCS, actual PCS and variance`;
+  const total=rows.reduce((a,r)=>{a.plan+=r.plan;a.actual+=r.actual;a.additional+=r.additional;a.planWt+=r.planWt;a.actualWt+=r.actualWt;a.additionalWt+=r.additionalWt;return a;},{plan:0,actual:0,additional:0,planWt:0,actualWt:0,additionalWt:0});
+  const body=rows.slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.profile).localeCompare(String(b.profile))||String(a.length).localeCompare(String(b.length))||String(a.stage).localeCompare(String(b.stage))).map(r=>`<tr><td>${teamPerfEscape(r.date)}</td><td>${teamPerfEscape(r.shift)}</td><td>${teamPerfEscape(r.profile)}</td><td>${teamPerfEscape(r.itemCode||'—')}</td><td>${teamPerfEscape(r.length)}</td><td>${r.stage}</td><td>${Number(r.plan).toLocaleString()}</td><td>${Number(r.actual).toLocaleString()}</td><td class="${r.diff<0?'team-perf-table-below':'team-perf-table-above'}">${r.diff>0?'+':''}${Number(r.diff).toLocaleString()}</td><td class="${r.diff<0?'team-perf-table-below':'team-perf-table-above'}">${r.pct===null?'—':`${r.pct>0?'+':''}${r.pct.toFixed(1)}%`}</td><td class="team-perf-additional-text">${Number(r.additional).toLocaleString()}</td><td>${r.planWt.toFixed(2)}</td><td>${r.actualWt.toFixed(2)}</td><td class="team-perf-additional-text">${r.additionalWt.toFixed(2)}</td></tr>`).join('');
+  document.getElementById('teamPerfDetailsTable').innerHTML=`<table class="team-individual-report"><thead><tr><th>Date</th><th>Shift</th><th>Profile</th><th>Item Code</th><th>Length (mm)</th><th>Process</th><th>Plan (PCS)</th><th>Actual (PCS)</th><th>Variation (PCS)</th><th>Variation %</th><th>Additional PCS</th><th>Plan Weight (kg)</th><th>Actual Weight (kg)</th><th>Additional Weight (kg)</th></tr></thead><tbody>${body||'<tr><td colspan="14">No team data found for this period.</td></tr>'}</tbody><tfoot><tr><td colspan="6"><b>${team} TOTAL</b></td><td><b>${total.plan.toLocaleString()}</b></td><td><b>${total.actual.toLocaleString()}</b></td><td><b>${(total.actual-total.plan)>0?'+':''}${(total.actual-total.plan).toLocaleString()}</b></td><td><b>${total.plan>0?`${((total.actual-total.plan)/total.plan*100)>0?'+':''}${((total.actual-total.plan)/total.plan*100).toFixed(1)}%`:'—'}</b></td><td><b>${total.additional.toLocaleString()}</b></td><td><b>${total.planWt.toFixed(2)}</b></td><td><b>${total.actualWt.toFixed(2)}</b></td><td><b>${total.additionalWt.toFixed(2)}</b></td></tr></tfoot></table>`;
+  modal.dataset.team=team; modal.classList.add('open'); document.body.style.overflow='hidden';
+}
+function closeTeamPerformanceDetails(){
+  const modal=document.getElementById('teamPerfDetailsModal');if(modal)modal.classList.remove('open');document.body.style.overflow='';
+}
+function exportTeamPerformanceDetails(){
+  const modal=document.getElementById('teamPerfDetailsModal');const team=modal?.dataset.team||'Team';
+  const rows=teamPerfDetailRowsSnapshot.filter(r=>r.team===team).map(r=>({'Date':r.date,'Shift':r.shift,'Team':r.team,'Profile':r.profile,'Item Code':r.itemCode,'Length (mm)':r.length,'Process':r.stage,'Plan (PCS)':r.plan,'Actual (PCS)':r.actual,'Variation (PCS)':r.diff,'Variation (%)':r.pct===null?'':Number(r.pct.toFixed(2)),'Additional PCS':r.additional,'Plan Weight (kg)':Number(r.planWt.toFixed(2)),'Actual Weight (kg)':Number(r.actualWt.toFixed(2)),'Additional Weight (kg)':Number(r.additionalWt.toFixed(2))}));
+  exportTableToExcel(rows,`AIS_${team.replace(' ','_')}_Plan_vs_Actual`,team.slice(0,31));
+}
+function printTeamPerformanceDetails(){
+  const modal=document.getElementById('teamPerfDetailsModal');const team=modal?.dataset.team||'Team';
+  const content=document.getElementById('teamPerfDetailsTable')?.innerHTML||'';
+  const win=window.open('','_blank','width=1300,height=850');if(!win){showToast('Please allow pop-ups to print the team report.','warning');return;}
+  win.document.write(`<!doctype html><html><head><title>${team} Plan vs Actual</title><style>body{font:11px Arial;padding:18px;color:#183447}table{width:100%;border-collapse:collapse}th{background:#105466;color:#fff}td,th{border:1px solid #cbd5e1;padding:5px;text-align:left}tfoot{background:#e8f5f2;font-weight:bold}</style></head><body><h2>${team} — ${teamPerfPeriodSnapshot}</h2>${content}<script>window.onload=()=>window.print()<\\/script></body></html>`);
+  win.document.close();
+}
 
 function loadDailyPlanForSelection(){
   const ids=['entryDate','shift','productionTeam','selectProfile','selectItemCode','selectLength'];
@@ -11208,13 +11348,13 @@ function confirmExtrusionPOComplete(poNumber){const po=String(poNumber||'');if(!
 function undoExtrusionPOComplete(poNumber){const po=String(poNumber||'');const done=getExtrusionCompletedPOs();if(!done.has(po))return;done.delete(po);if(!saveExtrusionCompletedPOs(done))return;renderExtrusionModule(false);showToast(`PO ${po} returned to pending list.`,'success');}
 
 function extrusionStockSummary(){const groups=new Map();extrusionRequiredByPo().filter(r=>!getExtrusionCompletedPOs().has(String(r.poNumber))).forEach(r=>{if(!groups.has(r.masterKey))groups.set(r.masterKey,{profile:r.profile,exLength:r.exLength,required:0,poLines:[]});const g=groups.get(r.masterKey);g.required+=r.required;g.poLines.push(r);});extrusionMasterRows().forEach(m=>{const p=String(m.profile||'').trim(),l=extrusionLen(m.exLength);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});(extrusionReceipts||[]).forEach(r=>{const p=String(r.profile||'').trim(),l=extrusionLen(r.extrusion_length);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});
- groups.forEach(g=>{g.receiptStock=(extrusionReceipts||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.in_qty)||0),0);g.movementNet=(extrusionStockMovements||[]).filter(m=>String(m.profile||'').trim()===g.profile&&extrusionLen(m.extrusion_length)===g.exLength).reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.stock=g.receiptStock+g.movementNet;g.balance=g.stock-g.required;g.status=g.balance>=0?(g.stock===0&&g.required>0?'Short':g.balance>0?'Extra':'Complete'):'Short';});return [...groups.values()].sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);}
+ groups.forEach(g=>{g.receiptStock=(extrusionReceipts||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.in_qty)||0),0);const moves=(extrusionStockMovements||[]).filter(m=>String(m.profile||'').trim()===g.profile&&extrusionLen(m.extrusion_length)===g.exLength);g.movementNet=moves.reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.movementIn=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='IN').reduce((s,m)=>s+Math.max(0,Number(m.qty_change)||0),0);g.movementOut=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='OUT').reduce((s,m)=>s+Math.abs(Math.min(0,Number(m.qty_change)||0)),0);g.adjustmentNet=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='SET').reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.totalIn=g.receiptStock+g.movementIn;g.totalOut=g.movementOut;g.stock=g.receiptStock+g.movementNet;g.balance=g.stock-g.required;g.status=g.balance>=0?(g.stock===0&&g.required>0?'Short':g.balance>0?'Extra':'Complete'):'Short';});return [...groups.values()].sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);}
 async function loadExtrusionReceipts(showMessage=false){if(extrusionLoading)return;extrusionLoading=true;try{const {data,error}=await supabaseClient.from('extrusion_receipts').select('*').order('receipt_date',{ascending:false}).order('id',{ascending:false});if(error)throw error;extrusionReceipts=(data||[]).map(r=>({...r,receiptDate:r.receipt_date,profile:String(r.profile||''),extrusionLength:extrusionLen(r.extrusion_length),trolleyNo:r.trolley_no||'',inQty:Number(r.in_qty)||0,note:r.note||''}));extrusionReceiptsLoaded=true;await loadExtrusionStockMovements();renderExtrusionModule(false);if(showMessage)showToast('Extrusion receipts refreshed.','success');}catch(e){console.error('Extrusion receipt load failed',e);if(showMessage)showToast('Extrusion table is not ready. Run supabase_extrusion_module.sql once in Supabase SQL Editor.','error');else{const b=document.getElementById('exHistoryBody');if(b)b.innerHTML='<tr><td colspan="7">Extrusion receipt table is not ready. Run the included supabase_extrusion_module.sql migration, then refresh.</td></tr>';}}finally{extrusionLoading=false;}}
 async function loadExtrusionStockMovements(){
  try{
   const {data,error}=await supabaseClient.from('extrusion_stock_movements').select('*').order('movement_date',{ascending:false}).order('id',{ascending:false});
   if(error)throw error;
-  extrusionStockMovements=(data||[]).map(r=>({...r,profile:String(r.profile||''),extrusion_length:extrusionLen(r.extrusion_length),qty_change:Number(r.qty_change)||0}));
+  extrusionStockMovements=(data||[]).map(r=>({...r,profile:String(r.profile||''),extrusion_length:extrusionLen(r.extrusion_length),qty_change:Number(r.qty_change)||0,trolley_no:String(r.trolley_no||'')}));
   extrusionStockMovementsLoaded=true;
   return true;
  }catch(e){
@@ -11227,25 +11367,59 @@ async function loadExtrusionStockMovements(){
  }
 }
 function moveExtrusionStockSummaryToBottom(){const target=document.getElementById('exInSubTab');const planner=document.getElementById('exPoCards')?.closest('.card');const form=document.getElementById('exReceiptForm')?.closest('.card');if(target&&planner&&form&&planner.parentElement!==target)target.insertBefore(planner,form);const stockSection=document.getElementById('exStockSubTab');const stock=document.getElementById('exStockBody')?.closest('.card');if(stockSection&&stock&&stock.parentElement!==stockSection)stockSection.appendChild(stock);}
-function renderExtrusionModule(force=false){if(force&&!extrusionReceiptsLoaded){loadExtrusionReceipts(true);return;}moveExtrusionStockSummaryToBottom();populateExtrusionFilters();populateExtrusionReceiptProfiles();renderExtrusionStockTable();renderExtrusionPoTable();renderExtrusionHistory();if(document.getElementById('exCurrentPlSubTab')?.style.display!=='none')renderCurrentPlExtrusionRequirement(false);}
+function renderExtrusionModule(force=false){if(force&&!extrusionReceiptsLoaded){loadExtrusionReceipts(true);return;}moveExtrusionStockSummaryToBottom();populateExtrusionFilters();populateExtrusionReceiptProfiles();renderExtrusionStockTable();renderExtrusionStockMovementHistory();renderExtrusionPoTable();renderExtrusionHistory();if(document.getElementById('exCurrentPlSubTab')?.style.display!=='none')renderCurrentPlExtrusionRequirement(false);}
 function populateExtrusionFilters(){const groups=extrusionStockSummary();const fill=(id,label,vals)=>{const s=document.getElementById(id);if(!s)return;const old=s.value;s.innerHTML=`<option value="">${label}</option>`;[...new Set(vals)].forEach(v=>s.add(new Option(v,v)));if([...s.options].some(o=>o.value===old))s.value=old;};fill('exFilterProfile','All Profiles',groups.map(g=>g.profile));fill('exFilterLength','All Lengths',groups.map(g=>String(g.exLength)));fill('exHistProfile','All Profiles',[...new Set(extrusionReceipts.map(r=>r.profile))].sort());}
 function renderExtrusionStockTable(){
  const body=document.getElementById('exStockBody');if(!body)return;
  if(!extrusionStockMovementsLoaded){
-  body.innerHTML='<tr><td colspan="7" style="color:#b45309;font-weight:800;">Stock movement ledger is not connected. Run supabase_extrusion_stock_ledger_v256.sql in Supabase SQL Editor and refresh before using IN / OUT / Edit.</td></tr>';
+  body.innerHTML='<tr><td colspan="10" style="color:#b45309;font-weight:800;">Stock movement ledger is not connected. Run the extrusion stock ledger migrations in Supabase SQL Editor, then refresh. Existing receipts are preserved.</td></tr>';
   return;
  }
- const p=document.getElementById('exFilterProfile')?.value||'',l=document.getElementById('exFilterLength')?.value||'',q=(document.getElementById('exSearch')?.value||'').toLowerCase();
- const rows=extrusionStockSummary().filter(g=>(!p||g.profile===p)&&(!l||String(g.exLength)===l)&&(!q||`${g.profile} ${g.exLength}`.toLowerCase().includes(q)));
+ const p=document.getElementById('exFilterProfile')?.value||'',l=document.getElementById('exFilterLength')?.value||'',q=(document.getElementById('exSearch')?.value||'').trim().toLowerCase();
+ const all=extrusionStockSummary();
+ const rows=all.filter(g=>(!p||g.profile===p)&&(!l||String(g.exLength)===l)&&(!q||`${g.profile} ${g.exLength}`.toLowerCase().includes(q)));
+ const fmt=v=>(Number(v)||0).toLocaleString();
  body.innerHTML=rows.length?rows.map(g=>`<tr>
   <td><b>${escapeHtml(String(g.profile))}</b></td><td>${g.exLength.toLocaleString()} mm</td>
-  <td>${g.required.toLocaleString()}</td>
-  <td><button type="button" class="ex-stock-qty-edit" title="Click to edit current stock quantity" onclick="openExtrusionStockModal('SET','${escapeHtml(g.profile)}',${g.exLength},${g.stock})">${g.stock.toLocaleString()} <i class="fa-solid fa-pen"></i></button></td>
-  <td><b class="ex-stock-balance ${g.balance<0?'negative':g.balance>0?'positive':'zero'}">${g.balance.toLocaleString()}</b></td>
-  <td><span class="ex-status ${g.balance<0?'short':g.balance>0?'extra':'complete'}">${g.balance<0?'Short by '+Math.abs(g.balance):g.balance>0?'Extra '+g.balance:'Balanced'}</span></td>
+  <td>${fmt(g.required)}</td><td><b class="ex-stock-in-total">${fmt(g.totalIn)}</b></td><td><b class="ex-stock-out-total">${fmt(g.totalOut)}</b></td>
+  <td>${fmt(g.adjustmentNet)}</td>
+  <td><button type="button" class="ex-stock-qty-edit" title="Current available extrusion stock" onclick="openExtrusionStockModal('SET','${escapeHtml(g.profile)}',${g.exLength},${g.stock})">${fmt(g.stock)} <i class="fa-solid fa-pen"></i></button></td>
+  <td><b class="ex-stock-balance ${g.balance<0?'negative':g.balance>0?'positive':'zero'}">${fmt(g.balance)}</b></td>
+  <td><span class="ex-status ${g.balance<0?'short':g.balance>0?'extra':'complete'}">${g.balance<0?'Short by '+fmt(Math.abs(g.balance)):g.balance>0?'Extra '+fmt(g.balance):'Balanced'}</span></td>
   <td><div class="ex-stock-actions"><button type="button" class="ex-stock-in" onclick="openExtrusionStockModal('IN','${escapeHtml(g.profile)}',${g.exLength},${g.stock})">+ IN</button><button type="button" class="ex-stock-out" onclick="openExtrusionStockModal('OUT','${escapeHtml(g.profile)}',${g.exLength},${g.stock})">− OUT</button></div></td>
- </tr>`).join(''):'<tr><td colspan="7">No extrusion lengths matched. Check Master Catalog Ex Length values.</td></tr>';
+ </tr>`).join(''):'<tr><td colspan="10">No extrusion lengths matched. Check Master Catalog Ex Length values.</td></tr>';
+ const totalIn=rows.reduce((s,g)=>s+(g.totalIn||0),0),totalOut=rows.reduce((s,g)=>s+(g.totalOut||0),0),available=rows.reduce((s,g)=>s+(g.stock||0),0);
+ const foot=document.getElementById('exStockFoot');
+ if(foot)foot.innerHTML=rows.length?`<tr><th colspan="3" style="text-align:right">TOTAL</th><th>${fmt(totalIn)}</th><th>${fmt(totalOut)}</th><th>${fmt(rows.reduce((s,g)=>s+(g.adjustmentNet||0),0))}</th><th>${fmt(available)}</th><th>${fmt(rows.reduce((s,g)=>s+(g.balance||0),0))}</th><th colspan="2">Filtered total</th></tr>`:'';
+ const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=fmt(v);};
+ set('exPhysicalTotalIn',totalIn);set('exPhysicalTotalOut',totalOut);set('exPhysicalAvailable',available);set('exPhysicalLines',rows.length);
 }
+function renderExtrusionStockMovementHistory(){
+ const body=document.getElementById('exStockMovementBody');if(!body)return;
+ if(!extrusionStockMovementsLoaded){body.innerHTML='<tr><td colspan="7">Stock movement ledger is not available. Apply the trolley stock migration and refresh.</td></tr>';return;}
+ const p=document.getElementById('exFilterProfile')?.value||'',l=document.getElementById('exFilterLength')?.value||'',q=(document.getElementById('exSearch')?.value||'').trim().toLowerCase();
+ const rows=(extrusionStockMovements||[]).filter(m=>(!p||m.profile===p)&&(!l||String(m.extrusion_length)===l)&&(!q||`${m.profile} ${m.extrusion_length} ${m.trolley_no||''} ${m.note||''}`.toLowerCase().includes(q)));
+ body.innerHTML=rows.length?rows.map(m=>{const typ=String(m.movement_type||'').toUpperCase(),qty=Math.abs(Number(m.qty_change)||0);return `<tr><td>${escapeHtml(m.movement_date||'-')}</td><td><b>${escapeHtml(m.profile)}</b></td><td>${Number(m.extrusion_length||0).toLocaleString()} mm</td><td>${escapeHtml(m.trolley_no||'—')}</td><td><span class="ex-status ${typ==='IN'?'complete':typ==='OUT'?'short':'extra'}">${escapeHtml(typ)}</span></td><td><b>${qty.toLocaleString()}</b></td><td>${escapeHtml(m.note||'—')}</td></tr>`;}).join(''):'<tr><td colspan="7">No matching stock movement records.</td></tr>';
+}
+window.exportExtrusionPhysicalStockExcel=function(){
+ const groups=extrusionStockSummary();
+ const rows=groups.map(g=>({'Profile':g.profile,'Extrusion Length (mm)':g.exLength,'PO Required':g.required,'Total IN':g.totalIn,'Total OUT':g.totalOut,'Adjustment':g.adjustmentNet,'Available Stock Qty':g.stock,'Balance vs PO':g.balance,'Status':g.balance<0?'SHORT':g.balance>0?'EXTRA':'BALANCED'}));
+ if(!rows.length)return showToast('No extrusion stock rows available to export.','warning');
+ const total={Profile:'TOTAL', 'Extrusion Length (mm)':'', 'PO Required':groups.reduce((s,g)=>s+g.required,0),'Total IN':groups.reduce((s,g)=>s+g.totalIn,0),'Total OUT':groups.reduce((s,g)=>s+g.totalOut,0),'Adjustment':groups.reduce((s,g)=>s+g.adjustmentNet,0),'Available Stock Qty':groups.reduce((s,g)=>s+g.stock,0),'Balance vs PO':groups.reduce((s,g)=>s+g.balance,0),'Status':'SUMMARY'};
+ if(window.XLSX&&XLSX.utils){
+  const wb=XLSX.utils.book_new(),ws=XLSX.utils.json_to_sheet([...rows,total]);
+  ws['!cols']=[{wch:16},{wch:22},{wch:16},{wch:14},{wch:14},{wch:14},{wch:20},{wch:16},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,ws,'Physical Stock');
+  const movements=(extrusionStockMovements||[]).map(m=>({'Date':m.movement_date||'','Profile':m.profile,'Extrusion Length (mm)':m.extrusion_length,'Trolley No.':m.trolley_no||'','Movement':m.movement_type,'Quantity':Math.abs(Number(m.qty_change)||0),'Signed Change':m.qty_change,'Reference / Note':m.note||''}));
+  if(movements.length){const ms=XLSX.utils.json_to_sheet(movements);XLSX.utils.book_append_sheet(wb,ms,'Trolley Movements');}
+  XLSX.writeFile(wb,'AIS_Extrusion_Physical_Stock.xlsx');
+ }else{
+  const headers=Object.keys(rows[0]),csv=[headers,...[...rows,total].map(r=>headers.map(h=>r[h]))].map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='AIS_Extrusion_Physical_Stock.csv';a.click();URL.revokeObjectURL(url);
+ }
+ showToast('Extrusion physical stock Excel report downloaded.','success');
+};
+
 let selectedExtrusionPO='';
 function extrusionPoAgeDays(date){if(!date)return null;const d=new Date(`${date}T00:00:00`);if(Number.isNaN(d.getTime()))return null;return Math.max(0,Math.floor((new Date(new Date().toDateString())-d)/86400000));}
 function renderExtrusionPoTable(){
@@ -11338,6 +11512,7 @@ function openExtrusionStockModal(mode,profile,length,currentStock){
  document.getElementById('exStockMoveQtyLabel').firstChild.textContent=mode==='SET'?'New Stock Balance (Extrusions)':'Quantity (Extrusions)';
  document.getElementById('exStockMoveDate').value=new Date().toISOString().slice(0,10);
  document.getElementById('exStockMoveNote').value='';
+ const trolleyInput=document.getElementById('exStockMoveTrolley');if(trolleyInput){trolleyInput.value='';trolleyInput.required=mode==='IN';trolleyInput.placeholder=mode==='IN'?'Enter arriving trolley number':'Optional trolley / issue reference';}
  document.getElementById('exStockModalTitle').textContent=mode==='IN'?'Add Extrusion Stock':mode==='OUT'?'Extrusion Stock OUT':'Edit Extrusion Stock Balance';
  document.getElementById('exStockModalDescription').textContent=mode==='SET'?'Enter the corrected physical stock balance. The difference is saved as an adjustment; old records remain unchanged.':mode==='IN'?'Record newly received extrusion quantity.':'Record extrusion quantity issued from stock.';
  document.getElementById('exStockMoveCurrent').textContent=`Current stock balance: ${(Number(currentStock)||0).toLocaleString()} extrusions`;
@@ -11350,20 +11525,20 @@ function closeExtrusionStockModal(){const m=document.getElementById('exStockMove
 async function saveExtrusionStockMovement(){
  if(isAppBusy)return;
  if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return showToast('Admin or Planner access is required to manage extrusion stock.','warning');
- const mode=document.getElementById('exStockMoveMode').value,profile=document.getElementById('exStockMoveProfile').value,length=extrusionLen(document.getElementById('exStockMoveLength').value),qty=Math.floor(Number(document.getElementById('exStockMoveQty').value)),date=document.getElementById('exStockMoveDate').value,note=document.getElementById('exStockMoveNote').value.trim();
- if(!profile||!length||!date||!Number.isFinite(qty)||qty<0||(mode!=='SET'&&qty<1))return showToast('Enter a valid profile, extrusion length, date and quantity.','warning');
+ const mode=document.getElementById('exStockMoveMode').value,profile=document.getElementById('exStockMoveProfile').value,length=extrusionLen(document.getElementById('exStockMoveLength').value),qty=Math.floor(Number(document.getElementById('exStockMoveQty').value)),date=document.getElementById('exStockMoveDate').value,note=document.getElementById('exStockMoveNote').value.trim(),trolleyNo=document.getElementById('exStockMoveTrolley')?.value.trim()||'';
+ if(!profile||!length||!date||!Number.isFinite(qty)||qty<0||(mode!=='SET'&&qty<1)||(mode==='IN'&&!trolleyNo))return showToast(mode==='IN'?'Enter profile, extrusion length, date, trolley number and a positive IN quantity.':'Enter a valid profile, extrusion length, date and quantity.','warning');
  const summary=extrusionStockSummary().find(x=>x.profile===profile&&x.exLength===length),current=summary?.stock||0;
  let delta=mode==='IN'?qty:mode==='OUT'?-qty:qty-current;
  if(mode==='OUT'&&qty>current)return showToast(`Insufficient stock. Available: ${current.toLocaleString()} extrusions.`,'warning');
  if(!delta){closeExtrusionStockModal();return showToast('Stock balance is already equal to the entered quantity. No adjustment was needed.','info');}
- const payload={movement_date:date,profile,extrusion_length:length,movement_type:mode,qty_change:delta,note};
+ const payload={movement_date:date,profile,extrusion_length:length,movement_type:mode,qty_change:delta,trolley_no:trolleyNo,note};
  isAppBusy=true;
  try{
   const {error}=await supabaseClient.from('extrusion_stock_movements').insert([payload]);
   if(error)throw error;
   const reloaded=await loadExtrusionStockMovements();
   if(!reloaded)throw new Error('Movement was saved, but the stock ledger could not be reloaded. Check the migration and table permissions before making another adjustment.');
-  closeExtrusionStockModal();populateExtrusionFilters();renderExtrusionStockTable();renderExtrusionPoTable();
+  closeExtrusionStockModal();populateExtrusionFilters();renderExtrusionStockTable();renderExtrusionStockMovementHistory();renderExtrusionPoTable();
   showToast(mode==='IN'?`${qty.toLocaleString()} extrusions added to stock.`:mode==='OUT'?`${qty.toLocaleString()} extrusions issued from stock.`:`Stock balance updated to ${qty.toLocaleString()} extrusions.`,'success');
  }catch(e){
   console.error('Extrusion stock movement save failed',e);
@@ -11541,3 +11716,10 @@ ppSmartCalcDims=function(items,manual={}){const c=ppSmartOrientationMetrics(item
 
 // Close the stock dialog with Escape; safe to register once per page load.
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeExtrusionStockModal();});
+
+// V303: initialize month selector and safely refresh visible team reports after page load.
+document.addEventListener('DOMContentLoaded',()=>{
+  const month=document.getElementById('teamPerfMonth');
+  if(month&&!month.value){const d=new Date();month.value=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;}
+  if(document.getElementById('teamProductionTab')?.classList.contains('active'))renderDailyTeamPerformance();
+});

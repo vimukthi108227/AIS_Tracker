@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
-  <title>Alumex PLC — AIS Tracker | Production & Shipment Control V2.20</title>
+  <title>Alumex PLC — AIS Tracker | Production & Shipment Control V3.0</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -28,7 +28,7 @@
       }
     });
   </script>
-  <link rel="stylesheet" href="style.css?v=20261119-final-crate-report-v261">
+  <link rel="stylesheet" href="style.css?v=20261119-team-performance-v304">
 
 <style id="ais-nav-v9-theme">
   body{font-family:"Inter","Plus Jakarta Sans",system-ui,sans-serif;}
@@ -616,12 +616,15 @@
         </div>
         <div id="teamPerfNotice" style="margin-top:10px;font-size:11px;color:var(--text-muted);"></div>
       </div>
+      <div id="teamPerfOverallSummary" class="team-perf-overall-summary" aria-live="polite"></div>
       <div id="teamPerfCards" class="team-performance-cards"></div>
       <div class="team-performance-charts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin:16px 0;">
         <div class="card"><h4><i class="fa-solid fa-chart-column"></i> Team Plan vs Actual (PCS)</h4><div style="height:260px;position:relative;"><canvas id="teamPlanActualChart"></canvas></div></div>
-        <div class="card"><h4><i class="fa-solid fa-weight-hanging"></i> Team Plan vs Actual Weight (kg)</h4><div style="height:260px;position:relative;"><canvas id="teamPlanActualWeightChart"></canvas></div></div><div class="card"><h4><i class="fa-solid fa-chart-pie"></i> Team Production Contribution (kg)</h4><div style="height:260px;position:relative;"><canvas id="teamProductionContributionChart"></canvas></div></div>
+        <div class="card"><h4><i class="fa-solid fa-weight-hanging"></i> Plan vs Actual & Unplanned Process Weight (kg)</h4><div style="height:260px;position:relative;"><canvas id="teamPlanActualWeightChart"></canvas></div></div>
+        <div class="card team-perf-chart-card"><h4><i class="fa-solid fa-chart-pie"></i> Plan Achievement – Best Team</h4><div id="teamPlanAchievementBest" class="team-perf-chart-best"></div><div style="height:245px;position:relative;"><canvas id="teamPlanAchievementChart"></canvas></div></div>
+        <div class="card team-perf-chart-card"><h4><i class="fa-solid fa-trophy"></i> Total Production Weight – Best Team</h4><div id="teamProductionWeightBest" class="team-perf-chart-best"></div><div style="height:245px;position:relative;"><canvas id="teamProductionContributionChart"></canvas></div></div>
       </div>
-      <div class="card" style="margin-bottom:18px;"><div class="team-sheet-heading"><div><h4 style="margin:0;"><i class="fa-solid fa-table"></i> Individual Team Performance Sheets</h4><small id="teamPerfSheetCaption">Select a team to view and print its separate report.</small></div><button class="btn btn-accent" onclick="printTeamPerformanceSheet()"><i class="fa-solid fa-print"></i> Print Selected Team</button></div><div class="team-sheet-tabs"><button class="active" data-team="Team A" onclick="selectTeamPerfSheet('Team A',this)">Team A</button><button data-team="Team B" onclick="selectTeamPerfSheet('Team B',this)">Team B</button><button data-team="Team C" onclick="selectTeamPerfSheet('Team C',this)">Team C</button></div><div id="teamPerfSheetContent" class="table-container" style="margin-top:12px;"></div></div>
+      <div class="card team-monthly-reports-card" style="margin-bottom:18px;"><div class="team-sheet-heading"><div><h4 style="margin:0;"><i class="fa-solid fa-table"></i> Monthly Team Production Details</h4><small id="teamPerfSheetCaption">Separate monthly data tables for Team A, Team B and Team C.</small></div></div><div id="teamPerfSheetContent" style="margin-top:12px;"></div></div>
     </div>
 
     <!-- Public Stock Tab -->
@@ -1153,9 +1156,13 @@
       <div class="card extrusion-hero"><div><span class="extrusion-eyebrow">MATERIAL PLANNING WORKSPACE</span><h2><i class="fa-solid fa-ruler-combined"></i> Extrusion Stock & PO Planning</h2><p>Extrusion length requirements are calculated from open Production Orders and Master Catalog data. Receipt records are stored separately from existing stock tables.</p></div><div class="extrusion-hero-mark"><i class="fa-solid fa-cubes-stacked"></i></div></div>
       <div class="extrusion-subnav" role="tablist"><button class="extrusion-sub-btn" onclick="switchExtrusionSubTab('exStockSubTab',this)"><i class="fa-solid fa-boxes-stacked"></i> Stock Summary</button><button class="extrusion-sub-btn active" onclick="switchExtrusionSubTab('exInSubTab',this)"><i class="fa-solid fa-truck-ramp-box"></i> PO-wise Extrusion IN</button><button class="extrusion-sub-btn" onclick="switchExtrusionSubTab('exHistorySubTab',this)"><i class="fa-solid fa-clock-rotate-left"></i> IN History</button><button class="extrusion-sub-btn" onclick="switchExtrusionSubTab('exCurrentPlSubTab',this)"><i class="fa-solid fa-clipboard-list"></i> Current PL Requirement</button></div>
       <section id="exStockSubTab" class="extrusion-sub-content" style="display:none">
-        <div class="card"><div class="ex-section-title"><div><h3><i class="fa-solid fa-chart-column"></i> Extrusion Stock Summary</h3><p>Profile + extrusion length are grouped together. Current Stock includes existing PO receipts plus new stock IN / OUT and balance adjustments. Extrusion Balance = Current Stock − Total Required.</p></div><div class="ex-actions"><button class="btn btn-accent" onclick="renderExtrusionModule(true)"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button><button class="btn" onclick="exportExtrusionRequirements()"><i class="fa-solid fa-file-excel"></i> Download CSV</button></div></div>
-          <div class="ex-filters"><label>Profile<select id="exFilterProfile" onchange="renderExtrusionStockTable()"><option value="">All Profiles</option></select></label><label>Extrusion Length<select id="exFilterLength" onchange="renderExtrusionStockTable()"><option value="">All Lengths</option></select></label><label>Search<input id="exSearch" placeholder="Profile / PO / length" oninput="renderExtrusionStockTable();renderExtrusionPoTable()"></label></div>
-          <div class="table-container"><table class="ex-table"><thead><tr><th>Profile</th><th>Extrusion Length (mm)</th><th>Total Required</th><th>Current Stock</th><th>Extrusion Balance Qty</th><th>Status</th><th>Stock Actions</th></tr></thead><tbody id="exStockBody"><tr><td colspan="7">Loading…</td></tr></tbody></table></div>
+        <div class="card"><div class="ex-section-title"><div><h3><i class="fa-solid fa-chart-column"></i> Extrusion Physical Stock Ledger</h3><p>Profile and extrusion length follow Master Catalog. Total IN includes PO-linked receipts and trolley-wise plant arrivals. OUT reduces available stock; adjustments are shown separately.</p></div><div class="ex-actions"><button class="btn btn-accent" onclick="renderExtrusionModule(true)"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button><button class="btn" onclick="exportExtrusionPhysicalStockExcel()"><i class="fa-solid fa-file-excel"></i> Download Excel</button></div></div>
+          <div class="ex-stock-kpi-strip"><div><span>Total Stock IN</span><b id="exPhysicalTotalIn">0</b></div><div><span>Total Stock OUT</span><b id="exPhysicalTotalOut">0</b></div><div><span>Available Extrusions</span><b id="exPhysicalAvailable">0</b></div><div><span>Profile / Length Lines</span><b id="exPhysicalLines">0</b></div></div>
+          <div class="ex-filters"><label>Profile<select id="exFilterProfile" onchange="renderExtrusionStockTable();renderExtrusionStockMovementHistory()"><option value="">All Profiles</option></select></label><label>Extrusion Length<select id="exFilterLength" onchange="renderExtrusionStockTable();renderExtrusionStockMovementHistory()"><option value="">All Lengths</option></select></label><label>Search<input id="exSearch" placeholder="Profile / trolley / length" oninput="renderExtrusionStockTable();renderExtrusionPoTable();renderExtrusionStockMovementHistory()"></label></div>
+          <div class="table-container"><table class="ex-table"><thead><tr><th>Profile</th><th>Extrusion Length (mm)</th><th>PO Required</th><th>Total IN</th><th>Total OUT</th><th>Adjustment</th><th>Available Stock Qty</th><th>Balance vs PO</th><th>Status</th><th>Stock Actions</th></tr></thead><tbody id="exStockBody"><tr><td colspan="10">Loading…</td></tr></tbody><tfoot id="exStockFoot"></tfoot></table></div>
+          <div class="ex-stock-history-wrap"><div class="ex-section-title"><div><h4><i class="fa-solid fa-list-check"></i> Trolley-wise Stock Movement History</h4><p>Every new plant arrival records its trolley number. Stock OUT and adjustments remain traceable.</p></div></div>
+            <div class="table-container"><table class="ex-table"><thead><tr><th>Date</th><th>Profile</th><th>Extrusion Length (mm)</th><th>Trolley No.</th><th>Movement</th><th>Qty</th><th>Reference / Note</th></tr></thead><tbody id="exStockMovementBody"><tr><td colspan="7">No stock movements loaded.</td></tr></tbody></table></div>
+          </div>
         </div>
         <div class="card"><div class="ex-section-title"><div><h3><i class="fa-solid fa-layer-group"></i> Select Production Order</h3><p>Each open Production Order is shown separately in PO date order. Select one card to view only that PO’s profile-wise extrusion requirement, received quantity, remaining balance and receipt dates. Completion confirmation never deletes PO or receipt records.</p></div><button class="btn" onclick="exportExtrusionRequirements()"><i class="fa-solid fa-download"></i> Download Pending</button></div>
           <div class="ex-po-toolbar"><label for="exPoCardSearch">Search PO / profile / extrusion length</label><input id="exPoCardSearch" placeholder="Search pending PO…" oninput="renderExtrusionPoTable()"><span id="exPoCardCount" class="ex-po-count">0 pending POs</span></div>
@@ -1193,6 +1200,7 @@
               <label>Extrusion Length (mm)<select id="exStockMoveLength" required></select></label>
               <label id="exStockMoveQtyLabel">Quantity (Extrusions)<input type="number" id="exStockMoveQty" min="1" step="1" required></label>
               <label>Movement Date<input type="date" id="exStockMoveDate" required></label>
+              <label id="exStockMoveTrolleyLabel">Trolley No. (required for Stock IN)<input id="exStockMoveTrolley" maxlength="80" placeholder="e.g. Trolley 05"></label>
               <label class="wide">Reference / Note<input id="exStockMoveNote" maxlength="250" placeholder="Supplier, batch, issue reference or adjustment reason"></label>
             </div>
             <div id="exStockMoveCurrent" class="ex-stock-current"></div>
@@ -1200,7 +1208,7 @@
           </form>
         </section>
       </div>
-      <div class="ex-footnote"><i class="fa-solid fa-circle-info"></i> First-time setup: create the new <code>extrusion_receipts</code> table using <code>supabase_extrusion_module.sql</code> included in this ZIP. This is an additive migration; it does not modify existing tables.</div>
+      <div class="ex-footnote"><i class="fa-solid fa-circle-info"></i> Database setup: run the existing extrusion migrations if not already applied, then run <code>supabase_extrusion_trolley_stock_v257.sql</code> once to add the trolley reference field. Existing stock and receipt records are preserved.</div>
     </div>
 
     <!-- Master Catalog Tab -->
@@ -1232,7 +1240,7 @@
 .pp-container-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;align-items:end;margin:12px 0}.pp-container-controls .form-group{margin:0}.pp-container-controls-secondary{grid-template-columns:minmax(240px,1.5fr) repeat(3,minmax(130px,auto));align-items:center}.pp-container-check{display:flex;align-items:center;gap:8px;font-weight:700;color:#23465c;padding:10px 0}.pp-container-check input{width:18px;height:18px}.pp-container-stats{grid-template-columns:repeat(auto-fit,minmax(145px,1fr))}.pp-container-layout-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:14px;margin-top:14px}.pp-container-visual{min-height:400px;overflow:auto}.pp-container-selected-meta{background:#f0f8fb;border:1px solid #cde0ea;border-radius:10px;padding:12px;margin:10px 0;line-height:1.7}.pp-position-controls{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}.pp-container-exports{margin:14px 0}.pp-container-table{min-width:1000px}.pp-container-table td,.pp-container-table th{white-space:nowrap}.pp-container-visual svg{width:100%;height:auto;min-width:640px;display:block}.pp-container-planner .pp-note{margin-top:10px}@media(max-width:850px){.pp-container-layout-grid{grid-template-columns:1fr}.pp-container-controls-secondary{grid-template-columns:1fr 1fr}.pp-container-visual{min-height:280px}}
 </style>
 
-<script src="script.js?v=20261119-final-crate-report-v261"></script>
+<script src="script.js?v=20261119-team-performance-v304"></script>
 
 <script>
 (function(){
