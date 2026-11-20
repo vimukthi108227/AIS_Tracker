@@ -6,7 +6,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let currentUserRole = null; let isAdminUnlocked = false; let isDarkMode = false; let isAppBusy = false;
 let masterChartInstance = null, overallPoChartInstance = null, overallPlChartInstance = null, plChartInstance = null, monthlyShiftChartInstance = null, monthlyTeamContributionChartInstance = null, poChartInstances = [], rejectDashChart = null, rejectProfileChartInstance = null;
-let cardboardStockList = [], cardboardManualData = [], dailyInstructionsList = [], masterData = [], historyLogs = [], dailyTeamPlans = [], poList = [], shipmentList = [], packingLists = [], rejectLogs = [], recoverLogs = [], recoveryCutLogs = [], recoveryWrapLogs = [];
+let cardboardStockList = [], cardboardOpeningBalances = [], cardboardManualData = [], dailyInstructionsList = [], masterData = [], historyLogs = [], dailyTeamPlans = [], poList = [], shipmentList = [], packingLists = [], rejectLogs = [], recoverLogs = [], recoveryCutLogs = [], recoveryWrapLogs = [];
 let teamPlanActualChartInstance = null, teamPlanWeightChartInstance = null, teamProductionContributionChartInstance = null, teamPlanAchievementChartInstance = null; 
 let globalManualCrates = {};
 let stockResetInProgress = false;
@@ -119,7 +119,7 @@ function updateRoleUI() {
 function saveMasterExtrasLocally() { const extras = masterData.map(m => ({ p: m.profile, l: m.length, i: m.itemCode, ex: m.exLength, cap: m.boxCapacity, mat: m.material })); localStorage.setItem('alumex_master_extras', JSON.stringify(extras)); }
 function saveCardboardLocally() { try { localStorage.setItem('alumex_cardboard_local', JSON.stringify(cardboardStockList || [])); } catch(e) { console.warn('Cardboard local save skipped:', e); } }
 function saveCardboardManualLocally() { try { localStorage.setItem('alumex_cardboard_manual_local', JSON.stringify(cardboardManualData || [])); } catch(e) { console.warn('Cardboard manual local save skipped:', e); } }
-function getAvailableCardboard(profile, itemCode, length) { let cIn = 0, cOut = 0; const dummyItem = { profile, itemCode, length }; cardboardStockList.forEach(c => { if (normalizeCardboardMatch(c.type, dummyItem)) { cIn += (c.incoming || 0); cOut += (c.used || 0); } }); return cIn - cOut; }
+function getAvailableCardboard(profile, itemCode, length) { const b=getCardboardTransactionsBalance(profile,itemCode,length); return Number(b.incoming||0)-Number(b.used||0); }
 function formatExcelDate(val) { if (!val) return new Date().toISOString().split('T')[0]; if (typeof val === 'number') { const date = new Date(Math.round((val - 25569) * 86400 * 1000)); return date.toISOString().split('T')[0]; } const d = new Date(val); if (!isNaN(d.getTime())) { const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0'); return `${y}-${m}-${day}`; } return new Date().toISOString().split('T')[0]; }
 function formatBalanceInt(val) {
     const n = Number(val);
@@ -607,8 +607,8 @@ async function loadDataFromSupabase(isSilent = false) {
       try { return await safeFetch(table, options, true); }
       catch(e) {
         const msg=String(e?.message||e);
-        if(table==='daily_team_plans' && /(does not exist|could not find the table|schema cache|42P01)/i.test(msg)) {
-          console.warn('Daily Team Plan feature is awaiting its additive Supabase migration.',e);
+        if(['daily_team_plans','cardboard_stock_opening_balances'].includes(table) && /(does not exist|could not find the table|schema cache|42P01)/i.test(msg)) {
+          console.warn(`${table} feature is awaiting its additive Supabase migration.`,e);
           return [];
         }
         throw new Error(`Could not safely read ${table}: ${msg}`);
@@ -626,7 +626,8 @@ async function loadDataFromSupabase(isSilent = false) {
         safeFetchOptional('daily_instructions', { order: {col: 'id', asc: false} }),
         safeFetchOptional('recovery_cut_logs', { order: {col: 'id', asc: false} }),
         safeFetchOptional('recovery_wrap_logs', { order: {col: 'id', asc: false} }),
-        safeFetchAdditiveFeature('daily_team_plans', { order: {col: 'plan_date', asc: false} })
+        safeFetchAdditiveFeature('daily_team_plans', { order: {col: 'plan_date', asc: false} }),
+        safeFetchAdditiveFeature('cardboard_stock_opening_balances', { order: {col: 'cb_type', asc: true} })
     ]);
 
     let catDataRaw = results[0];
@@ -636,7 +637,8 @@ async function loadDataFromSupabase(isSilent = false) {
     }
 
     setDbStatus(true,'Supabase data sync completed.');
-    const poData = results[1], shipData = results[2], plData = results[3], logData = results[4], rjData = results[5], rcData = results[6], cbData = results[7], instData = results[8], rCutData = results[9], rWrapData = results[10], teamPlanData = results[11];
+    const poData = results[1], shipData = results[2], plData = results[3], logData = results[4], rjData = results[5], rcData = results[6], cbData = results[7], instData = results[8], rCutData = results[9], rWrapData = results[10], teamPlanData = results[11], cbOpeningData = results[12];
+    cardboardOpeningBalances = (cbOpeningData || []).map(r => ({cb_type:String(r.cb_type||''),opening_boxes:Number(r.opening_boxes)||0,as_of_date:r.as_of_date||''}));
     
     let syncRow = instData.find(i => i.target_user === 'SYS_CRATES_SYNC');
     if (syncRow && syncRow.message) {
@@ -722,7 +724,7 @@ async function loadDataFromSupabase(isSilent = false) {
     if (recoveryCutLogs.length === 0 && recoverLogs.length) {
       recoveryCutLogs = recoverLogs.map(r => ({id:`legacy-${r.id}`,cut_date:r.recover_date,source_profile:r.profile,source_item_code:r.item_code,original_length:cleanLen(r.original_length),new_profile:r.profile,new_item_code:r.item_code,new_length:cleanLen(r.new_length),cut_pcs:Number(r.pcs)||0,cut_weight:Number(r.recovered_weight)||0,legacy:true}));
     }
-    if (cbData && cbData.length > 0) { cardboardStockList = cbData.map(c => ({ id: c.id, db_id: c.id, date: c.cb_date, type: c.cb_type, incoming: c.incoming || 0, used: c.used || 0, timestamp: c.created_at || new Date().toISOString() })); saveCardboardLocally(); } else { const localCb = localStorage.getItem('alumex_cardboard_local'); if(localCb) cardboardStockList = JSON.parse(localCb); }
+    if (cbData && (cbData.length > 0 || cardboardOpeningBalances.length > 0)) { cardboardStockList = cbData.map(c => ({ id: c.id, db_id: c.id, date: c.cb_date, type: c.cb_type, incoming: c.incoming || 0, used: c.used || 0, timestamp: c.created_at || new Date().toISOString() })); saveCardboardLocally(); } else { const localCb = localStorage.getItem('alumex_cardboard_local'); if(localCb) cardboardStockList = JSON.parse(localCb); }
     const manualRow = (instData || []).find(r => r.target_user === 'SYS_CARDBOARD_MANUAL');
     if (manualRow && manualRow.message) { try { cardboardManualData = JSON.parse(manualRow.message) || []; } catch(e) { cardboardManualData=[]; } saveCardboardManualLocally(); } else { const localManual = localStorage.getItem('alumex_cardboard_manual_local'); if(localManual) { try { cardboardManualData = JSON.parse(localManual) || []; } catch(e) { cardboardManualData=[]; } } }
 
@@ -4312,12 +4314,13 @@ function parseCardboardType(type){
 }
 function cardboardType(profile,itemCode,length){ return `Pr: ${String(profile||'').trim()} | Item: ${String(itemCode||'-').trim()} | L: ${String(length||'').trim()}`; }
 function cardboardRowsFor(profile,itemCode,length){ return cardboardStockList.filter(c=>normalizeCardboardMatch(c.type,{profile,itemCode,length})); }
-function getCardboardTransactionsBalance(profile,itemCode,length){ const rows=cardboardRowsFor(profile,itemCode,length); return {incoming:rows.reduce((a,c)=>a+(Number(c.incoming)||0),0),used:rows.reduce((a,c)=>a+(Number(c.used)||0),0)}; }
+function getCardboardTransactionsBalance(profile,itemCode,length){ const rows=cardboardRowsFor(profile,itemCode,length); const opening=(cardboardOpeningBalances||[]).filter(c=>normalizeCardboardMatch(c.cb_type,{profile,itemCode,length})).reduce((s,c)=>s+(Number(c.opening_boxes)||0),0); return {incoming:opening+rows.reduce((a,c)=>a+(Number(c.incoming)||0),0),used:rows.reduce((a,c)=>a+(Number(c.used)||0),0),opening}; }
 function renderCardboardStock(){
   const totalEl=document.getElementById('totalCardboardStockDisplay');
   const groups={};
   masterData.forEach(m=>{const key=`${String(m.profile).trim()}|${String(m.itemCode||'').trim()}|${cleanLen(m.length)}`; if(!groups[key]) groups[key]={profile:String(m.profile).trim(),itemCode:m.itemCode||'-',length:m.length,material:m.material||'-',capacity:Number(m.boxCapacity)||100};});
   cardboardStockList.forEach(c=>{const x=parseCardboardType(c.type); const key=`${x.profile}|${x.itemCode}|${cleanLen(x.length)}`; if(!groups[key]) groups[key]={profile:x.profile,itemCode:x.itemCode||'-',length:x.length,material:'-',capacity:100};});
+  (cardboardOpeningBalances||[]).forEach(c=>{const x=parseCardboardType(c.cb_type);const key=`${x.profile}|${x.itemCode}|${cleanLen(x.length)}`;if(!groups[key])groups[key]={profile:x.profile,itemCode:x.itemCode||'-',length:x.length,material:'-',capacity:100};});
   let total=0; Object.values(groups).forEach(g=>{const b=getCardboardTransactionsBalance(g.profile,g.itemCode,g.length); total += Math.max(0,b.incoming-b.used);});
   if(totalEl) totalEl.textContent=`${total.toLocaleString()} Boxes`;
   const body=document.getElementById('cardboardCapacityTableBody');
@@ -4483,7 +4486,8 @@ async function resetCardboardStock(){
     try{
       if(btn){btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Resetting...';}
       const {error}=await supabaseClient.from('cardboard_stock').delete().gte('id',0); if(error)throw error;
-      cardboardStockList=[]; saveCardboardLocally(); renderCardboardStock();
+      const openingReset=await supabaseClient.from('cardboard_stock_opening_balances').delete().neq('cb_type',''); if(openingReset.error && !/(does not exist|schema cache|42P01)/i.test(openingReset.error.message||''))throw openingReset.error;
+      cardboardStockList=[]; cardboardOpeningBalances=[]; saveCardboardLocally(); renderCardboardStock();
       showToast(`Cardboard stock reset successfully. ${count} transaction(s) deleted. Manual data and Current Stock are unchanged.`,'success');
     }catch(e){showToast(dbErrorMessage(e,'Cardboard stock reset failed'),'error');}
     finally{if(btn){btn.disabled=false;btn.innerHTML=old||'<i class="fa-solid fa-trash-can"></i> Reset Cardboard Stock';}stockResetInProgress=false;isAppBusy=false;}
@@ -11359,6 +11363,8 @@ ppSmartRenderContainer = function(){
 
 /* AIS Extrusion Stock module — separate additive receipt ledger */
 let extrusionReceipts=[];
+let extrusionOpeningBalances=[];
+let extrusionOpeningBalancesLoaded=false;
 let extrusionReceiptsLoaded=false;
 let extrusionLoading=false;
 let extrusionStockMovements=[];
@@ -11460,8 +11466,9 @@ function confirmExtrusionPOComplete(poNumber){const po=String(poNumber||'');if(!
 function undoExtrusionPOComplete(poNumber){const po=String(poNumber||'');const done=getExtrusionCompletedPOs();if(!done.has(po))return;done.delete(po);if(!saveExtrusionCompletedPOs(done))return;renderExtrusionModule(false);showToast(`PO ${po} returned to pending list.`,'success');}
 
 function extrusionStockSummary(){const groups=new Map();extrusionRequiredByPo().filter(r=>!getExtrusionCompletedPOs().has(String(r.poNumber))).forEach(r=>{if(!groups.has(r.masterKey))groups.set(r.masterKey,{profile:r.profile,exLength:r.exLength,required:0,poLines:[]});const g=groups.get(r.masterKey);g.required+=r.required;g.poLines.push(r);});extrusionMasterRows().forEach(m=>{const p=String(m.profile||'').trim(),l=extrusionLen(m.exLength);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});(extrusionReceipts||[]).forEach(r=>{const p=String(r.profile||'').trim(),l=extrusionLen(r.extrusion_length);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});
- groups.forEach(g=>{g.receiptStock=(extrusionReceipts||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.in_qty)||0),0);const moves=(extrusionStockMovements||[]).filter(m=>String(m.profile||'').trim()===g.profile&&extrusionLen(m.extrusion_length)===g.exLength);g.movementNet=moves.reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.movementIn=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='IN').reduce((s,m)=>s+Math.max(0,Number(m.qty_change)||0),0);g.movementOut=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='OUT').reduce((s,m)=>s+Math.abs(Math.min(0,Number(m.qty_change)||0)),0);g.adjustmentNet=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='SET').reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.cutUsageRows=(extrusionCutUsage||[]).filter(u=>String(u.profile||'').trim()===g.profile&&extrusionLen(u.extrusion_length)===g.exLength);g.cutUsageRequired=g.cutUsageRows.reduce((s,u)=>s+(Number(u.required_extrusions)||0),0);g.cutUsageDeducted=g.cutUsageRows.reduce((s,u)=>s+(Number(u.deducted_extrusions)||0),0);g.cutUsageShort=g.cutUsageRows.reduce((s,u)=>s+(Number(u.short_extrusions)||0),0);g.totalIn=g.receiptStock+g.movementIn;g.totalOut=g.movementOut+g.cutUsageDeducted;g.stock=Math.max(0,g.receiptStock+g.movementNet-g.cutUsageDeducted);g.balance=g.stock-g.required;g.status=g.balance>=0?(g.stock===0&&g.required>0?'Short':g.balance>0?'Extra':'Complete'):'Short';});return [...groups.values()].sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);}
-async function loadExtrusionReceipts(showMessage=false){if(extrusionLoading)return;extrusionLoading=true;try{const {data,error}=await supabaseClient.from('extrusion_receipts').select('*').order('receipt_date',{ascending:false}).order('id',{ascending:false});if(error)throw error;extrusionReceipts=(data||[]).map(r=>({...r,receiptDate:r.receipt_date,profile:String(r.profile||''),extrusionLength:extrusionLen(r.extrusion_length),trolleyNo:r.trolley_no||'',inQty:Number(r.in_qty)||0,note:r.note||''}));extrusionReceiptsLoaded=true;await loadExtrusionStockMovements();renderExtrusionModule(false);if(showMessage)showToast('Extrusion receipts refreshed.','success');}catch(e){console.error('Extrusion receipt load failed',e);if(showMessage)showToast('Extrusion table is not ready. Run supabase_extrusion_module.sql once in Supabase SQL Editor.','error');else{const b=document.getElementById('exHistoryBody');if(b)b.innerHTML='<tr><td colspan="7">Extrusion receipt table is not ready. Run the included supabase_extrusion_module.sql migration, then refresh.</td></tr>';}}finally{extrusionLoading=false;}}
+ (extrusionOpeningBalances||[]).forEach(r=>{const p=String(r.profile||'').trim(),l=extrusionLen(r.extrusion_length);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});
+ groups.forEach(g=>{g.openingStock=(extrusionOpeningBalances||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.opening_qty)||0),0);g.receiptStock=(extrusionReceipts||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.in_qty)||0),0);const moves=(extrusionStockMovements||[]).filter(m=>String(m.profile||'').trim()===g.profile&&extrusionLen(m.extrusion_length)===g.exLength);g.movementNet=moves.reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.movementIn=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='IN').reduce((s,m)=>s+Math.max(0,Number(m.qty_change)||0),0);g.movementOut=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='OUT').reduce((s,m)=>s+Math.abs(Math.min(0,Number(m.qty_change)||0)),0);g.adjustmentNet=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='SET').reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.cutUsageRows=(extrusionCutUsage||[]).filter(u=>String(u.profile||'').trim()===g.profile&&extrusionLen(u.extrusion_length)===g.exLength);g.cutUsageRequired=g.cutUsageRows.reduce((s,u)=>s+(Number(u.required_extrusions)||0),0);g.cutUsageDeducted=g.cutUsageRows.reduce((s,u)=>s+(Number(u.deducted_extrusions)||0),0);g.cutUsageShort=g.cutUsageRows.reduce((s,u)=>s+(Number(u.short_extrusions)||0),0);g.totalIn=g.openingStock+g.receiptStock+g.movementIn;g.totalOut=g.movementOut+g.cutUsageDeducted;g.stock=Math.max(0,g.openingStock+g.receiptStock+g.movementNet-g.cutUsageDeducted);g.balance=g.stock-g.required;g.status=g.balance>=0?(g.stock===0&&g.required>0?'Short':g.balance>0?'Extra':'Complete'):'Short';});return [...groups.values()].sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);}
+async function loadExtrusionReceipts(showMessage=false){if(extrusionLoading)return;extrusionLoading=true;try{const {data,error}=await supabaseClient.from('extrusion_receipts').select('*').order('receipt_date',{ascending:false}).order('id',{ascending:false});if(error)throw error;extrusionReceipts=(data||[]).map(r=>({...r,receiptDate:r.receipt_date,profile:String(r.profile||''),extrusionLength:extrusionLen(r.extrusion_length),trolleyNo:r.trolley_no||'',inQty:Number(r.in_qty)||0,note:r.note||''}));extrusionReceiptsLoaded=true;await loadExtrusionStockMovements();await loadExtrusionOpeningBalances();renderExtrusionModule(false);if(showMessage)showToast('Extrusion receipts refreshed.','success');}catch(e){console.error('Extrusion receipt load failed',e);if(showMessage)showToast('Extrusion table is not ready. Run supabase_extrusion_module.sql once in Supabase SQL Editor.','error');else{const b=document.getElementById('exHistoryBody');if(b)b.innerHTML='<tr><td colspan="7">Extrusion receipt table is not ready. Run the included supabase_extrusion_module.sql migration, then refresh.</td></tr>';}}finally{extrusionLoading=false;}}
 async function loadExtrusionCutUsage(){
  if(extrusionCutUsageLoading)return extrusionCutUsageLoaded;
  extrusionCutUsageLoading=true;
@@ -11478,6 +11485,20 @@ async function loadExtrusionCutUsage(){
   if(body)body.innerHTML=`<tr><td colspan="12" style="color:#b45309;font-weight:800;">Production cut usage history is not available: ${escapeHtml(e?.message||'Migration or permission issue')}. Run supabase_extrusion_cut_usage_v261.sql, then refresh.</td></tr>`;
   return false;
  }finally{extrusionCutUsageLoading=false;}
+}
+async function loadExtrusionOpeningBalances(){
+ try{
+  const {data,error}=await supabaseClient.from('extrusion_stock_opening_balances').select('*').order('profile',{ascending:true}).order('extrusion_length',{ascending:true});
+  if(error)throw error;
+  extrusionOpeningBalances=(data||[]).map(r=>({...r,profile:String(r.profile||''),extrusion_length:extrusionLen(r.extrusion_length),opening_qty:Number(r.opening_qty)||0}));
+  extrusionOpeningBalancesLoaded=true;
+  return true;
+ }catch(e){
+  console.error('Extrusion opening balance load failed:',e);
+  extrusionOpeningBalances=[];extrusionOpeningBalancesLoaded=false;
+  if(!/(does not exist|schema cache|42P01)/i.test(String(e?.message||e)))showToast('Extrusion opening balances could not load. Check the 4-month retention migration and refresh before relying on stock totals.','error');
+  return false;
+ }
 }
 async function loadExtrusionStockMovements(){
  try{
