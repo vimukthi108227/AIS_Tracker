@@ -11639,18 +11639,64 @@ function getSelectedExtrusionPOExportRows(){
  return {details,receipts,po};
 }
 function exportSelectedExtrusionPODetails(){
- const {details,receipts,po}=getSelectedExtrusionPOExportRows();
+ const {details,allocationBreakdown,receipts,po}=getSelectedExtrusionPOExportRows();
  if(!po)return showToast('Select a PO first.','warning');
  if(!details.length)return showToast('No extrusion details for this PO.','warning');
- if(typeof XLSX!=='undefined'&&XLSX.utils&&XLSX.writeFile){
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(details),'PO Requirement');
-  if(allocationBreakdown.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(allocationBreakdown),'Stock Allocation');
-  if(receipts.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(receipts),'Receipt History');
-  XLSX.writeFile(wb,`AIS_Extrusion_PO_${po}_Details.xlsx`);
-  showToast('Selected PO Excel report downloaded.','success');
- }else exportTableToExcel(details,`AIS_Extrusion_PO_${po}_Details`,'PO Requirement');
+ try{
+  if(typeof XLSX!=='undefined'&&XLSX.utils&&XLSX.writeFile){
+   const wb=XLSX.utils.book_new();
+   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(details),'PO Requirement');
+   if(allocationBreakdown.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(allocationBreakdown),'Stock Allocation');
+   if(receipts.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(receipts),'Receipt History');
+   XLSX.writeFile(wb,`AIS_Extrusion_PO_${po}_Details.xlsx`);
+   showToast('Selected PO Excel report downloaded.','success');
+  }else exportTableToExcel(details,`AIS_Extrusion_PO_${po}_Details`,'PO Requirement');
+ }catch(error){
+  console.error('Selected PO Excel export failed:',error);
+  try{exportTableToExcel(details,`AIS_Extrusion_PO_${po}_Details`,'PO Requirement');}
+  catch(fallbackError){console.error(fallbackError);showToast('Excel export failed. Please allow downloads and try again.','error');}
+ }
 }
+
+function exportSelectedExtrusionPODetailsPdf(){
+ const {details,allocationBreakdown,receipts,po}=getSelectedExtrusionPOExportRows();
+ if(!po)return showToast('Select a PO first.','warning');
+ if(!details.length)return showToast('No extrusion details for this PO.','warning');
+ const title=`AIS Tracker — Extrusion PO ${po}`;
+ const sections=[
+  {title:'PO Requirement & Stock Allocation',rows:details},
+  {title:'Physical Stock Allocation Breakdown',rows:allocationBreakdown},
+  {title:'Receipt History',rows:receipts}
+ ].filter(s=>Array.isArray(s.rows)&&s.rows.length);
+ try{
+  const jsPDFCtor=window.jspdf&&window.jspdf.jsPDF;
+  if(typeof jsPDFCtor==='function'){
+   const doc=new jsPDFCtor({orientation:'landscape',unit:'mm',format:'a3'});
+   sections.forEach((section,index)=>{
+    if(index>0)doc.addPage('a3','landscape');
+    doc.setFont('helvetica','bold');doc.setFontSize(15);doc.text(title,10,12);
+    doc.setFont('helvetica','normal');doc.setFontSize(10);doc.text(section.title,10,19);
+    doc.setFontSize(7);doc.text(`Generated: ${new Date().toLocaleString('en-GB')}`,10,24);
+    const cols=Object.keys(section.rows[0]);
+    const body=section.rows.map(row=>cols.map(k=>row[k]===null||row[k]===undefined?'':String(row[k])));
+    if(typeof doc.autoTable!=='function')throw new Error('PDF table plugin not available');
+    doc.autoTable({head:[cols],body,startY:29,theme:'grid',styles:{font:'helvetica',fontSize:6.5,cellPadding:1.8,overflow:'linebreak'},headStyles:{fillColor:[6,78,59],textColor:255,fontStyle:'bold'},alternateRowStyles:{fillColor:[240,248,250]},margin:{left:8,right:8,top:29,bottom:12},horizontalPageBreak:true,horizontalPageBreakRepeat:0});
+   });
+   doc.save(`AIS_Extrusion_PO_${po}_Details.pdf`);
+   showToast('Selected PO PDF report downloaded.','success');
+   return;
+  }
+ }catch(error){console.warn('jsPDF export unavailable; opening print-to-PDF fallback.',error);}
+ const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+ const table=s=>`<h2>${esc(s.title)}</h2><table><thead><tr>${Object.keys(s.rows[0]).map(k=>`<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${s.rows.map(r=>`<tr>${Object.keys(s.rows[0]).map(k=>`<td>${esc(r[k])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+ const win=window.open('','_blank');
+ if(!win){showToast('Popup blocked. Allow popups for this website, then try PDF again.','error');return;}
+ win.document.open();
+ win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>body{font:12px Arial,sans-serif;color:#17384a;margin:18px}h1{font-size:20px}h2{font-size:15px;margin:24px 0 8px}table{border-collapse:collapse;width:100%;font-size:9px;margin-bottom:18px}th,td{border:1px solid #aabdc8;padding:5px;text-align:left;vertical-align:top}th{background:#dcecf1}tr:nth-child(even){background:#f4f8fa}.hint{color:#526b7b;font-size:10px}@media print{button{display:none}body{margin:8mm}table{page-break-inside:auto}tr{page-break-inside:avoid}}</style></head><body><h1>${esc(title)}</h1><p class="hint">Generated ${esc(new Date().toLocaleString('en-GB'))}</p>${sections.map(table).join('')}<button onclick="window.print()">Print / Save as PDF</button><script>window.onload=function(){setTimeout(function(){window.print()},300)};<\/script></body></html>`);
+ win.document.close();
+ showToast('Print dialog opened. Choose “Save as PDF” to create the PDF.','success');
+}
+
 function exportSelectedExtrusionPOReceiptsExcel(){
  const {receipts,po}=getSelectedExtrusionPOExportRows();
  if(!po)return showToast('Select a PO first.','warning');
