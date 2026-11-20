@@ -3984,3 +3984,35 @@ body.dark-mode .cb-shortage-panel{background:#0f172a;border-color:#334155}body.d
 
 /* V303 safe rendering feedback */
 .team-perf-render-warning{padding:18px;border:1px solid #fca5a5;background:#fff7ed;color:#9a3412;border-radius:10px;font-size:13px;font-weight:700;grid-column:1/-1;}
+
+
+/* AIS Tracker V305 - Current Stock date and shift snapshot controls */
+.stock-shift-toolbar{
+  display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:10px 16px;
+  align-items:end;margin:0 0 12px;padding:13px 14px;
+  background:var(--emerald-light);border:1px solid var(--emerald-border);
+  border-radius:var(--radius-md);
+}
+.stock-shift-fields{display:grid;grid-template-columns:repeat(2,minmax(180px,250px));gap:12px;}
+.stock-shift-fields .form-group{margin:0;}
+.stock-shift-fields label{display:block;margin-bottom:6px;color:var(--primary-dark);font-weight:800;font-size:12px;}
+.stock-shift-fields input,.stock-shift-fields select{width:100%;min-height:40px;}
+.stock-shift-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
+.stock-snapshot-status{grid-column:1/-1;padding:9px 11px;border-radius:8px;font-size:12px;font-weight:700;line-height:1.45;}
+.stock-snapshot-status.info{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;}
+.stock-snapshot-status.saved{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;}
+.stock-snapshot-status.warning{background:#fffbeb;color:#92400e;border:1px solid #fde68a;}
+.stock-snapshot-status.error{background:#fff1f2;color:#be123c;border:1px solid #fecdd3;}
+.stock-filter-toolbar{margin-top:0;}
+.stock-shift-actions button[hidden]{display:none!important;}
+@media(max-width:760px){
+  .stock-shift-toolbar{grid-template-columns:1fr;}
+  .stock-shift-fields{grid-template-columns:1fr 1fr;}
+  .stock-shift-actions{justify-content:flex-start;}
+}
+@media(max-width:460px){
+  .stock-shift-fields{grid-template-columns:1fr;}
+  .stock-shift-actions button{flex:1 1 100%;}
+}
+
+.ex-po-allocation-detail{display:block;margin-top:3px;max-width:190px;color:#647b8c;font-size:9px;line-height:1.35;font-weight:700;white-space:normal}.ex-po-details .ex-table td{vertical-align:middle}

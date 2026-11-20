@@ -743,7 +743,7 @@ async function loadDataFromSupabase(isSilent = false) {
       if(currentUserRole) { 
           updateRoleUI(); 
           setTimeout(() => {
-              renderDashboard(); renderProfileSummaryTable(); checkDateStatus(); renderHistoryData(); updatePoFilters(); renderPoDetailsTable(); window.renderShipmentHistoryTable(); renderPackingListTable(); renderPoCharts(); renderBalanceWorkTable(); renderCardboardStock(); renderDailyInstructions(); renderRejectTable(); renderRecoverTable();
+              renderDashboard(); renderProfileSummaryTable(); initializeStockShiftControls(); checkDateStatus(); renderHistoryData(); updatePoFilters(); renderPoDetailsTable(); window.renderShipmentHistoryTable(); renderPackingListTable(); renderPoCharts(); renderBalanceWorkTable(); renderCardboardStock(); renderDailyInstructions(); renderRejectTable(); renderRecoverTable();
               window.updateShipmentCountdown();
           }, 10);
       } 
@@ -4053,29 +4053,52 @@ function isPunchBypassed(profile, length) { const bypassProfiles = ['1041', '104
 function populateStockFilterDropdown() { const select = document.getElementById('stockFilterProfile'); if(!select) return; select.innerHTML = '<option value="">-- All Profiles --</option>'; const itemSelect = document.getElementById('stockFilterItemCode'); if(itemSelect) itemSelect.innerHTML = '<option value="">-- All Item Codes --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }
 function onStockProfileFilterChange() { const profile = document.getElementById('stockFilterProfile').value; const itemSelect = document.getElementById('stockFilterItemCode'); itemSelect.innerHTML = '<option value="">-- All Item Codes --</option>'; if(profile) { const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => itemSelect.appendChild(new Option(ic, ic))); } renderProfileSummaryTable(); }
 
-function renderProfileSummaryTable() { 
+function renderProfileSummaryTable() {
+    const tbody = document.getElementById('profileSummaryTableBody');
+    if (!tbody) return;
     try {
-        const profileFilter = document.getElementById('stockFilterProfile').value; 
-        const itemFilter = document.getElementById('stockFilterItemCode').value; 
-        const tbody = document.getElementById('profileSummaryTableBody'); 
-        if(!tbody) return;
-        let html = ''; 
-        let filteredData = masterData; 
-        if (profileFilter) filteredData = filteredData.filter(m => String(m.profile).trim() === profileFilter); 
-        if (itemFilter) filteredData = filteredData.filter(m => m.itemCode === itemFilter); 
-        if (filteredData.length === 0) { html = `<tr><td colspan="12" style="color:#888; text-align:center;">No Data Found</td></tr>`; } 
-        else {
-            filteredData.forEach((item) => { 
-                const actualIndex = masterData.indexOf(item); 
-                const totalPcs = (item.cutQty || 0) + (item.punchQty || 0) + (item.wrapQty || 0) + (item.boxQty || 0) + (item.crateQty || 0); 
-                const totalWeight = (totalPcs * (item.unitWeight||0)).toFixed(2); 
-                const boxCount = item.boxCapacity ? Math.floor((item.boxQty || 0) / item.boxCapacity) : 0; 
-                const isAd = currentUserRole === 'Admin'; 
-                html += `<tr><td><b>${item.profile}</b></td><td><span style="font-weight:600; color:var(--info-color);">${item.itemCode || '-'}</span></td><td>${item.length}</td><td>${item.unitWeight}</td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'cutQty')` : ''}"><span class="stock-badge bg-cut">${item.cutQty || 0} Pcs</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'punchQty')` : ''}"><span class="stock-badge bg-punch">${item.punchQty || 0} Pcs</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'wrapQty')` : ''}"><span class="stock-badge bg-wrap">${item.wrapQty || 0} Pcs</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'boxQty')` : ''}"><span class="stock-badge bg-box">${item.boxQty || 0} Pcs</span></td><td><span class="stock-badge" style="background:#059669; color:#fff;">${boxCount} Boxes</span></td><td class="${isAd ? 'clickable-stage' : ''}" onclick="${isAd ? `openStockEditModal(${actualIndex}, 'crateQty')` : ''}"><span class="stock-badge bg-crate">${item.crateQty || 0} Pcs</span></td><td><span class="stock-badge bg-total">${totalPcs} Pcs</span><div style="font-size:11px; font-weight:800; color:#0369a1; background:rgba(3,105,161,0.08); padding:2px 6px; border-radius:4px; display:inline-block; margin-top:4px;">${totalWeight} kg</div></td><td>${isAd ? `<button class="btn btn-accent" style="padding:4px 8px;" onclick="openStockEditModal(${actualIndex})"><i class="fa-solid fa-pen"></i></button>` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; 
-            }); 
+        const profileFilter = document.getElementById('stockFilterProfile')?.value || '';
+        const itemFilter = document.getElementById('stockFilterItemCode')?.value || '';
+        const snapshotMode = stockShiftSnapshotState.mode === 'snapshot';
+        const sourceData = snapshotMode ? stockShiftSnapshotState.rows : masterData;
+        let filteredData = sourceData;
+        if (profileFilter) filteredData = filteredData.filter(m => String(m.profile).trim() === profileFilter);
+        if (itemFilter) filteredData = filteredData.filter(m => String(m.itemCode || '').trim() === itemFilter);
+        if (!filteredData.length) {
+            tbody.innerHTML = `<tr><td colspan="12" style="color:#64748b;text-align:center;padding:22px;">${snapshotMode ? 'No stock rows in this saved shift snapshot.' : 'No Data Found'}</td></tr>`;
+            return;
         }
-        tbody.innerHTML = html;
-    } catch(e) {}
+        tbody.innerHTML = filteredData.map(item => {
+            const actualIndex = snapshotMode ? -1 : masterData.indexOf(item);
+            const canEdit = currentUserRole === 'Admin' && !snapshotMode && actualIndex >= 0;
+            const cut = Number(item.cutQty) || 0;
+            const punch = Number(item.punchQty) || 0;
+            const wrap = Number(item.wrapQty) || 0;
+            const box = Number(item.boxQty) || 0;
+            const crate = Number(item.crateQty) || 0;
+            const totalPcs = cut + punch + wrap + box + crate;
+            const unitWeight = Number(item.unitWeight) || 0;
+            const totalWeight = (totalPcs * unitWeight).toFixed(2);
+            const boxCount = Number(item.boxCapacity) > 0 ? Math.floor(box / Number(item.boxCapacity)) : 0;
+            const editCell = (qty, stage, badgeClass) => `<td class="${canEdit ? 'clickable-stage' : ''}" ${canEdit ? `onclick="openStockEditModal(${actualIndex}, '${stage}')"` : ''}><span class="stock-badge ${badgeClass}">${qty} Pcs</span></td>`;
+            return `<tr>
+              <td><b>${item.profile ?? '-'}</b></td>
+              <td><span style="font-weight:600;color:var(--info-color);">${item.itemCode || '-'}</span></td>
+              <td>${item.length ?? '-'}</td><td>${unitWeight || 0}</td>
+              ${editCell(cut,'cutQty','bg-cut')}
+              ${editCell(punch,'punchQty','bg-punch')}
+              ${editCell(wrap,'wrapQty','bg-wrap')}
+              ${editCell(box,'boxQty','bg-box')}
+              <td><span class="stock-badge" style="background:#059669;color:#fff;">${boxCount} Boxes</span></td>
+              ${editCell(crate,'crateQty','bg-crate')}
+              <td><span class="stock-badge bg-total">${totalPcs} Pcs</span><div style="font-size:11px;font-weight:800;color:#0369a1;background:rgba(3,105,161,0.08);padding:2px 6px;border-radius:4px;display:inline-block;margin-top:4px;">${totalWeight} kg</div></td>
+              <td>${canEdit ? `<button class="btn btn-accent" style="padding:4px 8px;" onclick="openStockEditModal(${actualIndex})"><i class="fa-solid fa-pen"></i></button>` : `<span title="${snapshotMode ? 'Historical snapshot is read-only' : 'Read only'}"><i class="fa-solid fa-lock" style="color:#aaa;"></i></span>`}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        console.error('Current Stock table render failed:', e);
+        tbody.innerHTML = `<tr><td colspan="12" style="color:#b91c1c;text-align:center;padding:20px;">Stock table could not be rendered: ${String(e?.message || e)}</td></tr>`;
+    }
 }
 
 function getActivePackingListSelection() {
@@ -4813,6 +4836,8 @@ async function submitDailyEntry() {
   let databaseCommitComplete = false;
   let cardboardDeducted = null;
   let cardboardToDeduct = 0;
+  let extrusionUsageRecord = null;
+  let extrusionUsagePlan = null;
   let item = null;
   let newLog = null;
   try {
@@ -4838,6 +4863,19 @@ async function submitDailyEntry() {
 
     item=masterData.find(m=>String(m.profile).trim()===profileVal&&String(m.itemCode).trim()===itemCodeVal&&cleanLen(m.length)===cleanLen(lengthVal));
     if(!item) return showToast('Selected catalog item was not found. Refresh data and try again.','error');
+
+    // A Cut entry consumes extrusion stock. Load the live additive ledgers before
+    // changing Master Catalog stock so the deduction can be recorded exactly once.
+    if(cutQty>0){
+      if(!extrusionReceiptsLoaded)await loadExtrusionReceipts(false);
+      if(!extrusionReceiptsLoaded||!extrusionStockMovementsLoaded||!extrusionCutUsageLoaded)
+        throw new Error('Extrusion stock ledger is not ready. Run supabase_extrusion_cut_usage_v261.sql in Supabase SQL Editor, open Extrusion > Stock Summary, refresh, then retry. No production stock was changed.');
+      extrusionUsagePlan=getExtrusionPlan(profileVal,itemCodeVal,lengthVal,cutQty);
+      if(!extrusionUsagePlan.matched||!extrusionUsagePlan.exLength||!extrusionUsagePlan.pcsPerEx)
+        throw new Error(`Master Catalog extrusion length / PCS per extrusion is missing for ${profileVal} • ${itemCodeVal} • ${lengthVal} mm. Update Master Catalog before saving this Cut entry.`);
+      const need=Math.ceil(cutQty/extrusionUsagePlan.pcsPerEx);
+      extrusionUsagePlan={...extrusionUsagePlan,required:need,deducted:0,shortage:0};
+    }
 
     const previous={cutQty:Number(item.cutQty)||0,punchQty:Number(item.punchQty)||0,wrapQty:Number(item.wrapQty)||0,boxQty:Number(item.boxQty)||0,crateQty:Number(item.crateQty)||0};
     let next={...previous};
@@ -4911,6 +4949,26 @@ async function submitDailyEntry() {
       updatedRows.push({id:row.id,before:{cutQty:row.cutQty,punchQty:row.punchQty,wrapQty:row.wrapQty,boxQty:row.boxQty,crateQty:row.crateQty}});
     }
     insertedLog=await dbInsert('history_logs',newLog,'Production history save failed');
+    // dbInsert intentionally avoids INSERT...RETURNING for RLS compatibility.
+    // Resolve the just-saved history ID using the exact entry fields; the unique
+    // source_history_id on the new ledger then prevents a second deduction.
+    insertedLog.id=await aisFindLatestId('history_logs',{log_date:newLog.log_date,shift:newLog.shift,team:newLog.team,profile:newLog.profile,length:newLog.length,cut_qty:newLog.cut_qty,punch_qty:newLog.punch_qty,wrap_qty:newLog.wrap_qty,box_qty:newLog.box_qty,crate_qty:newLog.crate_qty,log_time:newLog.log_time});
+    if(cutQty>0){
+      const historyId=Number(insertedLog?.id);
+      if(!Number.isFinite(historyId)||historyId<=0)throw new Error('Could not verify the saved production history ID. No extrusion deduction was made; refresh the page and check History before retrying.');
+      const usageArgs={p_source_history_id:historyId,p_movement_date:dateVal,p_shift:shiftVal,p_team:teamVal,p_profile:profileVal,p_item_code:itemCodeVal,p_cut_length:cleanLen(lengthVal),p_extrusion_length:extrusionLen(extrusionUsagePlan.exLength),p_cut_pcs:cutQty,p_pcs_per_extrusion:extrusionUsagePlan.pcsPerEx,p_required_extrusions:extrusionUsagePlan.required,p_note:'Automatic deduction from Daily Production Cut'};
+      let usageResult=await supabaseClient.rpc('record_extrusion_cut_usage',usageArgs);
+      if(usageResult.error){
+        // Recover a timed-out RPC by its unique history ID; never retry the deduction blindly.
+        const check=await supabaseClient.from('extrusion_cut_usage').select('*').eq('source_history_id',historyId).maybeSingle();
+        if(check.error||!check.data)throw usageResult.error;
+        usageResult={data:check.data,error:null};
+      }
+      extrusionUsageRecord=Array.isArray(usageResult.data)?usageResult.data[0]:usageResult.data;
+      if(!extrusionUsageRecord)throw new Error('The extrusion cut usage function returned no saved record.');
+      extrusionUsagePlan={...extrusionUsagePlan,deducted:Number(extrusionUsageRecord.deducted_extrusions)||0,shortage:Number(extrusionUsageRecord.short_extrusions)||0};
+      extrusionCutUsage=[extrusionUsageRecord,...(extrusionCutUsage||[]).filter(u=>String(u.source_history_id)!==String(historyId))];
+    }
     databaseCommitComplete = true;
     let teamPlanSaved = true;
     {
@@ -4937,7 +4995,9 @@ async function submitDailyEntry() {
 
     aisRegisterUndo(`Daily Production • ${profileVal} / ${lengthVal} • ${dateVal}`, async()=>{
       for(const row of updatedRows) await dbUpdate('master_catalog',previousToDb(row.before),row.id,'Production undo failed');
-      await aisDeleteLatest('history_logs',{log_date:newLog.log_date,shift:newLog.shift,team:newLog.team,profile:newLog.profile,length:newLog.length,cut_qty:newLog.cut_qty,punch_qty:newLog.punch_qty,wrap_qty:newLog.wrap_qty,box_qty:newLog.box_qty,crate_qty:newLog.crate_qty,log_time:newLog.log_time});
+      if(insertedLog?.id){const {error:usageDeleteError}=await supabaseClient.from('extrusion_cut_usage').delete().eq('source_history_id',insertedLog.id);if(usageDeleteError)throw usageDeleteError;}
+      await aisDeleteLatest('history_logs',{log_date:newLog.log_date,shift:newLog.shift,team:newLog.team,profile:newLog.profile,length:newLog.length,cut_qty:newLog.cut_qty,punch_qty:newLog.punch_qty,wrap_qty:newLog.wrap_qty,crate_qty:newLog.crate_qty,log_time:newLog.log_time});
+      await loadExtrusionReceipts(false);
       if(savedTeamPlan){if(previousTeamPlan){await supabaseClient.from('daily_team_plans').upsert({plan_date:previousTeamPlan.date,shift:previousTeamPlan.shift,team:previousTeamPlan.team,profile:previousTeamPlan.profile,item_code:previousTeamPlan.itemCode,length:previousTeamPlan.length,plan_cut_qty:previousTeamPlan.cutQty,plan_punch_qty:previousTeamPlan.punchQty,plan_wrap_qty:previousTeamPlan.wrapQty,plan_box_qty:previousTeamPlan.boxQty,plan_crate_qty:previousTeamPlan.crateQty},{onConflict:'plan_date,shift,team,profile,item_code,length'});}else{await supabaseClient.from('daily_team_plans').delete().match({plan_date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,item_code:itemCodeVal,length:cleanLen(lengthVal)});}}
       if(cardboardDeducted) await aisDeleteLatest('cardboard_stock',{cb_date:cardboardDeducted.date,cb_type:cardboardDeducted.type,incoming:0,used:cardboardDeducted.used});
     },'adminEntryTab');
@@ -4947,7 +5007,9 @@ async function submitDailyEntry() {
     ['cutQty','punchQty','wrapQty','boxQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
     updateProductionCardboardAvailability();
     const saveMessage=shortageBoxes>0 ? `Production saved successfully. Cardboard stock for this profile is now ${Math.max(0,Number(getAvailableCardboard(profileVal,itemCodeVal,lengthVal))||0)} box(es); ${shortageBoxes} box(es) had to be packed using separately prepared cardboard. Box Qty was saved.` : (teamPlanSaved ? 'Production saved successfully. Stock, history and team plan are updated.' : 'Production and stock were saved, but the Team Plan could not be saved. Run the additive daily_team_plans SQL migration and retry the plan entry.');
-    showToast(saveMessage,teamPlanSaved?'success':'warning');
+    const extrusionMessage=extrusionUsagePlan?` Extrusion: ${extrusionUsagePlan.required} required, ${extrusionUsagePlan.deducted} deducted from stock${extrusionUsagePlan.shortage?`, ${extrusionUsagePlan.shortage} short`:''}.`:'';
+    showToast(saveMessage+extrusionMessage,extrusionUsagePlan?.shortage?'warning':(teamPlanSaved?'success':'warning'));
+    if(extrusionUsagePlan){renderExtrusionStockTable();renderExtrusionCutUsageHistory();renderExtrusionStockMovementHistory();}
   } catch(e) {
     console.error('Production save error:',e);
     if(databaseCommitComplete){
@@ -4957,7 +5019,11 @@ async function submitDailyEntry() {
       loadDataFromSupabase(true).catch(syncErr=>console.warn('Post-commit UI recovery sync failed:',syncErr));
       showToast('Production data was saved, but the screen refresh had an issue. Data is syncing; do not re-enter this movement.','warning');
     } else {
-      // Roll back only the rows that this attempt successfully changed before the history commit.
+      // Roll back any partially written cut-usage/history rows before restoring catalog stock.
+      if(insertedLog?.id){
+        try{await supabaseClient.from('extrusion_cut_usage').delete().eq('source_history_id',insertedLog.id);}catch(rb){console.error('Extrusion cut usage rollback failed:',rb);}
+        try{await supabaseClient.from('history_logs').delete().eq('id',insertedLog.id);}catch(rb){console.error('Production history rollback failed:',rb);}
+      }else if(newLog){try{await aisDeleteLatest('history_logs',{log_date:newLog.log_date,shift:newLog.shift,team:newLog.team,profile:newLog.profile,length:newLog.length,cut_qty:newLog.cut_qty,punch_qty:newLog.punch_qty,wrap_qty:newLog.wrap_qty,box_qty:newLog.box_qty,crate_qty:newLog.crate_qty,log_time:newLog.log_time});}catch(rb){console.error('Production history rollback by exact fields failed:',rb);}}
       for(const row of [...updatedRows].reverse()){
         try{ await dbUpdate('master_catalog',previousToDb(row.before),row.id,'Production rollback failed'); }
         catch(rb){ console.error('Production stock rollback failed:',rb); }
@@ -7663,12 +7729,12 @@ function renderHistoryData() {
         filtered.forEach(log => { 
             const matched = masterData.find(m => String(m.profile).trim() === String(log.profile).trim() && cleanLen(m.length) === cleanLen(log.length));
             const iCode = matched && matched.itemCode ? matched.itemCode : '-'; const uWt = matched && matched.unitWeight ? matched.unitWeight.toFixed(3) + ' kg' : '-';
-            html += `<tr><td><b>${log.timestamp || ''}</b> <span style="font-size:11px;color:var(--text-muted);">(${log.shift})</span></td><td><b>${log.team || 'Unassigned'}</b></td><td><b>${log.profile}</b></td><td><span style="color:var(--info-color); font-weight:600;">${iCode}</span></td><td>${log.length} mm</td><td><span style="font-weight:700;">${uWt}</span></td><td><span class="stock-badge bg-cut">${log.cutQty}</span></td><td><span class="stock-badge bg-punch">${log.punchQty}</span></td><td><span class="stock-badge bg-wrap">${log.wrapQty}</span></td><td><span class="stock-badge bg-box">${log.boxQty}</span></td><td><span class="stock-badge bg-crate">${log.crateQty}</span></td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="openGenericEdit('history_logs', ${log.id}, {cut_qty: '${log.cutQty}', punch_qty: '${log.punchQty}', wrap_qty: '${log.wrapQty}', box_qty: '${log.boxQty}', crate_qty: '${log.crateQty}'})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteHistoryLog(${log.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; 
+            html += `<tr><td><b>${log.timestamp || ''}</b> <span style="font-size:11px;color:var(--text-muted);">(${log.shift})</span></td><td><b>${log.team || 'Unassigned'}</b></td><td><b>${log.profile}</b></td><td><span style="color:var(--info-color); font-weight:600;">${iCode}</span></td><td>${log.length} mm</td><td><span style="font-weight:700;">${uWt}</span></td><td><span class="stock-badge bg-cut">${log.cutQty}</span></td><td><span class="stock-badge bg-punch">${log.punchQty}</span></td><td><span class="stock-badge bg-wrap">${log.wrapQty}</span></td><td><span class="stock-badge bg-box">${log.boxQty}</span></td><td><span class="stock-badge bg-crate">${log.crateQty}</span></td><td>${currentUserRole === 'Admin' ? `${(extrusionCutUsage||[]).some(u=>String(u.source_history_id)===String(log.id)) ? `<span title="Cut usage is linked to this history row; edit is disabled to protect stock ledger" style="font-size:10px;color:#64748b;">Cut-linked</span>` : `<button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="openGenericEdit('history_logs', ${log.id}, {cut_qty: '${log.cutQty}', punch_qty: '${log.punchQty}', wrap_qty: '${log.wrapQty}', box_qty: '${log.boxQty}', crate_qty: '${log.crateQty}'})"><i class="fa-solid fa-pen"></i></button>`} <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteHistoryLog(${log.id})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; 
         }); 
         tbody.innerHTML = html;
     } catch(e) {}
 }
-function deleteHistoryLog(id) { if(currentUserRole !== 'Admin') return; showConfirm("Delete log?", async () => { try { await supabaseClient.from('history_logs').delete().eq('id', id); } catch(e){} historyLogs = historyLogs.filter(h => h.id !== id); renderHistoryData(); showToast("Deleted", "success"); }); }
+function deleteHistoryLog(id) { if(currentUserRole !== 'Admin') return; showConfirm("Delete log?", async () => { try { const usage=(extrusionCutUsage||[]).find(u=>String(u.source_history_id)===String(id)); if(usage){const {error:ue}=await supabaseClient.from('extrusion_cut_usage').delete().eq('source_history_id',id);if(ue)throw ue;extrusionCutUsage=extrusionCutUsage.filter(u=>String(u.source_history_id)!==String(id));} const {error}=await supabaseClient.from('history_logs').delete().eq('id', id);if(error)throw error;historyLogs=historyLogs.filter(h=>String(h.id)!==String(id));renderHistoryData();renderExtrusionStockTable();renderExtrusionCutUsageHistory();showToast("Deleted; linked extrusion stock deduction was reversed.","success"); } catch(e){showToast(`Could not delete production history: ${e?.message||e}`,'error');} }); }
 
 function renderMasterCatalog() { 
     try {
@@ -11297,7 +11363,10 @@ let extrusionReceiptsLoaded=false;
 let extrusionLoading=false;
 let extrusionStockMovements=[];
 let extrusionStockMovementsLoaded=false;
-function switchExtrusionSubTab(id,btn){document.querySelectorAll('.extrusion-sub-content').forEach(x=>x.style.display='none');document.querySelectorAll('.extrusion-sub-btn').forEach(x=>x.classList.remove('active'));const el=document.getElementById(id);if(el)el.style.display='block';if(btn)btn.classList.add('active');if(id==='exInSubTab'){populateExtrusionReceiptPOs();renderExtrusionPoTable();populateExtrusionReceiptProfiles();}if(id==='exHistorySubTab')renderExtrusionHistory();if(id==='exCurrentPlSubTab')renderCurrentPlExtrusionRequirement(false);}
+let extrusionCutUsage=[];
+let extrusionCutUsageLoaded=false;
+let extrusionCutUsageLoading=false;
+function switchExtrusionSubTab(id,btn){document.querySelectorAll('.extrusion-sub-content').forEach(x=>x.style.display='none');document.querySelectorAll('.extrusion-sub-btn').forEach(x=>x.classList.remove('active'));const el=document.getElementById(id);if(el)el.style.display='block';if(btn)btn.classList.add('active');if(id==='exInSubTab'){populateExtrusionReceiptPOs();renderExtrusionPoTable();populateExtrusionReceiptProfiles();}if(id==='exHistorySubTab')renderExtrusionHistory();if(id==='exCurrentPlSubTab')renderCurrentPlExtrusionRequirement(false);if(id==='exCutUsageSubTab')renderExtrusionCutUsageHistory();}
 function extrusionLen(v){const n=Number(String(v??'').replace(/mm/gi,'').trim());return Number.isFinite(n)&&n>0?n:0;}
 function extrusionMasterRows(){return (masterData||[]).filter(m=>String(m.profile||'').trim()&&extrusionLen(m.exLength)>0);}
 function extrusionRequiredByPo(){
@@ -11326,11 +11395,11 @@ function extrusionPoAllocationRows(){
   const po=String(r.po_number||r.poNumber).trim(),key=`${po}__${String(r.profile||'').trim()}__${extrusionLen(r.extrusion_length)}`;
   explicitByLine.set(key,(explicitByLine.get(key)||0)+(Number(r.in_qty??r.inQty)||0));
  });
- // Older receipts without a PO number remain intact and are allocated FIFO by PO date after explicitly linked receipts.
+ // Preserve receipt-specific allocation details for the receipt-history breakdown.
  const legacyByKey=new Map();
  receipts.filter(r=>!String(r.po_number||r.poNumber||'').trim()).forEach(r=>{const k=`${String(r.profile||'').trim()}__${extrusionLen(r.extrusion_length)}`;legacyByKey.set(k,(legacyByKey.get(k)||0)+(Number(r.in_qty??r.inQty)||0));});
  const legacyUsedByKey=new Map();
- return rows.map(r=>{
+ const receiptAllocatedRows=rows.map(r=>{
   const lineKey=`${r.poNumber}__${r.profile}__${extrusionLen(r.exLength)}`;
   const explicitAvailable=Math.max(0,explicitByLine.get(lineKey)||0);
   const explicit=Math.min(r.required,explicitAvailable);
@@ -11339,23 +11408,84 @@ function extrusionPoAllocationRows(){
   const remainingLegacy=Math.max(0,(legacyByKey.get(legacyKey)||0)-(legacyUsedByKey.get(legacyKey)||0));
   const legacy=Math.min(Math.max(0,r.required-explicit),remainingLegacy);
   legacyUsedByKey.set(legacyKey,(legacyUsedByKey.get(legacyKey)||0)+legacy);
-  const manualComplete=completed.has(String(r.poNumber));
-  const allocated=manualComplete?r.required:Math.min(r.required,explicit+legacy);
-  return {...r,explicitAllocated:explicit,legacyAllocated:legacy,allocated,shortage:manualComplete?0:Math.max(0,r.required-allocated),manualComplete,status:manualComplete||allocated>=r.required?'Complete':'Pending'};
+  return {...r,explicitAllocated:explicit,legacyAllocated:legacy,receiptAllocated:Math.min(r.required,explicit+legacy)};
+ });
+ // Allocate current physical on-hand stock to open PO demand in FIFO order.
+ // Stock already includes receipts, trolley IN/OUT/SET movements and saved Cut deductions.
+ // This is a display allocation only; it does not make another stock movement.
+ const stockByKey=new Map(),initialStockByKey=new Map();
+ const stockLedgerReady=!!(extrusionStockMovementsLoaded&&extrusionCutUsageLoaded);
+ if(stockLedgerReady)(typeof extrusionStockSummary==='function'?extrusionStockSummary():[]).forEach(g=>{
+  const key=`${String(g.profile||'').trim()}__${extrusionLen(g.exLength)}`;
+  const qty=Math.max(0,Math.floor(Number(g.stock)||0));stockByKey.set(key,qty);initialStockByKey.set(key,qty);
+ });
+ const allocatedRows=receiptAllocatedRows.map(r=>({...r,manualComplete:completed.has(String(r.poNumber)),stockAllocated:0,explicitStockAllocated:0,sharedStockAllocated:0}));
+ // First honor stock receipts explicitly linked to a PO, but cap them at the
+ // actual remaining physical balance so old/consumed receipts cannot be reused.
+ allocatedRows.forEach(r=>{
+  if(r.manualComplete)return;
+  const key=`${String(r.profile||'').trim()}__${extrusionLen(r.exLength)}`;
+  const available=Math.max(0,stockByKey.get(key)||0);
+  const explicit=Math.min(Math.max(0,Number(r.required)||0),Math.max(0,Number(r.explicitAllocated)||0),available);
+  r.explicitStockAllocated=explicit;r.stockAllocated=explicit;stockByKey.set(key,available-explicit);
+ });
+ // Allocate the remaining shared physical stock FIFO by PO date / PO number.
+ allocatedRows.forEach(r=>{
+  if(r.manualComplete)return;
+  const key=`${String(r.profile||'').trim()}__${extrusionLen(r.exLength)}`;
+  const available=Math.max(0,stockByKey.get(key)||0),needed=Math.max(0,(Number(r.required)||0)-r.stockAllocated);
+  const shared=Math.min(needed,available);
+  r.sharedStockAllocated=shared;r.stockAllocated+=shared;stockByKey.set(key,available-shared);
+ });
+ const allocationByKey=new Map();
+ allocatedRows.forEach(r=>{
+  const key=`${String(r.profile||'').trim()}__${extrusionLen(r.exLength)}`;
+  if(!allocationByKey.has(key))allocationByKey.set(key,[]);
+  allocationByKey.get(key).push(r);
+ });
+ return allocatedRows.map(r=>{
+  const key=`${String(r.profile||'').trim()}__${extrusionLen(r.exLength)}`;
+  const shortage=r.manualComplete?0:Math.max(0,Math.floor(Number(r.required)||0)-r.stockAllocated);
+  const stockBefore=initialStockByKey.get(key)||0;
+  const otherByPO=new Map();
+  (allocationByKey.get(key)||[]).filter(x=>!x.manualComplete&&x.poNumber!==r.poNumber).forEach(x=>{
+   if(x.stockAllocated>0)otherByPO.set(x.poNumber,(otherByPO.get(x.poNumber)||0)+x.stockAllocated);
+  });
+  const otherPOAllocated=[...otherByPO.values()].reduce((sum,n)=>sum+n,0);
+  const otherPOAllocationText=[...otherByPO.entries()].sort((a,b)=>String(a[0]).localeCompare(String(b[0]),undefined,{numeric:true})).map(([po,qty])=>`PO ${po}: ${qty.toLocaleString()}`).join('; ');
+  return {...r,stockBeforeAllocation:stockBefore,otherPOAllocated,otherPOAllocationText:otherPOAllocationText||'—',allocated:r.stockAllocated,shortage,status:r.manualComplete||shortage===0?'Complete':'Pending'};
  });
 }
 function confirmExtrusionPOComplete(poNumber){const po=String(poNumber||'');if(!po)return;const lines=extrusionRequiredByPo().filter(r=>r.poNumber===po);if(!lines.length)return;const total=lines.reduce((s,r)=>s+r.required,0);if(!confirm(`Mark PO ${po} as extrusion received/complete?\n\n${lines.length} line(s), ${total.toLocaleString()} extrusion(s) will be treated as complete in this browser. Actual receipt records and other PO data will not be deleted.`))return;const done=getExtrusionCompletedPOs();done.add(po);if(!saveExtrusionCompletedPOs(done))return;renderExtrusionModule(false);showToast(`PO ${po} marked complete and removed from pending list.`,'success');}
 function undoExtrusionPOComplete(poNumber){const po=String(poNumber||'');const done=getExtrusionCompletedPOs();if(!done.has(po))return;done.delete(po);if(!saveExtrusionCompletedPOs(done))return;renderExtrusionModule(false);showToast(`PO ${po} returned to pending list.`,'success');}
 
 function extrusionStockSummary(){const groups=new Map();extrusionRequiredByPo().filter(r=>!getExtrusionCompletedPOs().has(String(r.poNumber))).forEach(r=>{if(!groups.has(r.masterKey))groups.set(r.masterKey,{profile:r.profile,exLength:r.exLength,required:0,poLines:[]});const g=groups.get(r.masterKey);g.required+=r.required;g.poLines.push(r);});extrusionMasterRows().forEach(m=>{const p=String(m.profile||'').trim(),l=extrusionLen(m.exLength);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});(extrusionReceipts||[]).forEach(r=>{const p=String(r.profile||'').trim(),l=extrusionLen(r.extrusion_length);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});
- groups.forEach(g=>{g.receiptStock=(extrusionReceipts||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.in_qty)||0),0);const moves=(extrusionStockMovements||[]).filter(m=>String(m.profile||'').trim()===g.profile&&extrusionLen(m.extrusion_length)===g.exLength);g.movementNet=moves.reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.movementIn=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='IN').reduce((s,m)=>s+Math.max(0,Number(m.qty_change)||0),0);g.movementOut=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='OUT').reduce((s,m)=>s+Math.abs(Math.min(0,Number(m.qty_change)||0)),0);g.adjustmentNet=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='SET').reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.totalIn=g.receiptStock+g.movementIn;g.totalOut=g.movementOut;g.stock=g.receiptStock+g.movementNet;g.balance=g.stock-g.required;g.status=g.balance>=0?(g.stock===0&&g.required>0?'Short':g.balance>0?'Extra':'Complete'):'Short';});return [...groups.values()].sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);}
+ groups.forEach(g=>{g.receiptStock=(extrusionReceipts||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.in_qty)||0),0);const moves=(extrusionStockMovements||[]).filter(m=>String(m.profile||'').trim()===g.profile&&extrusionLen(m.extrusion_length)===g.exLength);g.movementNet=moves.reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.movementIn=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='IN').reduce((s,m)=>s+Math.max(0,Number(m.qty_change)||0),0);g.movementOut=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='OUT').reduce((s,m)=>s+Math.abs(Math.min(0,Number(m.qty_change)||0)),0);g.adjustmentNet=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='SET').reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.cutUsageRows=(extrusionCutUsage||[]).filter(u=>String(u.profile||'').trim()===g.profile&&extrusionLen(u.extrusion_length)===g.exLength);g.cutUsageRequired=g.cutUsageRows.reduce((s,u)=>s+(Number(u.required_extrusions)||0),0);g.cutUsageDeducted=g.cutUsageRows.reduce((s,u)=>s+(Number(u.deducted_extrusions)||0),0);g.cutUsageShort=g.cutUsageRows.reduce((s,u)=>s+(Number(u.short_extrusions)||0),0);g.totalIn=g.receiptStock+g.movementIn;g.totalOut=g.movementOut+g.cutUsageDeducted;g.stock=Math.max(0,g.receiptStock+g.movementNet-g.cutUsageDeducted);g.balance=g.stock-g.required;g.status=g.balance>=0?(g.stock===0&&g.required>0?'Short':g.balance>0?'Extra':'Complete'):'Short';});return [...groups.values()].sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);}
 async function loadExtrusionReceipts(showMessage=false){if(extrusionLoading)return;extrusionLoading=true;try{const {data,error}=await supabaseClient.from('extrusion_receipts').select('*').order('receipt_date',{ascending:false}).order('id',{ascending:false});if(error)throw error;extrusionReceipts=(data||[]).map(r=>({...r,receiptDate:r.receipt_date,profile:String(r.profile||''),extrusionLength:extrusionLen(r.extrusion_length),trolleyNo:r.trolley_no||'',inQty:Number(r.in_qty)||0,note:r.note||''}));extrusionReceiptsLoaded=true;await loadExtrusionStockMovements();renderExtrusionModule(false);if(showMessage)showToast('Extrusion receipts refreshed.','success');}catch(e){console.error('Extrusion receipt load failed',e);if(showMessage)showToast('Extrusion table is not ready. Run supabase_extrusion_module.sql once in Supabase SQL Editor.','error');else{const b=document.getElementById('exHistoryBody');if(b)b.innerHTML='<tr><td colspan="7">Extrusion receipt table is not ready. Run the included supabase_extrusion_module.sql migration, then refresh.</td></tr>';}}finally{extrusionLoading=false;}}
+async function loadExtrusionCutUsage(){
+ if(extrusionCutUsageLoading)return extrusionCutUsageLoaded;
+ extrusionCutUsageLoading=true;
+ try{
+  const {data,error}=await supabaseClient.from('extrusion_cut_usage').select('*').order('movement_date',{ascending:false}).order('id',{ascending:false});
+  if(error)throw error;
+  extrusionCutUsage=(data||[]).map(r=>({...r,profile:String(r.profile||''),item_code:String(r.item_code||''),cut_length:cleanLen(r.cut_length),extrusion_length:extrusionLen(r.extrusion_length),cut_pcs:Number(r.cut_pcs)||0,pcs_per_extrusion:Number(r.pcs_per_extrusion)||0,required_extrusions:Number(r.required_extrusions)||0,deducted_extrusions:Number(r.deducted_extrusions)||0,short_extrusions:Number(r.short_extrusions)||0}));
+  extrusionCutUsageLoaded=true;
+  return true;
+ }catch(e){
+  console.error('Extrusion production-cut usage load failed',e);
+  extrusionCutUsageLoaded=false;extrusionCutUsage=[];
+  const body=document.getElementById('exCutUsageBody');
+  if(body)body.innerHTML=`<tr><td colspan="12" style="color:#b45309;font-weight:800;">Production cut usage history is not available: ${escapeHtml(e?.message||'Migration or permission issue')}. Run supabase_extrusion_cut_usage_v261.sql, then refresh.</td></tr>`;
+  return false;
+ }finally{extrusionCutUsageLoading=false;}
+}
 async function loadExtrusionStockMovements(){
  try{
   const {data,error}=await supabaseClient.from('extrusion_stock_movements').select('*').order('movement_date',{ascending:false}).order('id',{ascending:false});
   if(error)throw error;
   extrusionStockMovements=(data||[]).map(r=>({...r,profile:String(r.profile||''),extrusion_length:extrusionLen(r.extrusion_length),qty_change:Number(r.qty_change)||0,trolley_no:String(r.trolley_no||'')}));
   extrusionStockMovementsLoaded=true;
+  await loadExtrusionCutUsage();
   return true;
  }catch(e){
   console.error('Extrusion stock movement load failed',e);
@@ -11367,12 +11497,12 @@ async function loadExtrusionStockMovements(){
  }
 }
 function moveExtrusionStockSummaryToBottom(){const target=document.getElementById('exInSubTab');const planner=document.getElementById('exPoCards')?.closest('.card');const form=document.getElementById('exReceiptForm')?.closest('.card');if(target&&planner&&form&&planner.parentElement!==target)target.insertBefore(planner,form);const stockSection=document.getElementById('exStockSubTab');const stock=document.getElementById('exStockBody')?.closest('.card');if(stockSection&&stock&&stock.parentElement!==stockSection)stockSection.appendChild(stock);}
-function renderExtrusionModule(force=false){if(force&&!extrusionReceiptsLoaded){loadExtrusionReceipts(true);return;}moveExtrusionStockSummaryToBottom();populateExtrusionFilters();populateExtrusionReceiptProfiles();renderExtrusionStockTable();renderExtrusionStockMovementHistory();renderExtrusionPoTable();renderExtrusionHistory();if(document.getElementById('exCurrentPlSubTab')?.style.display!=='none')renderCurrentPlExtrusionRequirement(false);}
+function renderExtrusionModule(force=false){if(force&&!extrusionReceiptsLoaded){loadExtrusionReceipts(true);return;}moveExtrusionStockSummaryToBottom();populateExtrusionFilters();populateExtrusionReceiptProfiles();renderExtrusionStockTable();renderExtrusionStockMovementHistory();renderExtrusionCutUsageHistory();renderExtrusionPoTable();renderExtrusionHistory();if(document.getElementById('exCurrentPlSubTab')?.style.display!=='none')renderCurrentPlExtrusionRequirement(false);}
 function populateExtrusionFilters(){const groups=extrusionStockSummary();const fill=(id,label,vals)=>{const s=document.getElementById(id);if(!s)return;const old=s.value;s.innerHTML=`<option value="">${label}</option>`;[...new Set(vals)].forEach(v=>s.add(new Option(v,v)));if([...s.options].some(o=>o.value===old))s.value=old;};fill('exFilterProfile','All Profiles',groups.map(g=>g.profile));fill('exFilterLength','All Lengths',groups.map(g=>String(g.exLength)));fill('exHistProfile','All Profiles',[...new Set(extrusionReceipts.map(r=>r.profile))].sort());}
 function renderExtrusionStockTable(){
  const body=document.getElementById('exStockBody');if(!body)return;
- if(!extrusionStockMovementsLoaded){
-  body.innerHTML='<tr><td colspan="10" style="color:#b45309;font-weight:800;">Stock movement ledger is not connected. Run the extrusion stock ledger migrations in Supabase SQL Editor, then refresh. Existing receipts are preserved.</td></tr>';
+ if(!extrusionStockMovementsLoaded||!extrusionCutUsageLoaded){
+  body.innerHTML='<tr><td colspan="10" style="color:#b45309;font-weight:800;">Complete extrusion stock ledger setup first. Run supabase_extrusion_cut_usage_v261.sql in Supabase SQL Editor, then refresh. Existing receipt and stock movement records are preserved.</td></tr>';
   return;
  }
  const p=document.getElementById('exFilterProfile')?.value||'',l=document.getElementById('exFilterLength')?.value||'',q=(document.getElementById('exSearch')?.value||'').trim().toLowerCase();
@@ -11436,13 +11566,36 @@ function renderExtrusionPoTable(){
  renderSelectedExtrusionPODetails();
 }
 function selectExtrusionPO(po){selectedExtrusionPO=String(po||'');const sel=document.getElementById('exReceiptPO');if(sel){populateExtrusionReceiptPOs();sel.value=selectedExtrusionPO;populateExtrusionReceiptProfiles();}renderExtrusionPoTable();const panel=document.getElementById('exPoDetailsPanel');if(panel)panel.scrollIntoView({behavior:'smooth',block:'nearest'});}
+function getSelectedExtrusionPOAllocationBreakdown(){
+ const all=extrusionPoAllocationRows(),selected=all.filter(r=>r.poNumber===selectedExtrusionPO&&!r.manualComplete),groups=new Map();
+ selected.forEach(r=>{
+  const key=r.masterKey||`${String(r.profile||'').trim()}__${extrusionLen(r.exLength)}`;
+  if(!groups.has(key))groups.set(key,{key,profile:r.profile,exLength:r.exLength,required:0,allocated:0,physical:0});
+  const g=groups.get(key);g.required+=Number(r.required)||0;g.allocated+=Number(r.stockAllocated)||0;g.physical=Math.max(g.physical,Number(r.stockBeforeAllocation)||0);
+ });
+ return [...groups.values()].map(g=>{
+  const others=all.filter(r=>!r.manualComplete&&r.masterKey===g.key&&r.poNumber!==selectedExtrusionPO&&Number(r.stockAllocated)>0);
+  const byPO=new Map();others.forEach(r=>byPO.set(r.poNumber,(byPO.get(r.poNumber)||0)+(Number(r.stockAllocated)||0)));
+  g.otherPOAllocated=[...byPO.values()].reduce((s,n)=>s+n,0);
+  g.otherPOs=[...byPO.entries()].sort((a,b)=>String(a[0]).localeCompare(String(b[0]),undefined,{numeric:true})).map(([po,qty])=>`PO ${po}: ${qty.toLocaleString()}`).join('; ')||'—';
+  g.unallocated=Math.max(0,g.physical-g.allocated-g.otherPOAllocated);
+  g.shortage=Math.max(0,g.required-g.allocated);
+  return g;
+ }).sort((a,b)=>String(a.profile).localeCompare(String(b.profile),undefined,{numeric:true})||a.exLength-b.exLength);
+}
 function renderSelectedExtrusionPODetails(){
  const body=document.getElementById('exPoBody');if(!body)return;
  const rows=extrusionPoAllocationRows().filter(r=>r.poNumber===selectedExtrusionPO&&!r.manualComplete);
  const title=document.getElementById('exPoDetailsTitle'),meta=document.getElementById('exPoDetailsMeta');
  if(title)title.textContent=selectedExtrusionPO?`PO ${selectedExtrusionPO} — Extrusion Details`:'Select a PO';
  if(meta)meta.textContent=rows.length?`${rows.length} line(s) · ${rows.reduce((s,r)=>s+r.shortage,0).toLocaleString()} extrusion(s) still required`:'Choose a pending PO card to view its profile and extrusion details.';
- body.innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHtml(r.date||'-')}</td><td><b>${escapeHtml(r.poNumber)}</b></td><td><b>${escapeHtml(r.profile)}</b></td><td>${escapeHtml(r.itemCode||'-')}</td><td>${r.cutLength.toLocaleString()} mm</td><td>${r.exLength.toLocaleString()} mm</td><td>${r.openQty.toLocaleString()}</td><td><b>${r.required.toLocaleString()}</b></td><td>${r.allocated.toLocaleString()}</td><td><b style="color:${r.shortage>0?'#b45309':'#047857'}">${r.shortage.toLocaleString()}</b></td><td><span class="ex-status ${r.shortage>0?'short':'complete'}">${r.shortage>0?'Pending':'Complete'}</span></td></tr>`).join(''):'<tr><td colspan="11">No pending details for this PO. Completed PO confirmation does not delete production or receipt records.</td></tr>';
+ const stockNotice=document.getElementById('exPoStockNotice');if(stockNotice){const ready=!!(extrusionStockMovementsLoaded&&extrusionCutUsageLoaded);stockNotice.style.display='block';stockNotice.textContent=ready?'Important: Physical Stock is the live on-hand quantity in Stock Summary. FIFO allocates that stock across ALL open POs by PO date; stock may therefore be allocated to another PO before this selected PO. The breakdown below shows which PO received it. This is a planning allocation only — it does not deduct physical stock. Actual deduction occurs when a Daily Production Cut entry is saved.':'Physical stock allocation is paused because the stock movement / Cut usage ledger has not fully loaded. Refresh after applying the V261 additive migration; no stock values have been changed.';stockNotice.style.borderColor=ready?'#b8d9e7':'#f5d08a';stockNotice.style.background=ready?'#eef8fc':'#fff8e8';stockNotice.style.color=ready?'#155e75':'#925b08';}
+ body.innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHtml(r.date||'-')}</td><td><b>${escapeHtml(r.poNumber)}</b></td><td><b>${escapeHtml(r.profile)}</b></td><td>${escapeHtml(r.itemCode||'-')}</td><td>${r.cutLength.toLocaleString()} mm</td><td>${r.exLength.toLocaleString()} mm</td><td>${r.openQty.toLocaleString()}</td><td><b>${r.required.toLocaleString()}</b></td><td>${Number(r.stockBeforeAllocation||0).toLocaleString()}</td><td>${Number(r.otherPOAllocated||0).toLocaleString()}${r.otherPOAllocationText&&r.otherPOAllocationText!=='—'?`<small class="ex-po-allocation-detail">${escapeHtml(r.otherPOAllocationText)}</small>`:''}</td><td>${r.allocated.toLocaleString()}</td><td><b style="color:${r.shortage>0?'#b45309':'#047857'}">${r.shortage.toLocaleString()}</b></td><td><span class="ex-status ${r.shortage>0?'short':'complete'}">${r.shortage>0?'Pending':'Complete'}</span></td></tr>`).join(''):'<tr><td colspan="13">No pending details for this PO. Completed PO confirmation does not delete PO or receipt records.</td></tr>';
+ const allocationBody=document.getElementById('exPoAllocationBody');
+ if(allocationBody){
+  const breakdown=getSelectedExtrusionPOAllocationBreakdown();
+  allocationBody.innerHTML=breakdown.length?breakdown.map(g=>`<tr><td><b>${escapeHtml(g.profile)}</b></td><td>${Number(g.exLength).toLocaleString()} mm</td><td><b>${Number(g.physical).toLocaleString()}</b></td><td>${Number(g.required).toLocaleString()}</td><td>${Number(g.otherPOAllocated).toLocaleString()}${g.otherPOs!=='—'?`<small class="ex-po-allocation-detail">${escapeHtml(g.otherPOs)}</small>`:''}</td><td>${Number(g.allocated).toLocaleString()}</td><td><b style="color:${g.shortage>0?'#b45309':'#047857'}">${Number(g.shortage).toLocaleString()}</b></td><td>${Number(g.unallocated).toLocaleString()}</td></tr>`).join(''):'<tr><td colspan="8">Select a PO card to see how physical stock is shared across open POs.</td></tr>';
+ }
  const rb=document.getElementById('exPoReceiptBody');
  if(rb){
    const keys=new Set(rows.map(r=>`${String(r.profile).trim()}__${extrusionLen(r.exLength)}`));
@@ -11467,18 +11620,43 @@ function renderSelectedExtrusionPODetails(){
  }
 
 }
-function exportSelectedExtrusionPODetails(){
- const po=selectedExtrusionPO;if(!po)return showToast('Select a PO first.','warning');
+function getSelectedExtrusionPOExportRows(){
+ const po=selectedExtrusionPO;
  const rows=extrusionPoAllocationRows().filter(r=>r.poNumber===po);
- const lines=[['PO Date','PO Number','Profile','Item Code','Cut Length (mm)','Extrusion Length (mm)','Open Balance (Pcs)','Required Extrusions','Stock Allocated','Still Required','Status']];
- rows.forEach(r=>lines.push([r.date,po,r.profile,r.itemCode,r.cutLength,r.exLength,r.openQty,r.required,r.allocated,r.shortage,r.shortage?'Pending':'Complete']));
- const receipts=(extrusionReceipts||[]).filter(r=>rows.some(x=>x.masterKey===`${String(r.profile||'').trim()}__${extrusionLen(r.extrusion_length)}`));
- lines.push([],['Receipt Date','PO Number','Profile','Extrusion Length (mm)','Trolley / Details','IN Qty']);
- receipts.filter(r=>!String(r.po_number||r.poNumber||'').trim()||String(r.po_number||r.poNumber).trim()===po).forEach(r=>lines.push([r.receiptDate,r.po_number||r.poNumber||'Legacy shared stock',r.profile,extrusionLen(r.extrusionLength||r.extrusion_length),r.trolleyNo||r.trolley_no,r.inQty??r.in_qty]));
- const csv=lines.map(row=>row.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\r\n');
- const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\\ufeff'+csv],{type:'text/csv;charset=utf-8;'}));a.download=`Extrusion_PO_${po}_Details.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+ const details=rows.map(r=>({'PO Date':r.date,'PO Number':r.poNumber,'Profile':r.profile,'Item Code':r.itemCode,'Cut Length (mm)':r.cutLength,'Extrusion Length (mm)':r.exLength,'Open Balance (PCS)':r.openQty,'Required Extrusions':r.required,'Physical Stock On Hand':r.stockBeforeAllocation,'Allocated to Other PO(s)':r.otherPOAllocated,'Other PO Allocation Details':r.otherPOAllocationText,'Stock Allocated to This PO':r.stockAllocated,'Still Required':r.shortage,'Status':r.status}));
+ const allocationBreakdown=getSelectedExtrusionPOAllocationBreakdown().map(g=>({'Profile':g.profile,'Extrusion Length (mm)':g.exLength,'Physical Stock On Hand':g.physical,'Selected PO Required':g.required,'Allocated to Other PO(s)':g.otherPOAllocated,'Other PO Details':g.otherPOs,'Allocated to Selected PO':g.allocated,'Still Required':g.shortage,'Unallocated Physical Stock':g.unallocated}));
+ const keys=new Set(rows.map(x=>`${String(x.profile).trim()}__${extrusionLen(x.exLength)}`));
+ const receiptRows=(extrusionReceipts||[]).filter(r=>keys.has(`${String(r.profile||'').trim()}__${extrusionLen(r.extrusion_length)}`)&&(!String(r.po_number||r.poNumber||'').trim()||String(r.po_number||r.poNumber).trim()===po)).slice().sort((a,b)=>String(a.receiptDate||'').localeCompare(String(b.receiptDate||''))||Number(a.id||0)-Number(b.id||0));
+ const cumulative=new Map();
+ const receipts=receiptRows.map(r=>{
+  const key=`${String(r.profile||'').trim()}__${extrusionLen(r.extrusion_length)}`,linked=String(r.po_number||r.poNumber||'').trim(),qty=Number(r.inQty??r.in_qty)||0;
+  const matching=rows.filter(x=>x.masterKey===key),required=matching.reduce((sum,x)=>sum+x.required,0),receiptKey=`${linked||'LEGACY'}__${key}`,receivedBefore=cumulative.get(receiptKey)||0;
+  const alloc=linked===String(po)?Math.min(qty,Math.max(0,required-receivedBefore)):Math.min(qty,Math.max(0,matching.reduce((sum,x)=>sum+x.legacyAllocated,0)-receivedBefore));
+  cumulative.set(receiptKey,receivedBefore+qty);
+  const remaining=Math.max(0,required-Math.min(required,receivedBefore+alloc));
+  return {'Receipt Date':r.receiptDate||r.receipt_date||'','PO Number / Source':linked||'Legacy shared stock','Profile':r.profile,'Extrusion Length (mm)':extrusionLen(r.extrusionLength||r.extrusion_length),'Trolley / Details':r.trolleyNo||r.trolley_no||'','IN Quantity':qty,'Balance After IN':remaining,'Note':r.note||''};
+ });
+ return {details,receipts,po};
 }
-
+function exportSelectedExtrusionPODetails(){
+ const {details,receipts,po}=getSelectedExtrusionPOExportRows();
+ if(!po)return showToast('Select a PO first.','warning');
+ if(!details.length)return showToast('No extrusion details for this PO.','warning');
+ if(typeof XLSX!=='undefined'&&XLSX.utils&&XLSX.writeFile){
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(details),'PO Requirement');
+  if(allocationBreakdown.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(allocationBreakdown),'Stock Allocation');
+  if(receipts.length)XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(receipts),'Receipt History');
+  XLSX.writeFile(wb,`AIS_Extrusion_PO_${po}_Details.xlsx`);
+  showToast('Selected PO Excel report downloaded.','success');
+ }else exportTableToExcel(details,`AIS_Extrusion_PO_${po}_Details`,'PO Requirement');
+}
+function exportSelectedExtrusionPOReceiptsExcel(){
+ const {receipts,po}=getSelectedExtrusionPOExportRows();
+ if(!po)return showToast('Select a PO first.','warning');
+ if(!receipts.length)return showToast('No receipt history for this PO.','warning');
+ exportTableToExcel(receipts,`AIS_Extrusion_PO_${po}_Receipt_History`,'Receipt History');
+}
 function populateExtrusionReceiptPOs(){const s=document.getElementById('exReceiptPO');if(!s)return;const old=s.value;const rows=extrusionRequiredByPo();const byPO=new Map();rows.forEach(r=>{if(!byPO.has(r.poNumber))byPO.set(r.poNumber,{date:r.date||'',po:r.poNumber});else if(String(r.date||'')<String(byPO.get(r.poNumber).date||''))byPO.get(r.poNumber).date=r.date||'';});s.innerHTML='<option value="">Select PO</option>';[...byPO.values()].sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||a.po.localeCompare(b.po,undefined,{numeric:true})).forEach(g=>s.add(new Option(`${g.po} · ${g.date||'No date'}`,g.po)));if([...s.options].some(o=>o.value===old))s.value=old;}
 function populateExtrusionReceiptProfiles(){const s=document.getElementById('exReceiptProfile');if(!s)return;populateExtrusionReceiptPOs();const po=document.getElementById('exReceiptPO')?.value||'',old=s.value;if(po&&po!==selectedExtrusionPO){selectedExtrusionPO=po;renderExtrusionPoTable();}const poRows=po?extrusionRequiredByPo().filter(r=>r.poNumber===po):[];const profiles=po?[...new Set(poRows.map(r=>String(r.profile).trim()))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})):[...new Set(extrusionMasterRows().map(m=>String(m.profile).trim()))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));s.innerHTML='<option value="">Select profile</option>';profiles.forEach(p=>s.add(new Option(p,p)));if(profiles.includes(old))s.value=old;updateExtrusionLengthOptions();}
 function updateExtrusionLengthOptions(){const p=document.getElementById('exReceiptProfile')?.value||'',po=document.getElementById('exReceiptPO')?.value||'',s=document.getElementById('exReceiptLength');if(!s)return;const old=s.value;const poLengths=po?extrusionRequiredByPo().filter(r=>r.poNumber===po&&r.profile===p).map(r=>String(extrusionLen(r.exLength))):[];const lengths=[...new Set(po?poLengths:extrusionMasterRows().filter(m=>String(m.profile).trim()===p).map(m=>String(extrusionLen(m.exLength))))].sort((a,b)=>Number(a)-Number(b));s.innerHTML='<option value="">Select length</option>';lengths.forEach(l=>s.add(new Option(`${Number(l).toLocaleString()} mm`,l)));if(lengths.includes(old))s.value=old;}
@@ -11550,21 +11728,33 @@ window.getCurrentPlExtrusionRequirementRows=function(){
  try{if(typeof ensurePackingSelection==='function')ensurePackingSelection();}catch(e){}
  const active=(typeof getActivePackingListSelection==='function')?getActivePackingListSelection():{month:activePackingMonth||'',container:activePackingContainer||''};
  const records=(typeof getPackingContainerRecords==='function')?getPackingContainerRecords(active.month,active.container):[];
- const groups=new Map(),unmatched=[];
+ // Match Packing List Tracker exactly: consolidate each Profile + Item Code +
+ // Cut Length line, calculate PL Balance from current PCS stock, and calculate
+ // Req Extrusions only for the remaining Pending Cut PCS on that line.
+ const lines=new Map(),unmatched=[];
  records.forEach(r=>{
   const profile=String(r?.profile||'').trim(),itemCode=String(r?.itemCode||'').trim(),cutLength=cleanLen(r?.length),pcs=Math.max(0,Number(r?.pcsQty)||0);
   if(!profile||!cutLength||pcs<=0)return;
-  let master=masterData.find(m=>String(m.profile||'').trim().toLowerCase()===profile.toLowerCase()&&String(m.itemCode||'').trim().toLowerCase()===itemCode.toLowerCase()&&cleanLen(m.length)===cutLength);
-  if(!master)master=masterData.find(m=>String(m.profile||'').trim().toLowerCase()===profile.toLowerCase()&&cleanLen(m.length)===cutLength);
-  const plan=getExtrusionPlan(profile,master?.itemCode||itemCode,cutLength,pcs);
-  if(!plan.matched||!plan.exLength||!plan.pcsPerEx){unmatched.push({profile,itemCode,cutLength,pcs});return;}
-  const exLength=extrusionLen(plan.exLength),key=`${profile.toLowerCase()}|${exLength}`;
-  const g=groups.get(key)||{profile,exLength,required:0,currentPlPcs:0,cutLengths:new Set()};
-  g.required+=plan.requiredExtrusions;g.currentPlPcs+=pcs;g.cutLengths.add(cutLength);groups.set(key,g);
+  const key=`${profile}|${itemCode}|${cutLength}`;
+  const line=lines.get(key)||{profile,itemCode,cutLength,plPcs:0};line.plPcs+=pcs;lines.set(key,line);
+ });
+ const groups=new Map();
+ lines.forEach(line=>{
+  const master=masterData.find(m=>String(m.profile||'').trim()===line.profile&&String(m.itemCode||'').trim()===line.itemCode&&cleanLen(m.length)===line.cutLength);
+  if(!master){unmatched.push({...line,reason:'Master Catalog item not found'});return;}
+  const currentStock=(Number(master.cutQty)||0)+(Number(master.punchQty)||0)+(Number(master.wrapQty)||0)+(Number(master.boxQty)||0)+(Number(master.crateQty)||0);
+  const pendingCut=Math.max(0,line.plPcs-currentStock);
+  const plan=getExtrusionPlan(line.profile,line.itemCode,line.cutLength,pendingCut);
+  if(!plan.exLength||!plan.pcsPerEx){unmatched.push({...line,pendingCut,reason:'Extrusion length / PCS per extrusion missing'});return;}
+  const exLength=extrusionLen(plan.exLength),key=`${line.profile}|${exLength}`;
+  const g=groups.get(key)||{profile:line.profile,exLength,required:0,currentPlPcs:0,pendingCutPcs:0,cutLengths:new Set(),itemCodes:new Set(),lineCount:0};
+  // Sum the same per-line Req Extrusions shown in Packing List Tracker. Do not
+  // merge PCS before rounding: each item/length line keeps the tracker result.
+  g.required+=plan.requiredExtrusions;g.currentPlPcs+=line.plPcs;g.pendingCutPcs+=pendingCut;g.cutLengths.add(line.cutLength);g.itemCodes.add(master.itemCode||line.itemCode);g.lineCount++;groups.set(key,g);
  });
  const stockMap=new Map();
- (typeof extrusionStockSummary==='function'?extrusionStockSummary():[]).forEach(g=>stockMap.set(`${String(g.profile||'').trim().toLowerCase()}|${extrusionLen(g.exLength)}`,Math.max(0,Number(g.stock)||0)));
- const rows=[...groups.values()].map(g=>{const available=stockMap.get(`${g.profile.toLowerCase()}|${g.exLength}`)||0;const shortage=Math.max(0,g.required-available);return {...g,available,shortage,status:shortage>0?'SHORT':available>=g.required?'AVAILABLE':'NO REQUIREMENT'};})
+ (typeof extrusionStockSummary==='function'?extrusionStockSummary():[]).forEach(g=>stockMap.set(`${String(g.profile||'').trim()}|${extrusionLen(g.exLength)}`,Math.max(0,Number(g.stock)||0)));
+ const rows=[...groups.values()].map(g=>{const available=stockMap.get(`${g.profile}|${g.exLength}`)||0;const shortage=Math.max(0,g.required-available);return {...g,available,shortage,status:shortage>0?'SHORT':available>=g.required?'AVAILABLE':'NO REQUIREMENT'};})
   .sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);
  return {rows,active,records,unmatched};
 };
@@ -11576,7 +11766,7 @@ window.renderCurrentPlExtrusionRequirement=function(showToastAfter=false){
  const required=rows.reduce((s,r)=>s+r.required,0),available=rows.reduce((s,r)=>s+r.available,0),short=rows.reduce((s,r)=>s+r.shortage,0);
  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=Number(v||0).toLocaleString();};
  set('exCurrentPlRequired',required);set('exCurrentPlAvailable',available);set('exCurrentPlShort',short);set('exCurrentPlLines',rows.length);
- if(notice){const messages=[];if(!extrusionReceiptsLoaded||!extrusionStockMovementsLoaded)messages.push('Extrusion stock ledger data is not fully loaded. Refresh the Extrusion page and confirm the Stock Summary loads before relying on available-stock values.');if(result.unmatched.length)messages.push(`${result.unmatched.length} packing line(s) could not be matched to Master Catalog extrusion length and are excluded from the calculation.`);notice.style.display=messages.length?'block':'none';notice.innerHTML=messages.map(m=>`<div><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(m)}</div>`).join('');}
+ if(notice){const messages=[];if(!extrusionReceiptsLoaded||!extrusionStockMovementsLoaded||!extrusionCutUsageLoaded)messages.push('Extrusion stock / production-cut usage ledger is not fully loaded. Run the V261 additive SQL migration and refresh before relying on available-stock values.');if(result.unmatched.length)messages.push(`${result.unmatched.length} packing line(s) could not be matched to Master Catalog extrusion length and are excluded from the calculation.`);notice.style.display=messages.length?'block':'none';notice.innerHTML=messages.map(m=>`<div><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(m)}</div>`).join('');}
  const body=document.getElementById('exCurrentPlBody'),foot=document.getElementById('exCurrentPlFoot');
  if(body)body.innerHTML=rows.length?rows.map(r=>`<tr><td><b>${escapeHtml(r.profile)}</b></td><td>${r.exLength.toLocaleString()} mm</td><td><b>${r.required.toLocaleString()}</b></td><td>${r.available.toLocaleString()}</td><td><span class="ex-current-short ${r.shortage>0?'is-short':'is-ok'}">${r.shortage.toLocaleString()}</span></td><td><span class="ex-status ${r.shortage>0?'short':'complete'}">${r.shortage>0?'SHORT':'AVAILABLE'}</span></td></tr>`).join(''):`<tr><td colspan="6" style="text-align:center;padding:22px;color:var(--text-muted);font-weight:700;">${result.records.length?'No valid extrusion requirements found for this PL. Check Master Catalog extrusion lengths.':'No packing rows found for the selected Current PL.'}</td></tr>`;
  if(foot)foot.innerHTML=rows.length?`<tr><th colspan="2" style="text-align:right">TOTAL</th><th>${required.toLocaleString()}</th><th>${available.toLocaleString()}</th><th>${short.toLocaleString()}</th><th>${short?'SHORT':'READY'}</th></tr>`:'';
@@ -11587,10 +11777,30 @@ function currentPlExtrusionExportRows(){const {rows,active}=window.getCurrentPlE
 window.exportCurrentPlExtrusionExcel=function(){const {data,active,rows}=currentPlExtrusionExportRows();if(!rows.length)return showToast('No Current PL extrusion rows to export.','warning');exportTableToExcel(data,`AIS_Current_PL_Extrusion_${String(active.container||'PL').replace(/\s+/g,'_')}`,'Current PL Extrusion');};
 window.exportCurrentPlExtrusionPdf=function(){const {data,active,rows}=currentPlExtrusionExportRows();if(!rows.length)return showToast('No Current PL extrusion rows to export.','warning');exportDataToPdf(data,'AIS_Current_PL_Extrusion','AIS Tracker — Current PL Extrusion Requirement',`${active.month||''} • ${active.container||''} • Required: ${rows.reduce((s,r)=>s+r.required,0)} • Available: ${rows.reduce((s,r)=>s+r.available,0)} • Short: ${rows.reduce((s,r)=>s+r.shortage,0)}`);};
 
+async function refreshExtrusionCutUsageHistory(){await loadExtrusionReceipts(false);await loadExtrusionCutUsage();renderExtrusionStockTable();renderExtrusionCutUsageHistory();showToast('Extrusion Cut Usage History refreshed.','success');}
+function renderExtrusionCutUsageHistory(){
+ const body=document.getElementById('exCutUsageBody');if(!body)return;
+ if(!extrusionCutUsageLoaded){body.innerHTML='<tr><td colspan="12">Production cut usage ledger is not loaded. Run the V261 additive SQL migration and refresh.</td></tr>';return;}
+ const select=document.getElementById('exCutUsageProfile');if(select){const prior=select.value,profiles=[...new Set((extrusionCutUsage||[]).map(r=>String(r.profile||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));select.innerHTML='<option value="">All Profiles</option>'+profiles.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');if(profiles.includes(prior))select.value=prior;}
+ const p=select?.value||'',q=(document.getElementById('exCutUsageSearch')?.value||'').trim().toLowerCase();
+ const rows=(extrusionCutUsage||[]).filter(r=>(!p||String(r.profile)===p)&&(!q||`${r.movement_date} ${r.shift} ${r.team} ${r.profile} ${r.item_code} ${r.cut_length} ${r.extrusion_length} ${r.note}`.toLowerCase().includes(q)));
+ body.innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHtml(r.movement_date||'-')}</td><td>${escapeHtml(r.shift||'-')}</td><td>${escapeHtml(r.team||'-')}</td><td><b>${escapeHtml(r.profile)}</b></td><td>${escapeHtml(r.item_code||'-')}</td><td>${Number(r.cut_length||0).toLocaleString()} mm</td><td>${Number(r.extrusion_length||0).toLocaleString()} mm</td><td><b>${Number(r.cut_pcs||0).toLocaleString()}</b></td><td>${Number(r.pcs_per_extrusion||0).toLocaleString()}</td><td><b>${Number(r.required_extrusions||0).toLocaleString()}</b></td><td><span class="ex-status complete">${Number(r.deducted_extrusions||0).toLocaleString()}</span></td><td><span class="ex-status ${Number(r.short_extrusions)>0?'short':'complete'}">${Number(r.short_extrusions||0).toLocaleString()}</span></td></tr>`).join(''):'<tr><td colspan="12">No production Cut extrusion deductions found for this filter.</td></tr>';
+}
+function exportExtrusionCutUsageExcel(){
+ const rows=(extrusionCutUsage||[]).map(r=>({'Date':r.movement_date||'','Shift':r.shift||'','Team':r.team||'','Profile':r.profile,'Item Code':r.item_code,'Cut Length (mm)':r.cut_length,'Extrusion Length (mm)':r.extrusion_length,'Cut PCS':r.cut_pcs,'PCS per Extrusion':r.pcs_per_extrusion,'Required Extrusions':r.required_extrusions,'Deducted from Stock':r.deducted_extrusions,'Short Extrusions':r.short_extrusions,'Note':r.note||''}));
+ if(!rows.length)return showToast('No production Cut extrusion usage history to export.','warning');
+ exportTableToExcel(rows,'AIS_Extrusion_Cut_Usage_History','Cut Usage History');
+}
+
+function exportExtrusionReceiptHistoryExcel(){const rows=(extrusionReceipts||[]).map(r=>({'Receipt Date':r.receiptDate||'','PO Number':r.po_number||r.poNumber||'Legacy shared stock','Profile':r.profile,'Extrusion Length (mm)':r.extrusionLength,'Trolley No.':r.trolleyNo,'IN Quantity':r.inQty,'Note':r.note||''}));if(!rows.length)return showToast('No extrusion IN history to export.','warning');exportTableToExcel(rows,'AIS_Extrusion_IN_History','IN History');}
 function renderExtrusionHistory(){const body=document.getElementById('exHistoryBody');if(!body)return;const p=document.getElementById('exHistProfile')?.value||'',q=(document.getElementById('exHistSearch')?.value||'').toLowerCase();const rows=extrusionReceipts.filter(r=>(!p||r.profile===p)&&(!q||`${r.po_number||r.poNumber||''} ${r.profile} ${r.extrusionLength} ${r.trolleyNo} ${r.note}`.toLowerCase().includes(q)));body.innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHtml(r.receiptDate||'-')}</td><td><b>${escapeHtml(r.po_number||r.poNumber||'Legacy shared stock')}</b></td><td><b>${escapeHtml(r.profile)}</b></td><td>${r.extrusionLength} mm</td><td>${escapeHtml(r.trolleyNo)}</td><td><b>${r.inQty.toLocaleString()}</b></td><td>${escapeHtml(r.note||'-')}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:white" onclick="editExtrusionReceipt('${String(r.id)}')"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteExtrusionReceipt('${String(r.id)}')"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):'<tr><td colspan="8">No extrusion IN records found.</td></tr>';}
 function editExtrusionReceipt(id){const r=extrusionReceipts.find(x=>String(x.id)===String(id));if(!r)return;switchExtrusionSubTab('exInSubTab',document.querySelectorAll('.extrusion-sub-btn')[1]);document.getElementById('exEditId').value=r.id;document.getElementById('exReceiptDate').value=r.receiptDate||'';populateExtrusionReceiptPOs();document.getElementById('exReceiptPO').value=String(r.po_number||r.poNumber||'');populateExtrusionReceiptProfiles();document.getElementById('exReceiptProfile').value=r.profile;updateExtrusionLengthOptions();document.getElementById('exReceiptLength').value=String(r.extrusionLength);document.getElementById('exTrolley').value=r.trolleyNo;document.getElementById('exInQty').value=r.inQty;document.getElementById('exNote').value=r.note;document.getElementById('exSaveBtn').innerHTML='<i class="fa-solid fa-check"></i> Update IN';}
 async function deleteExtrusionReceipt(id){if(currentUserRole!=='Admin')return showToast('Admin access is required to delete receipts.','warning');const r=extrusionReceipts.find(x=>String(x.id)===String(id));if(!r||!confirm(`Delete extrusion IN record for ${r.profile}, ${r.extrusionLength} mm, qty ${r.inQty}? Stock balance will be recalculated.`))return;try{const {error}=await supabaseClient.from('extrusion_receipts').delete().eq('id',id);if(error)throw error;await loadExtrusionReceipts(false);showToast('Extrusion receipt deleted; balance recalculated.','success');}catch(e){showToast('Could not delete receipt. Check table permissions.','error');}}
-function exportExtrusionRequirements(){const rows=extrusionPoAllocationRows().filter(r=>r.status!=='Complete').map(r=>{const g=extrusionStockSummary().find(x=>x.profile===r.profile&&x.exLength===r.exLength);return {'PO Date':r.date,'PO Number':r.poNumber,'Profile':r.profile,'Item Code':r.itemCode,'Cut Length (mm)':r.cutLength,'Extrusion Length (mm)':r.exLength,'Open Balance (Pcs)':r.openQty,'Required Extrusions':r.required,'Received Stock':g?.stock||0,'Balance Qty':g?.balance||0};});if(!rows.length)return showToast('No extrusion requirements to export.','warning');const headers=Object.keys(rows[0]);const csv=[headers,...rows.map(r=>headers.map(h=>r[h]))].map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='AIS_Extrusion_PO_Requirements.csv';a.click();URL.revokeObjectURL(url);}
+function exportExtrusionRequirements(){
+ const rows=extrusionPoAllocationRows().filter(r=>!r.manualComplete).map(r=>({'PO Date':r.date,'PO Number':r.poNumber,'Profile':r.profile,'Item Code':r.itemCode,'Cut Length (mm)':r.cutLength,'Extrusion Length (mm)':r.exLength,'Open Balance (PCS)':r.openQty,'Required Extrusions':r.required,'Physical Stock On Hand':r.stockBeforeAllocation,'Allocated to Other PO(s)':r.otherPOAllocated,'Other PO Allocation Details':r.otherPOAllocationText,'Stock Allocated to This PO':r.stockAllocated,'Still Required':r.shortage,'Status':r.shortage>0?'PENDING':'STOCK COVERED'}));
+ if(!rows.length)return showToast('No pending extrusion requirements to export.','warning');
+ exportTableToExcel(rows,'AIS_Extrusion_All_PO_Stock_Allocation','PO Stock Allocation');
+}
 
 function escapeHtml(v){return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 
@@ -11723,3 +11933,227 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(month&&!month.value){const d=new Date();month.value=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;}
   if(document.getElementById('teamProductionTab')?.classList.contains('active'))renderDailyTeamPerformance();
 });
+
+
+/* AIS Tracker V305 - date/shift-specific Current Stock snapshots.
+   Historical values are loaded only from explicitly saved shift-closing snapshots.
+   When no snapshot exists, the UI clearly labels the fallback as LIVE current stock. */
+let stockShiftSnapshotState = {
+  mode: 'live', rows: [], date: '', shift: 'Day', capturedAt: null,
+  loading: false, tableAvailable: true, error: null
+};
+
+function aisLocalDateISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function getStockSnapshotSelection() {
+  return {
+    date: document.getElementById('stockSnapshotDate')?.value || aisLocalDateISO(),
+    shift: document.getElementById('stockSnapshotShift')?.value || 'Day'
+  };
+}
+function setStockSnapshotStatus(message, kind='info') {
+  const el = document.getElementById('stockSnapshotStatus');
+  if (!el) return;
+  el.className = `stock-snapshot-status ${kind}`;
+  el.textContent = message;
+}
+function normalizeStockSnapshotRows(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.filter(x => x && x.profile !== undefined).map(x => ({
+    profile: String(x.profile ?? ''),
+    itemCode: String(x.itemCode ?? x.item_code ?? ''),
+    length: String(x.length ?? ''),
+    unitWeight: Number(x.unitWeight ?? x.unit_weight) || 0,
+    cutQty: Number(x.cutQty ?? x.cut_qty) || 0,
+    punchQty: Number(x.punchQty ?? x.punch_qty) || 0,
+    wrapQty: Number(x.wrapQty ?? x.wrap_qty) || 0,
+    boxQty: Number(x.boxQty ?? x.box_qty) || 0,
+    crateQty: Number(x.crateQty ?? x.crate_qty) || 0,
+    boxCapacity: Number(x.boxCapacity ?? x.box_capacity) || 100
+  }));
+}
+function getVisibleStockRows() {
+  return stockShiftSnapshotState.mode === 'snapshot'
+    ? stockShiftSnapshotState.rows
+    : masterData;
+}
+function getFilteredStockRows() {
+  const profile = document.getElementById('stockFilterProfile')?.value || '';
+  const itemCode = document.getElementById('stockFilterItemCode')?.value || '';
+  return getVisibleStockRows().filter(item =>
+    (!profile || String(item.profile).trim() === profile) &&
+    (!itemCode || String(item.itemCode || '').trim() === itemCode)
+  );
+}
+function initializeStockShiftControls() {
+  const dateEl = document.getElementById('stockSnapshotDate');
+  const shiftEl = document.getElementById('stockSnapshotShift');
+  if (!dateEl || !shiftEl) return;
+  if (!dateEl.value) dateEl.value = aisLocalDateISO();
+  if (!shiftEl.value) shiftEl.value = 'Day';
+  const saveBtn = document.getElementById('saveStockShiftSnapshotBtn');
+  if (saveBtn) {
+    saveBtn.hidden = currentUserRole !== 'Admin';
+    saveBtn.title = currentUserRole === 'Admin'
+      ? 'Save the live Master Catalog stock as the selected shift closing balance'
+      : 'Only an Admin can save a shift-closing stock snapshot';
+  }
+  const selected = getStockSnapshotSelection();
+  if (stockShiftSnapshotState.date !== selected.date || stockShiftSnapshotState.shift !== selected.shift || !stockShiftSnapshotState.date) {
+    loadSelectedStockShiftSnapshot();
+  } else {
+    renderProfileSummaryTable();
+  }
+}
+async function loadSelectedStockShiftSnapshot() {
+  const selected = getStockSnapshotSelection();
+  stockShiftSnapshotState.loading = true;
+  stockShiftSnapshotState.date = selected.date;
+  stockShiftSnapshotState.shift = selected.shift;
+  setStockSnapshotStatus(`Loading ${selected.date} · ${selected.shift} Shift stock...`, 'info');
+  try {
+    const { data, error } = await supabaseClient
+      .from('stock_shift_snapshots')
+      .select('snapshot_date,shift,stock_data,captured_at')
+      .eq('snapshot_date', selected.date)
+      .eq('shift', selected.shift)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) {
+      const rows = normalizeStockSnapshotRows(data.stock_data);
+      stockShiftSnapshotState = {
+        mode: 'snapshot', rows, date: selected.date, shift: selected.shift,
+        capturedAt: data.captured_at || null, loading: false, tableAvailable: true, error: null
+      };
+      const captured = data.captured_at ? new Date(data.captured_at).toLocaleString() : 'time not recorded';
+      setStockSnapshotStatus(`Saved shift snapshot · ${selected.date} · ${selected.shift} Shift · Captured ${captured}. Historical view is read-only.`, 'saved');
+    } else {
+      stockShiftSnapshotState = {
+        mode: 'live', rows: [], date: selected.date, shift: selected.shift,
+        capturedAt: null, loading: false, tableAvailable: true, error: null
+      };
+      setStockSnapshotStatus(`No saved closing snapshot for ${selected.date} · ${selected.shift} Shift. Showing LIVE current stock, not historical stock. At shift close, an Admin can save a snapshot.`, 'warning');
+    }
+  } catch (e) {
+    const msg = String(e?.message || e);
+    const missing = /stock_shift_snapshots|does not exist|schema cache|42P01|could not find the table/i.test(msg);
+    stockShiftSnapshotState = {
+      mode: 'live', rows: [], date: selected.date, shift: selected.shift,
+      capturedAt: null, loading: false, tableAvailable: !missing, error: msg
+    };
+    setStockSnapshotStatus(
+      missing
+        ? 'Shift snapshot storage is not installed yet. Run supabase_stock_shift_snapshots_v305.sql. Showing LIVE current stock.'
+        : `Could not load shift snapshot: ${msg}. Showing LIVE current stock.`,
+      'error'
+    );
+    console.error('Stock shift snapshot load failed:', e);
+  }
+  renderProfileSummaryTable();
+}
+function onStockSnapshotSelectionChange() {
+  loadSelectedStockShiftSnapshot();
+}
+function refreshStockSnapshotView() {
+  loadSelectedStockShiftSnapshot().then(() => showToast('Selected stock view refreshed.','success'));
+}
+async function captureStockShiftSnapshot() {
+  if (currentUserRole !== 'Admin') {
+    showToast('Only an Admin can save a shift-closing stock snapshot.','warning');
+    return;
+  }
+  if (!masterData.length) {
+    showToast('Master Catalog stock is not loaded. Sync the database before saving a snapshot.','warning');
+    return;
+  }
+  const {date,shift} = getStockSnapshotSelection();
+  const ok = window.confirm(
+    `Save the CURRENT live Master Catalog stock as the closing stock for ${date} · ${shift} Shift?\n\nOnly do this when you have verified that the current stock is the actual closing balance for this shift. This will replace any existing snapshot for the same date and shift.`
+  );
+  if (!ok) return;
+  const btn = document.getElementById('saveStockShiftSnapshotBtn');
+  const old = btn?.innerHTML;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...'; }
+  try {
+    const stockData = masterData.map(item => ({
+      profile: String(item.profile ?? ''),
+      itemCode: String(item.itemCode ?? ''),
+      length: String(item.length ?? ''),
+      unitWeight: Number(item.unitWeight) || 0,
+      cutQty: Number(item.cutQty) || 0,
+      punchQty: Number(item.punchQty) || 0,
+      wrapQty: Number(item.wrapQty) || 0,
+      boxQty: Number(item.boxQty) || 0,
+      crateQty: Number(item.crateQty) || 0,
+      boxCapacity: Number(item.boxCapacity) || 100
+    }));
+    const payload = {
+      snapshot_date: date,
+      shift,
+      stock_data: stockData,
+      captured_at: new Date().toISOString()
+    };
+    const {error} = await supabaseClient
+      .from('stock_shift_snapshots')
+      .upsert(payload, {onConflict:'snapshot_date,shift'});
+    if (error) throw error;
+    showToast(`${date} · ${shift} Shift stock snapshot saved.`, 'success');
+    await loadSelectedStockShiftSnapshot();
+  } catch (e) {
+    console.error('Stock shift snapshot save failed:', e);
+    const msg = String(e?.message || e);
+    setStockSnapshotStatus(
+      /stock_shift_snapshots|does not exist|schema cache|42P01|could not find the table/i.test(msg)
+        ? 'Cannot save yet: run supabase_stock_shift_snapshots_v305.sql in Supabase SQL Editor, then refresh.'
+        : `Snapshot was not saved: ${msg}`,
+      'error'
+    );
+    showToast(`Shift snapshot was not saved: ${msg}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = old || '<i class="fa-solid fa-camera"></i> Save Shift Closing Stock'; }
+  }
+}
+function buildCurrentStockExportRows() {
+  const selected = getStockSnapshotSelection();
+  const isSnapshot = stockShiftSnapshotState.mode === 'snapshot';
+  return getFilteredStockRows().map(item => {
+    const cut = Number(item.cutQty)||0, punch = Number(item.punchQty)||0;
+    const wrap = Number(item.wrapQty)||0, box = Number(item.boxQty)||0;
+    const crate = Number(item.crateQty)||0, unitWeight = Number(item.unitWeight)||0;
+    const total = cut+punch+wrap+box+crate;
+    const capacity = Number(item.boxCapacity)||100;
+    return {
+      'Stock Date': selected.date,
+      'Shift': selected.shift,
+      'View Type': isSnapshot ? 'Saved shift closing snapshot' : 'Live current stock (no saved snapshot)',
+      'Profile': item.profile,
+      'Item Code': item.itemCode || '-',
+      'Length (mm)': item.length,
+      'Unit Weight (kg/pc)': unitWeight,
+      'Cut Stock (PCS)': cut,
+      'Punch Stock (PCS)': punch,
+      'Wrap Stock (PCS)': wrap,
+      'Box Stock (PCS)': box,
+      'Packed Boxes': Math.floor(box/capacity),
+      'Crate Stock (PCS)': crate,
+      'Total Stock (PCS)': total,
+      'Total Stock Weight (kg)': Number((total*unitWeight).toFixed(2))
+    };
+  });
+}
+window.exportStockExcel = function() {
+  const data = buildCurrentStockExportRows();
+  if (!data.length) { showToast('No stock rows to export for the selected filters.','warning'); return; }
+  const s = getStockSnapshotSelection();
+  const mode = stockShiftSnapshotState.mode === 'snapshot' ? 'Shift_Snapshot' : 'Live_Stock';
+  exportTableToExcel(data, `AIS_Current_Stock_${s.date}_${s.shift}_${mode}`, 'Current Stock');
+};
+window.exportStockPdf = function() {
+  const data = buildCurrentStockExportRows();
+  if (!data.length) { showToast('No stock rows to export for the selected filters.','warning'); return; }
+  const s = getStockSnapshotSelection();
+  const mode = stockShiftSnapshotState.mode === 'snapshot' ? 'Saved Shift Snapshot' : 'LIVE Current Stock (no snapshot)';
+  exportDataToPdf(data, `AIS_Current_Stock_${s.date}_${s.shift}`, `AIS Tracker - Current Stock`, `${s.date} · ${s.shift} Shift · ${mode}`);
+};
