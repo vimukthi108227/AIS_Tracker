@@ -4016,3 +4016,6 @@ body.dark-mode .cb-shortage-panel{background:#0f172a;border-color:#334155}body.d
 }
 
 .ex-po-allocation-detail{display:block;margin-top:3px;max-width:190px;color:#647b8c;font-size:9px;line-height:1.35;font-weight:700;white-space:normal}.ex-po-details .ex-table td{vertical-align:middle}
+
+.production-box-capacity-label{font-size:10px;font-weight:800;color:#476477;margin-top:6px}
+.production-box-pcs-preview{margin-top:5px;padding:7px 9px;border-radius:7px;background:#e7f6ef;border:1px solid #b7e4ce;color:#08634d;font-size:12px;font-weight:900}

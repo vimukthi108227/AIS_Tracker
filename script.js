@@ -689,10 +689,10 @@ async function loadDataFromSupabase(isSilent = false) {
     const uniqueData = []; const seenMap = new Map();
     catDataRaw.forEach(item => {
       const localExt = localExtras.find(e => String(e.p) === String(item.profile) && cleanLen(e.l) === cleanLen(item.length) && String(e.i) === String(item.item_code)) || {};
-      const obj = { db_id: item.id, db_ids: [item.id], dbRows: [{id:item.id,cutQty:Number(item.cut_qty)||0,punchQty:Number(item.punch_qty)||0,wrapQty:Number(item.wrap_qty)||0,boxQty:Number(item.box_qty)||0,crateQty:Number(item.crate_qty)||0}], profile: String(item.profile).trim(), itemCode: String(item.item_code || '').trim(), material: item.material || localExt.mat || '-', length: cleanLen(item.length), exLength: item.ex_length || localExt.ex || '', unitWeight: parseFloat(item.unit_weight) || 0, cutQty: Number(item.cut_qty)||0, punchQty: Number(item.punch_qty)||0, wrapQty: Number(item.wrap_qty)||0, boxQty: Number(item.box_qty)||0, crateQty: Number(item.crate_qty)||0, boxCapacity: item.box_capacity || localExt.cap || 100 };
+      const obj = { db_id: item.id, db_ids: [item.id], dbRows: [{id:item.id,cutQty:Number(item.cut_qty)||0,punchQty:Number(item.punch_qty)||0,wrapQty:Number(item.wrap_qty)||0,boxQty:Number(item.box_qty)||0,crateQty:Number(item.crate_qty)||0}], profile: String(item.profile).trim(), itemCode: String(item.item_code || '').trim(), material: item.material || localExt.mat || '-', length: cleanLen(item.length), exLength: item.ex_length || localExt.ex || '', unitWeight: parseFloat(item.unit_weight) || 0, cutQty: Number(item.cut_qty)||0, punchQty: Number(item.punch_qty)||0, wrapQty: Number(item.wrap_qty)||0, boxQty: Number(item.box_qty)||0, crateQty: Number(item.crate_qty)||0, boxCapacity: item.pcs_per_box || item.pcs_for_box || item.pcs_for_box_qty || item.pcs_box || localExt.cap || item.box_capacity || 100, pcsPerBox:item.pcs_per_box||item.pcs_for_box||item.pcs_for_box_qty||item.pcs_box||null, pcs_per_box:item.pcs_per_box||null, pcs_for_box:item.pcs_for_box||null, pcs_box:item.pcs_box||null, localBoxCapacity:localExt.cap||null };
       const uniqueKey = `${obj.profile}_${obj.itemCode}_${obj.length}`;
       if (!seenMap.has(uniqueKey)) { seenMap.set(uniqueKey, obj); uniqueData.push(obj); } 
-      else { const ex = seenMap.get(uniqueKey); ex.db_ids.push(item.id); ex.dbRows.push({id:item.id,cutQty:obj.cutQty,punchQty:obj.punchQty,wrapQty:obj.wrapQty,boxQty:obj.boxQty,crateQty:obj.crateQty}); ex.cutQty += obj.cutQty; ex.punchQty += obj.punchQty; ex.wrapQty += obj.wrapQty; ex.boxQty += obj.boxQty; ex.crateQty += obj.crateQty; if (!ex.itemCode || ex.itemCode === '-' || ex.itemCode === '') ex.itemCode = obj.itemCode; }
+      else { const ex = seenMap.get(uniqueKey); ex.db_ids.push(item.id); ex.dbRows.push({id:item.id,cutQty:obj.cutQty,punchQty:obj.punchQty,wrapQty:obj.wrapQty,boxQty:obj.boxQty,crateQty:obj.crateQty}); ex.cutQty += obj.cutQty; ex.punchQty += obj.punchQty; ex.wrapQty += obj.wrapQty; ex.boxQty += obj.boxQty; ex.crateQty += obj.crateQty; const oldCap=getMasterPcsPerBox(ex),newCap=getMasterPcsPerBox(obj); if((oldCap===100&&newCap!==100)||(!ex.pcsPerBox&&obj.pcsPerBox)){ex.boxCapacity=newCap;ex.pcsPerBox=obj.pcsPerBox||newCap;ex.pcs_per_box=obj.pcs_per_box||null;ex.pcs_for_box=obj.pcs_for_box||null;ex.pcs_box=obj.pcs_box||null;} if (!ex.itemCode || ex.itemCode === '-' || ex.itemCode === '') ex.itemCode = obj.itemCode; }
     });
     masterData = uniqueData.sort((a, b) => (parseFloat(a.profile)||0) - (parseFloat(b.profile)||0) || (parseFloat(a.length)||0) - (parseFloat(b.length)||0));
     // Item Code for Production Orders is resolved from Master Catalog by Profile + Cut Length.
@@ -3288,7 +3288,7 @@ function renderDashboard() {
   sortedPlsForCrates.forEach(pl => {
       let reqQty = pl.pcsQty;
       let matched = availStockForCrates.find(m => String(m.profile).trim() == String(pl.profile).trim() && String(m.itemCode).trim() == String(pl.itemCode).trim() && cleanLen(m.length) == cleanLen(pl.length));
-      let cap = matched ? (matched.boxCapacity || 100) : 100;
+      let cap = getMasterPcsPerBox(matched);
       
       domTotalPlReqBoxes += (reqQty / cap);
 
@@ -4055,6 +4055,26 @@ function isPunchBypassed(profile, length) { const bypassProfiles = ['1041', '104
 function populateStockFilterDropdown() { const select = document.getElementById('stockFilterProfile'); if(!select) return; select.innerHTML = '<option value="">-- All Profiles --</option>'; const itemSelect = document.getElementById('stockFilterItemCode'); if(itemSelect) itemSelect.innerHTML = '<option value="">-- All Item Codes --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }
 function onStockProfileFilterChange() { const profile = document.getElementById('stockFilterProfile').value; const itemSelect = document.getElementById('stockFilterItemCode'); itemSelect.innerHTML = '<option value="">-- All Item Codes --</option>'; if(profile) { const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => itemSelect.appendChild(new Option(ic, ic))); } renderProfileSummaryTable(); }
 
+// Single source of truth for PCS per box across production and stock screens.
+function getMasterPcsPerBox(item){
+  if(!item) return 100;
+  const candidates=[
+    item.pcsPerBox,item.pcs_per_box,item.pcsForBox,item.pcs_for_box,
+    item.pcsForBoxQty,item.pcs_for_box_qty,item.pcs_box,item.pcsBox,
+    item.boxCapacity,item.box_capacity,item.localBoxCapacity
+  ];
+  for(const value of candidates){
+    const n=Number(value);
+    if(Number.isFinite(n)&&n>0) return Math.floor(n);
+  }
+  return 100;
+}
+function getProductionSelectedMaster(){
+  const p=document.getElementById('selectProfile')?.value||'';
+  const i=document.getElementById('selectItemCode')?.value||'';
+  const l=document.getElementById('selectLength')?.value||'';
+  return masterData.find(m=>String(m.profile).trim()===String(p).trim()&&String(m.itemCode).trim()===String(i).trim()&&cleanLen(m.length)===cleanLen(l))||null;
+}
 function renderProfileSummaryTable() {
     const tbody = document.getElementById('profileSummaryTableBody');
     if (!tbody) return;
@@ -4081,7 +4101,8 @@ function renderProfileSummaryTable() {
             const totalPcs = cut + punch + wrap + box + crate;
             const unitWeight = Number(item.unitWeight) || 0;
             const totalWeight = (totalPcs * unitWeight).toFixed(2);
-            const boxCount = Number(item.boxCapacity) > 0 ? Math.floor(box / Number(item.boxCapacity)) : 0;
+            const pcsPerBox = getMasterPcsPerBox(item);
+            const boxCount = pcsPerBox > 0 ? Math.floor(box / pcsPerBox) : 0;
             const editCell = (qty, stage, badgeClass) => `<td class="${canEdit ? 'clickable-stage' : ''}" ${canEdit ? `onclick="openStockEditModal(${actualIndex}, '${stage}')"` : ''}><span class="stock-badge ${badgeClass}">${qty} Pcs</span></td>`;
             return `<tr>
               <td><b>${item.profile ?? '-'}</b></td>
@@ -4213,7 +4234,7 @@ function renderBalanceWorkTable() {
                 if (exLen > 0 && cutLen > 0) { pcsPerEx = Math.floor(exLen / cutLen); if(pcsPerEx > 0) reqEx = Math.ceil(maxPending / pcsPerEx); }
                 const wipPcs = (item.cutQty || 0) + (item.punchQty || 0) + (item.wrapQty || 0);
                 const unboxedAndPendingPcs = maxPending + wipPcs;
-                const reqBoxes = Math.ceil(unboxedAndPendingPcs / (item.boxCapacity || 100));
+                const reqBoxes = Math.ceil(unboxedAndPendingPcs / getMasterPcsPerBox(item));
                 const cbBalance = getAvailableCardboard(item.profile, item.itemCode, item.length) - reqBoxes;
                 const cbStatusHtml = cbBalance >= 0 ? `<span style="color:var(--success-color);font-weight:800;">OK (+${cbBalance})</span>` : `<span style="color:var(--warning-color);font-weight:800;"><i class="fa-solid fa-arrow-down"></i> Short ${Math.abs(cbBalance)}</span>`;
                 const bal = displayBalance;
@@ -4261,7 +4282,7 @@ function buildActiveBalanceWorkExportData() {
         const reqEx=pcsPerEx>0?Math.ceil(pending/pcsPerEx):0;
         const wip=(item.cutQty||0)+(item.punchQty||0)+(item.wrapQty||0);
         const unboxed=wip+pending;
-        const reqBoxes=Math.ceil(unboxed/(item.boxCapacity||100));
+        const reqBoxes=Math.ceil(unboxed/getMasterPcsPerBox(item));
         const cb=getAvailableCardboard(item.profile,item.itemCode,item.length)-reqBoxes;
         out.push({'Profile':item.profile,'Item Code':item.itemCode||'-','Cut L (mm)':item.length,'Ex L (mm)':item.exLength||'-','Pcs / Ex':pcsPerEx,'WIP+Box Stock':stock,'Crate Qty':crate,'Unshipped PO':unshipped,'PO Pending':Math.max(0,unshipped-(stock+crate)),'PL Balance':balance,'Req. Extrusions':reqEx,'Unboxed Pcs':unboxed,'Req. Boxes':reqBoxes,'Cardboard Bal':cb>=0?`OK (+${cb})`:`Short ${Math.abs(cb)}`});
     });
@@ -4318,7 +4339,7 @@ function getCardboardTransactionsBalance(profile,itemCode,length){ const rows=ca
 function renderCardboardStock(){
   const totalEl=document.getElementById('totalCardboardStockDisplay');
   const groups={};
-  masterData.forEach(m=>{const key=`${String(m.profile).trim()}|${String(m.itemCode||'').trim()}|${cleanLen(m.length)}`; if(!groups[key]) groups[key]={profile:String(m.profile).trim(),itemCode:m.itemCode||'-',length:m.length,material:m.material||'-',capacity:Number(m.boxCapacity)||100};});
+  masterData.forEach(m=>{const key=`${String(m.profile).trim()}|${String(m.itemCode||'').trim()}|${cleanLen(m.length)}`; if(!groups[key]) groups[key]={profile:String(m.profile).trim(),itemCode:m.itemCode||'-',length:m.length,material:m.material||'-',capacity:getMasterPcsPerBox(m)};});
   cardboardStockList.forEach(c=>{const x=parseCardboardType(c.type); const key=`${x.profile}|${x.itemCode}|${cleanLen(x.length)}`; if(!groups[key]) groups[key]={profile:x.profile,itemCode:x.itemCode||'-',length:x.length,material:'-',capacity:100};});
   (cardboardOpeningBalances||[]).forEach(c=>{const x=parseCardboardType(c.cb_type);const key=`${x.profile}|${x.itemCode}|${cleanLen(x.length)}`;if(!groups[key])groups[key]={profile:x.profile,itemCode:x.itemCode||'-',length:x.length,material:'-',capacity:100};});
   let total=0; Object.values(groups).forEach(g=>{const b=getCardboardTransactionsBalance(g.profile,g.itemCode,g.length); total += Math.max(0,b.incoming-b.used);});
@@ -4357,7 +4378,7 @@ window.getCurrentPlCardboardShortageRows = function(){
     const master=masterData.find(m=>String(m.profile||'').trim().toLowerCase()===profile.toLowerCase()&&String(m.itemCode||'').trim().toLowerCase()===itemCode.toLowerCase()&&cleanLen(m.length)===length)
       ||masterData.find(m=>String(m.profile||'').trim().toLowerCase()===profile.toLowerCase()&&cleanLen(m.length)===length);
     const key=`${profile.toLowerCase()}|${itemCode.toLowerCase()}|${length}`;
-    const g=groups.get(key)||{material:master?.material||'-',profile,itemCode,length,pcs:0,pcsPerBox:Math.max(1,Number(master?.boxCapacity)||100)};
+    const g=groups.get(key)||{material:master?.material||'-',profile,itemCode,length,pcs:0,pcsPerBox:getMasterPcsPerBox(master)};
     g.pcs+=pcs; if(g.material==='-'&&master?.material)g.material=master.material;
     groups.set(key,g);
   });
@@ -4437,7 +4458,7 @@ function closeCbInOutModal(){document.getElementById('cbInOutEditModal').style.d
 async function saveCbInOut(){const p=document.getElementById('inOutCbProfile').value,i=document.getElementById('inOutCbItemCode').value,l=document.getElementById('inOutCbLength').value,oldIn=Number(document.getElementById('currentCbIn').value)||0,oldOut=Number(document.getElementById('currentCbOut').value)||0,newIn=Math.max(0,parseInt(document.getElementById('newCbInVal').value)||0),newOut=Math.max(0,parseInt(document.getElementById('newCbOutVal').value)||0); const dIn=newIn-oldIn,dOut=newOut-oldOut; if(newOut>newIn)return showToast('Total OUT cannot exceed Total IN.','error'); const base=`Pr: ${p} | Item: ${i} | L: ${l}`; try{if(dIn||dOut){const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:base+' | MANUAL EDIT',incoming:dIn>0?dIn:0,used:dOut>0?dOut:0}; if(dIn<0) rec.used+=Math.abs(dIn); if(dOut<0) rec.incoming+=Math.abs(dOut); const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();aisRegisterUndo(`Edit Cardboard Totals • ${p} / ${l}`,async()=>{await aisDeleteLatest('cardboard_stock',rec);},'cardboardTab');} closeCbInOutModal();renderCardboardStock();showToast('Cardboard totals updated.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard edit failed'),'error');}}
 function openCbCapacityModal(g){ if(typeof g==='string') g=JSON.parse(decodeURIComponent(g));document.getElementById('editCbCatalogId').value=masterData.find(m=>String(m.profile).trim()===String(g.profile).trim()&&m.itemCode===g.itemCode&&cleanLen(m.length)===cleanLen(g.length))?.db_id||'';document.getElementById('cbEditTarget').innerHTML=`${g.profile} • ${g.itemCode} • ${g.length} mm`;document.getElementById('editCbCapacityVal').value=g.capacity||100;document.getElementById('cbCapacityEditModal').style.display='flex';}
 function closeCbCapacityModal(){document.getElementById('cbCapacityEditModal').style.display='none';}
-async function saveCbCapacityEdit(){const id=document.getElementById('editCbCatalogId').value,cap=Math.max(1,parseInt(document.getElementById('editCbCapacityVal').value)||100);if(!id)return showToast('Matching Master Catalog item not found.','error');try{const m=masterData.find(x=>String(x.db_id)===String(id));const oldCap=Number(m?.boxCapacity)||100;const r=await supabaseClient.from('master_catalog').update({box_capacity:cap}).eq('id',id);if(r.error)throw r.error;if(m)m.boxCapacity=cap;aisRegisterUndo(`Edit Pcs per Box • ${m?.profile||''} / ${m?.length||''}`,async()=>{await aisUpdateById('master_catalog',id,{box_capacity:oldCap});},'cardboardTab');closeCbCapacityModal();renderCardboardStock();renderBalanceWorkTable();showToast('Pcs per Box updated.','success');}catch(e){showToast(dbErrorMessage(e,'Capacity update failed'),'error');}}
+async function saveCbCapacityEdit(){const id=document.getElementById('editCbCatalogId').value,cap=Math.max(1,parseInt(document.getElementById('editCbCapacityVal').value)||100);if(!id)return showToast('Matching Master Catalog item not found.','error');try{const m=masterData.find(x=>String(x.db_id)===String(id));const oldCap=getMasterPcsPerBox(m);const r=await supabaseClient.from('master_catalog').update({box_capacity:cap}).eq('id',id);if(r.error)throw r.error;if(m){m.boxCapacity=cap;m.pcsPerBox=cap;}aisRegisterUndo(`Edit Pcs per Box • ${m?.profile||''} / ${m?.length||''}`,async()=>{await aisUpdateById('master_catalog',id,{box_capacity:oldCap});},'cardboardTab');closeCbCapacityModal();renderCardboardStock();renderBalanceWorkTable();showToast('Pcs per Box updated.','success');}catch(e){showToast(dbErrorMessage(e,'Capacity update failed'),'error');}}
 function editCardboardTransaction(id){const row=cardboardStockList.find(c=>Number(c.db_id||c.id)===Number(id));if(!row||!row.db_id)return showToast('This automatic/local record cannot be edited here. Use Manual Cardboard Data for independent reference information.','info');showToast('Stock transaction quantities are protected. Use Manual Cardboard Data to edit reference information without changing Current Cardboard Stock.','info');}
 
 async function persistCardboardManualData(){
@@ -4851,13 +4872,13 @@ async function submitDailyEntry() {
       profileVal=raw('selectProfile'), itemCodeVal=raw('selectItemCode'),
       lengthVal=raw('selectLength');
     const cutQty=Number(raw('cutQty')||0), punchQty=Number(raw('punchQty')||0),
-      wrapQty=Number(raw('wrapQty')||0), enteredBoxes=Number(raw('boxQty')||0),
+      wrapQty=Number(raw('wrapQty')||0), enteredBoxes=Number(raw('boxQty')||0), enteredBoxPcs=Number(raw('boxPcsQty')||0),
       crateQty=Number(raw('crateQty')||0);
     const planQty={cut:Number(raw('planCutQty')||0),punch:Number(raw('planPunchQty')||0),wrap:Number(raw('planWrapQty')||0),box:Number(raw('planBoxQty')||0),crate:Number(raw('planCrateQty')||0)};
 
     if(!dateVal||!shiftVal||!teamVal||!profileVal||!itemCodeVal||!lengthVal)
       return showToast('Please select date, shift, team, profile, item code and length.','warning');
-    const quantities=[['Cut',cutQty],['Punch',punchQty],['Wrapping',wrapQty],['Box',enteredBoxes],['Crate',crateQty]];
+    const quantities=[['Cut',cutQty],['Punch',punchQty],['Wrapping',wrapQty],['Box PCS',enteredBoxPcs],['Crate',crateQty]];
     const invalid=quantities.find(([label,value])=>!Number.isFinite(value)||value<0||!Number.isInteger(value));
     const invalidPlan=Object.entries(planQty).find(([stage,value])=>!Number.isFinite(value)||value<0||!Number.isInteger(value));
     if(invalidPlan) return showToast(`${invalidPlan[0]} plan quantity must be a whole number greater than or equal to 0.`,'warning');
@@ -4883,8 +4904,9 @@ async function submitDailyEntry() {
 
     const previous={cutQty:Number(item.cutQty)||0,punchQty:Number(item.punchQty)||0,wrapQty:Number(item.wrapQty)||0,boxQty:Number(item.boxQty)||0,crateQty:Number(item.crateQty)||0};
     let next={...previous};
-    const boxCapacity=Math.max(1,Number(item.boxCapacity)||100);
-    const boxPcs=enteredBoxes*boxCapacity;
+    const boxCapacity=getMasterPcsPerBox(item);
+    const boxPcs=enteredBoxPcs;
+    const cardboardBoxesRequired=boxPcs>0?Math.ceil(boxPcs/boxCapacity):0;
 
     // Apply and validate movements in the real process order:
     // Cut -> Punch (except bypass profiles) -> Wrapping -> Box -> Crate.
@@ -4921,8 +4943,8 @@ async function submitDailyEntry() {
     const availableCardboard=Math.max(0,Number(getAvailableCardboard(profileVal,itemCodeVal,lengthVal))||0);
     // Box quantity is production data, not a cardboard stock limit. When cardboard
     // is short, save the full valid Box movement and consume only available boxes.
-    cardboardToDeduct=Math.min(enteredBoxes,availableCardboard);
-    let shortageBoxes=Math.max(0,enteredBoxes-cardboardToDeduct);
+    cardboardToDeduct=Math.min(cardboardBoxesRequired,availableCardboard);
+    let shortageBoxes=Math.max(0,cardboardBoxesRequired-cardboardToDeduct);
 
     newLog={log_date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,item_code:itemCodeVal,length:cleanLen(lengthVal),cut_qty:cutQty,punch_qty:punchQty,wrap_qty:wrapQty,box_qty:boxPcs,crate_qty:crateQty,log_time:new Date().toLocaleTimeString()};
 
@@ -4942,9 +4964,9 @@ async function submitDailyEntry() {
 
     // Record only the actual cardboard used. The helper rechecks the current balance
     // and caps the deduction; lack of cardboard alone never blocks the Box movement.
-    cardboardDeducted=await deductCardboardBoxesForProduction(profileVal,itemCodeVal,lengthVal,enteredBoxes);
+    cardboardDeducted=cardboardBoxesRequired>0?await deductCardboardBoxesForProduction(profileVal,itemCodeVal,lengthVal,cardboardBoxesRequired):null;
     cardboardToDeduct=cardboardDeducted ? (Number(cardboardDeducted.used)||0) : 0;
-    shortageBoxes=Math.max(0,enteredBoxes-cardboardToDeduct);
+    shortageBoxes=Math.max(0,cardboardBoxesRequired-cardboardToDeduct);
 
     for(const row of catalogRows){
       const isCanonical=String(row.id)===String(item.db_id);
@@ -4989,7 +5011,7 @@ async function submitDailyEntry() {
     }
     // Clear quantities immediately after the database commit so a later UI/render
     // exception cannot leave the just-saved quantities ready for an accidental retry.
-    ['cutQty','punchQty','wrapQty','boxQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
+    ['cutQty','punchQty','wrapQty','boxQty','boxPcsQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
     if(teamPlanSaved) ['planCutQty','planPunchQty','planWrapQty','planBoxQty','planCrateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
     updateProductionCardboardAvailability();
 
@@ -5008,7 +5030,7 @@ async function submitDailyEntry() {
 
     historyLogs.unshift({id:insertedLog.id || -Date.now(),date:dateVal,shift:shiftVal,team:teamVal,profile:profileVal,itemCode:itemCodeVal,length:cleanLen(lengthVal),cutQty,punchQty,wrapQty,boxQty:boxPcs,crateQty,timestamp:insertedLog.log_time||insertedLog.created_at});
     renderDashboard(); renderProfileSummaryTable(); renderHistoryData(); checkDateStatus(); renderCardboardStock(); renderBalanceWorkTable(); renderDailyTeamPerformance();
-    ['cutQty','punchQty','wrapQty','boxQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
+    ['cutQty','punchQty','wrapQty','boxQty','boxPcsQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
     updateProductionCardboardAvailability();
     const saveMessage=shortageBoxes>0 ? `Production saved successfully. Cardboard stock for this profile is now ${Math.max(0,Number(getAvailableCardboard(profileVal,itemCodeVal,lengthVal))||0)} box(es); ${shortageBoxes} box(es) had to be packed using separately prepared cardboard. Box Qty was saved.` : (teamPlanSaved ? 'Production saved successfully. Stock, history and team plan are updated.' : 'Production and stock were saved, but the Team Plan could not be saved. Run the additive daily_team_plans SQL migration and retry the plan entry.');
     const extrusionMessage=extrusionUsagePlan?` Extrusion: ${extrusionUsagePlan.required} required, ${extrusionUsagePlan.deducted} deducted from stock${extrusionUsagePlan.shortage?`, ${extrusionUsagePlan.shortage} short`:''}.`:'';
@@ -5019,7 +5041,7 @@ async function submitDailyEntry() {
     if(databaseCommitComplete){
       // The DB commit succeeded; never roll back committed stock just because a
       // later render/undo/UI action failed. Refresh in the background instead.
-      ['cutQty','punchQty','wrapQty','boxQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
+      ['cutQty','punchQty','wrapQty','boxQty','boxPcsQty','crateQty'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0;});
       loadDataFromSupabase(true).catch(syncErr=>console.warn('Post-commit UI recovery sync failed:',syncErr));
       showToast('Production data was saved, but the screen refresh had an issue. Data is syncing; do not re-enter this movement.','warning');
     } else {
@@ -5052,10 +5074,10 @@ async function submitDailyEntry() {
 
 function previousToDb(p){return {cut_qty:p.cutQty,punch_qty:p.punchQty,wrap_qty:p.wrapQty,box_qty:p.boxQty,crate_qty:p.crateQty};}
 
-function openStockEditModal(index, preferredStage = 'cutQty') { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editItemIndex').value = index; document.getElementById('editItemTarget').innerHTML = `Profile: <b>${item.profile}</b> | Item: <b>${item.itemCode || '-'}</b> | Length: <b>${item.length} mm</b>`; document.getElementById('editStageSelect').value = preferredStage; document.getElementById('editStageValue').value = item[preferredStage] || 0; document.getElementById('boxCapacityHelperText').dataset.capacity = item.boxCapacity || 100; document.getElementById('boxCapacityHelperText').innerText = `Master Capacity: ${item.boxCapacity || 100} Pcs per Box`; toggleBoxCountInput(); document.getElementById('stockEditModal').style.display = 'flex'; }
+function openStockEditModal(index, preferredStage = 'cutQty') { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editItemIndex').value = index; document.getElementById('editItemTarget').innerHTML = `Profile: <b>${item.profile}</b> | Item: <b>${item.itemCode || '-'}</b> | Length: <b>${item.length} mm</b>`; document.getElementById('editStageSelect').value = preferredStage; document.getElementById('editStageValue').value = item[preferredStage] || 0; const capacity=getMasterPcsPerBox(item); document.getElementById('boxCapacityHelperText').dataset.capacity = capacity; document.getElementById('boxCapacityHelperText').innerText = `Master Catalog: ${capacity} Pcs per Box`; toggleBoxCountInput(); document.getElementById('stockEditModal').style.display = 'flex'; }
 function toggleBoxCountInput() { const stage = document.getElementById('editStageSelect').value; const boxGroup = document.getElementById('editBoxCountGroup'); if (stage === 'boxQty') { boxGroup.style.display = 'flex'; syncBoxCount(); } else { boxGroup.style.display = 'none'; } }
-function syncBoxCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const pcs = parseInt(document.getElementById('editStageValue').value) || 0; const capacity = parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity) || 100; const boxes = capacity > 0 ? (pcs / capacity) : 0; document.getElementById('editBoxCountValue').value = boxes % 1 === 0 ? boxes : parseFloat(boxes.toFixed(2)); }
-function syncPcsCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const boxes = parseFloat(document.getElementById('editBoxCountValue').value) || 0; const capacity = parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity) || 100; document.getElementById('editStageValue').value = Math.round(boxes * capacity); }
+function syncBoxCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const pcs = Math.max(0,parseInt(document.getElementById('editStageValue').value)||0); const capacity = Math.max(1,parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity)||100); const boxes = pcs/capacity; document.getElementById('editBoxCountValue').value = boxes % 1 === 0 ? boxes : Number(boxes.toFixed(3)); }
+function syncPcsCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const boxes = Math.max(0,parseFloat(document.getElementById('editBoxCountValue').value)||0); const capacity = Math.max(1,parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity)||100); document.getElementById('editStageValue').value = Math.round(boxes*capacity); }
 function closeStockEditModal() { document.getElementById('stockEditModal').style.display = 'none'; }
 async function saveSingleStageEdit() {
   if(isAppBusy) return;
@@ -6676,7 +6698,7 @@ function renderPackingListTableCore() {
             const legacyWipPcs = cutPcs + punchPcs + wrapPcs;
             const plPendingQty = Math.max(0, (Number(v.qty)||0) - currentStock);
             const unboxedAndPendingPcs = plPendingQty + legacyWipPcs;
-            let cap = matched ? (matched.boxCapacity || 100) : 100;
+            let cap = getMasterPcsPerBox(matched);
             let reqBoxes = Math.ceil(unboxedAndPendingPcs / cap);
             let availCardboard = getAvailableCardboard(v.profile, v.itemCode, v.length);
             let cbBalance = availCardboard - reqBoxes;
@@ -7745,12 +7767,12 @@ function renderMasterCatalog() {
         const tbody = document.querySelector('#masterCatalogTable tbody'); if(!tbody) return; tbody.innerHTML = ''; 
         if(masterData.length === 0) { tbody.innerHTML = `<tr><td colspan="8" style="padding: 20px; text-align: center; color: #e11d48; font-weight: bold;"><i class="fa-solid fa-triangle-exclamation"></i> No Data Found!</td></tr>`; return; }
         let html = '';
-        masterData.forEach((item, index) => { html += `<tr><td><b>${item.profile}</b></td><td>${item.itemCode || '-'}</td><td><span style="color:#8b5cf6; font-weight:800;">${item.material || '-'}</span></td><td>${item.length} mm</td><td>${item.exLength || '-'}</td><td>${item.unitWeight} kg</td><td><span class="stock-badge bg-box">${item.boxCapacity || 100}</span></td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="openMasterEditModal(${index})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteMasterItem(${index})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; }); 
+        masterData.forEach((item, index) => { html += `<tr><td><b>${item.profile}</b></td><td>${item.itemCode || '-'}</td><td><span style="color:#8b5cf6; font-weight:800;">${item.material || '-'}</span></td><td>${item.length} mm</td><td>${item.exLength || '-'}</td><td>${item.unitWeight} kg</td><td><span class="stock-badge bg-box">${getMasterPcsPerBox(item)}</span></td><td>${currentUserRole === 'Admin' ? `<button class="btn btn-accent" style="padding:4px 8px; font-size:11px;" onclick="openMasterEditModal(${index})"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteMasterItem(${index})"><i class="fa-solid fa-trash"></i></button>` : `<i class="fa-solid fa-lock" style="color:#aaa;"></i>`}</td></tr>`; }); 
         tbody.innerHTML = html;
     } catch(e) {}
 }
 
-function openMasterEditModal(index) { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editMasterIndex').value = index; document.getElementById('editMasterProfile').value = item.profile; document.getElementById('editMasterItemCode').value = item.itemCode || ''; document.getElementById('editMasterMaterial').value = item.material || ''; document.getElementById('editMasterLength').value = item.length; document.getElementById('editMasterExLength').value = item.exLength || ''; document.getElementById('editMasterUnitWeight').value = item.unitWeight; document.getElementById('editMasterBoxCapacity').value = item.boxCapacity || 100; document.getElementById('masterEditModal').style.display = 'flex'; }
+function openMasterEditModal(index) { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editMasterIndex').value = index; document.getElementById('editMasterProfile').value = item.profile; document.getElementById('editMasterItemCode').value = item.itemCode || ''; document.getElementById('editMasterMaterial').value = item.material || ''; document.getElementById('editMasterLength').value = item.length; document.getElementById('editMasterExLength').value = item.exLength || ''; document.getElementById('editMasterUnitWeight').value = item.unitWeight; document.getElementById('editMasterBoxCapacity').value = getMasterPcsPerBox(item); document.getElementById('masterEditModal').style.display = 'flex'; }
 function closeMasterEditModal() { document.getElementById('masterEditModal').style.display = 'none'; }
 async function saveMasterCatalogEdit() {
  if(isAppBusy)return; isAppBusy=true;
@@ -7765,7 +7787,7 @@ async function saveMasterCatalogEdit() {
   const cap=parseInt(document.getElementById('editMasterBoxCapacity').value)||100;
   if(isNaN(index))return;
   const item=masterData[index]; if(!item)throw new Error('Master catalog item not found.');
-  const old={profile:item.profile,item_code:item.itemCode||'',material:item.material||'',length:item.length,ex_length:item.exLength||'',unit_weight:Number(item.unitWeight)||0,box_capacity:Number(item.boxCapacity)||100};
+  const old={profile:item.profile,item_code:item.itemCode||'',material:item.material||'',length:item.length,ex_length:item.exLength||'',unit_weight:Number(item.unitWeight)||0,box_capacity:getMasterPcsPerBox(item)};
   const vals={profile,item_code:itemCode,material,length,ex_length:exLength,unit_weight:uw,box_capacity:cap};
   if(item.db_id){ const r=await supabaseClient.from('master_catalog').update(vals).eq('id',item.db_id); if(r.error)throw r.error; }
   else { const r=await supabaseClient.from('master_catalog').insert([{...vals,cut_qty:item.cutQty,punch_qty:item.punchQty,wrap_qty:item.wrapQty,box_qty:item.boxQty,crate_qty:item.crateQty}]); if(r.error)throw r.error; }
@@ -7930,40 +7952,80 @@ function populateCbProfileDropdown(){
   const dl=document.getElementById('cbMaterialList');
   if(dl){dl.innerHTML=''; [...new Set(masterData.map(m=>String(m.material||'').trim()).filter(v=>v&&v!=='-'))].forEach(v=>dl.appendChild(new Option(v,v)));}
 }
+function updateProductionBoxPcsPreview(mode='boxes'){
+  const boxesInput=document.getElementById('boxQty');
+  const pcsInput=document.getElementById('boxPcsQty');
+  const preview=document.getElementById('productionBoxPcsPreview');
+  const capacityLabel=document.getElementById('productionBoxCapacityLabel');
+  if(!boxesInput||!pcsInput||!preview)return;
+  const master=getProductionSelectedMaster();
+  const capacity=getMasterPcsPerBox(master);
+  const boxes=Math.max(0,Number(boxesInput.value)||0);
+  const pcs=Math.max(0,Math.floor(Number(pcsInput.value)||0));
+  if(capacityLabel)capacityLabel.textContent=`Master Catalog capacity: ${capacity.toLocaleString()} Pcs per Box`;
+  preview.textContent=`${boxes.toLocaleString(undefined,{maximumFractionDigits:3})} Boxes × ${capacity.toLocaleString()} Pcs/Box = ${pcs.toLocaleString()} Pcs`;
+}
+function syncProductionBoxPcsFromBoxes(){
+  const boxesInput=document.getElementById('boxQty'),pcsInput=document.getElementById('boxPcsQty');
+  if(!boxesInput||!pcsInput)return;
+  const capacity=getMasterPcsPerBox(getProductionSelectedMaster());
+  const boxes=Math.max(0,Math.floor(Number(boxesInput.value)||0));
+  pcsInput.value=String(boxes*capacity);
+  boxesInput.dataset.lastEdited='boxes';
+  updateProductionBoxPcsPreview('boxes');
+  updateProductionCardboardAvailability();
+}
+function syncProductionBoxesFromPcs(){
+  const boxesInput=document.getElementById('boxQty'),pcsInput=document.getElementById('boxPcsQty');
+  if(!boxesInput||!pcsInput)return;
+  const capacity=getMasterPcsPerBox(getProductionSelectedMaster());
+  const pcs=Math.max(0,Math.floor(Number(pcsInput.value)||0));
+  boxesInput.value=pcs?String(Number((pcs/capacity).toFixed(3))):'0';
+  boxesInput.dataset.lastEdited='pcs';
+  updateProductionBoxPcsPreview('pcs');
+  updateProductionCardboardAvailability();
+}
 function updateProductionCardboardAvailability(){
   const box=document.getElementById('productionCardboardAvailability');
   const input=document.getElementById('boxQty');
+  const pcsInput=document.getElementById('boxPcsQty');
   if(!box) return;
   const p=document.getElementById('selectProfile')?.value||'', i=document.getElementById('selectItemCode')?.value||'', l=document.getElementById('selectLength')?.value||'';
   if(!p||!i||!l){
-    if(input){ input.value=0; input.removeAttribute('max'); input.disabled=true; input.title='Select profile, item code and length first.'; }
+    if(input){input.value=0;input.removeAttribute('max');input.disabled=true;input.title='Select profile, item code and length first.';}
+    if(pcsInput){pcsInput.value=0;pcsInput.disabled=true;}
     box.textContent='Select profile, item code and length to check cardboard stock.';
     box.className='production-cardboard-info neutral';
+    updateProductionBoxPcsPreview();
     return;
   }
-  const avail=Math.max(0,Number(getAvailableCardboard(p,i,l))||0);
-  let entered=Math.max(0,parseInt(input?.value)||0);
-
-  // Box Qty is a production quantity and must NOT be blocked by cardboard stock.
-  // Users may enter any quantity (even when cardboard stock is 0). Cardboard consumption
-  // is capped at the available stock during save, so cardboard stock can never become negative.
-  if(input){
-    input.removeAttribute('max');
-    input.disabled=false;
-    input.value=entered;
-    input.title=avail<=0 ? 'No cardboard stock available. Production Box Qty can still be entered.' : `Available cardboard: ${avail} boxes`;
+  const master=getProductionSelectedMaster();
+  const capacity=getMasterPcsPerBox(master);
+  if(input)input.disabled=false;
+  if(pcsInput)pcsInput.disabled=false;
+  // When profile/item/length changes, recalculate the opposite field using the
+  // newly selected Master Catalog capacity while preserving the last edited side.
+  if(input&&pcsInput){
+    if(input.dataset.lastEdited==='pcs'){
+      const currentPcs=Math.max(0,Math.floor(Number(pcsInput.value)||0));
+      input.value=currentPcs?String(Number((currentPcs/capacity).toFixed(3))):'0';
+    }else{
+      const currentBoxes=Math.max(0,Math.floor(Number(input.value)||0));
+      pcsInput.value=String(currentBoxes*capacity);
+    }
   }
-  const shortBy=Math.max(0,entered-avail);
+  const avail=Math.max(0,Number(getAvailableCardboard(p,i,l))||0);
+  const pcs=Math.max(0,Math.floor(Number(pcsInput?.value)||0));
+  const equivalentBoxes=pcs/capacity;
+  const cardboardBoxes=Math.ceil(pcs/capacity);
+  const shortBy=Math.max(0,cardboardBoxes-avail);
   const ok=shortBy===0;
-  const afterSave=Math.max(0,avail-entered);
-  box.innerHTML=`<i class="fa-solid ${avail>0?'fa-box-open':'fa-box'}"></i> <span>Available Cardboard Stock: <b>${avail.toLocaleString()} Boxes</b>${entered?` • Entered Box Qty: <b>${entered}</b> • ${ok?'Stock after save: '+afterSave:'Cardboard used: '+avail+' • Short by: '+shortBy}`:''}</span>`;
-  box.className='production-cardboard-info '+(entered && !ok?'danger':(avail>0?'ok':'neutral'));
+  const afterSave=Math.max(0,avail-cardboardBoxes);
+  updateProductionBoxPcsPreview();
+  box.innerHTML=`<i class="fa-solid ${avail>0?'fa-box-open':'fa-box'}"></i> <span>Available Cardboard Stock: <b>${avail.toLocaleString()} Boxes</b>${pcs?` • Production: <b>${pcs.toLocaleString()} Pcs</b> (${equivalentBoxes.toLocaleString(undefined,{maximumFractionDigits:3})} equivalent Boxes; ${cardboardBoxes} cardboard box(es) required) • ${ok?'Stock after save: '+afterSave:'Cardboard used: '+avail+' • Short by: '+shortBy}`:''}</span>`;
+  box.className='production-cardboard-info '+(pcs && !ok?'danger':(avail>0?'ok':'neutral'));
 }
-function enforceProductionCardboardQty(){
-  const input=document.getElementById('boxQty');
-  if(!input) return;
-  updateProductionCardboardAvailability();
-}
+function enforceProductionCardboardQty(){syncProductionBoxPcsFromBoxes();}
 function productionOrderDateRank(value){
   const raw=String(value??'').trim();
   if(!raw)return 0;
@@ -12038,7 +12100,7 @@ function normalizeStockSnapshotRows(rows) {
     wrapQty: Number(x.wrapQty ?? x.wrap_qty) || 0,
     boxQty: Number(x.boxQty ?? x.box_qty) || 0,
     crateQty: Number(x.crateQty ?? x.crate_qty) || 0,
-    boxCapacity: Number(x.boxCapacity ?? x.box_capacity) || 100
+    boxCapacity: getMasterPcsPerBox(x)
   }));
 }
 function getVisibleStockRows() {
@@ -12190,7 +12252,7 @@ function buildCurrentStockExportRows() {
     const wrap = Number(item.wrapQty)||0, box = Number(item.boxQty)||0;
     const crate = Number(item.crateQty)||0, unitWeight = Number(item.unitWeight)||0;
     const total = cut+punch+wrap+box+crate;
-    const capacity = Number(item.boxCapacity)||100;
+    const capacity = getMasterPcsPerBox(item);
     return {
       'Stock Date': selected.date,
       'Shift': selected.shift,
