@@ -4019,3 +4019,12 @@ body.dark-mode .cb-shortage-panel{background:#0f172a;border-color:#334155}body.d
 
 .production-box-capacity-label{font-size:10px;font-weight:800;color:#476477;margin-top:6px}
 .production-box-pcs-preview{margin-top:5px;padding:7px 9px;border-radius:7px;background:#e7f6ef;border:1px solid #b7e4ce;color:#08634d;font-size:12px;font-weight:900}
+
+/* Punching bypass: neutral indicator for profile/length combinations without Punch stage. */
+.stock-badge.punch-not-applicable{background:#e2e8f0;color:#64748b}
+
+/* V268 Plant Extrusion IN */
+#exPlantInSubTab .ex-receipt-grid{margin-top:16px}
+#exPlantInSubTab .ex-form-actions{align-self:end}
+#exPlantInSubTab .ex-qty-in{color:#047857}
+#exPlantInFoot th{background:#eaf7f3;color:#145c50;font-weight:800}

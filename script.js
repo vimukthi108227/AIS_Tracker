@@ -4051,7 +4051,14 @@ async function editPOChartDate(poNumber) {
 function renderPoCharts() { const poContainer = document.getElementById('poChartsContainerTab'); if(!poContainer) return; poChartInstances.forEach(chart => chart.destroy()); poChartInstances = []; poContainer.innerHTML = ''; if (poList.length === 0) { poContainer.innerHTML = `<div style="padding:20px; color:var(--text-muted); font-weight:700; text-align:center; width:100%;">No Active Production Orders Available.</div>`; return; } const poGroups = {}; sortProductionOrderRows(poList).forEach(po => { if(!poGroups[po.poNumber]) poGroups[po.poNumber] = { date: po.date, items: [] }; if(productionOrderDateRank(po.date)>productionOrderDateRank(poGroups[po.poNumber].date)) poGroups[po.poNumber].date=po.date; poGroups[po.poNumber].items.push(po); }); Object.keys(poGroups).sort((a,b)=>productionOrderDateRank(poGroups[b].date)-productionOrderDateRank(poGroups[a].date)).forEach((poNumber, idx) => { const group = poGroups[poNumber]; let totalOrderWt = 0; let totalShippedWt = 0; let totalCompleteWt = 0; group.items.forEach(poItem => { const matchedItem = masterData.find(m => String(m.profile).trim() === String(poItem.profile).trim() && cleanLen(m.length) === cleanLen(poItem.length)); const uw = matchedItem ? (matchedItem.unitWeight || 0) : 0; const orderWt = poItem.orderQty * uw; totalOrderWt += orderWt; let shippedQty = 0; shipmentList.filter(s => String(s.poNumber).trim() === String(poNumber).trim() && String(s.profile).trim() === String(poItem.profile).trim() && cleanLen(s.length) === cleanLen(poItem.length)).forEach(s => shippedQty += s.shippedQty); const shippedWt = shippedQty * uw; totalShippedWt += shippedWt; const completeWt = Math.min(matchedItem ? (matchedItem.boxQty + matchedItem.crateQty) : 0, Math.max(0, poItem.orderQty - shippedQty)) * uw; totalCompleteWt += completeWt; }); const pendingWt = Math.max(0, totalOrderWt - totalShippedWt - totalCompleteWt); 
 if(pendingWt <= 0 && totalCompleteWt <= 0) return; 
 poContainer.insertAdjacentHTML('beforeend', `<div class="po-chart-item"><h5 style="margin:0 0 5px 0; font-size:13.5px; color:var(--primary-dark); font-weight:900; width:100%; text-align:center; border-bottom:1px dashed var(--border-color); padding-bottom:5px;">${poNumber}</h5><div class="po-chart-date-row" style="display:flex;align-items:center;justify-content:center;gap:5px;margin:0 0 8px;font-size:10.5px;color:var(--text-muted);font-weight:700;"><span><i class="fa-regular fa-calendar"></i> ${String(group.date||'Date not set').slice(0,10)}</span>${currentUserRole === 'Admin' ? `<button type="button" class="btn btn-secondary po-date-edit-btn" aria-label="Edit received PO date" style="width:25px;height:25px;min-width:25px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:1;border-radius:7px;" onclick="editPOChartDate(decodeURIComponent('${encodeURIComponent(String(poNumber))}'))" title="Edit received PO date"><i class="fa-solid fa-pen"></i></button>` : ''}</div><div style="width: 110px; height: 110px; position:relative; margin-bottom:12px;"><canvas id="poChartTab_idx_${idx}"></canvas></div><div style="font-size:11.5px; width:100%; display:flex; flex-direction:column; gap:6px; font-weight:700;"><div style="display:flex; justify-content:space-between; color:#3b82f6;"><span>Shipped:</span> <span>${totalShippedWt.toFixed(1)} kg</span></div><div style="display:flex; justify-content:space-between; color:#10b981;"><span>Ready:</span> <span>${totalCompleteWt.toFixed(1)} kg</span></div><div style="display:flex; justify-content:space-between; color:#fb7185;"><span>Pending:</span> <span>${pendingWt.toFixed(1)} kg</span></div></div></div>`); if (typeof Chart !== 'undefined') { try { const ctxPo = document.getElementById(`poChartTab_idx_${idx}`).getContext('2d'); poChartInstances.push(new Chart(ctxPo, { type: 'doughnut', data: { labels: ['Shipped', 'Ready', 'Pending'], datasets: [{ data: [Number(totalShippedWt.toFixed(2))||0, Number(totalCompleteWt.toFixed(2))||0, Number(pendingWt.toFixed(2))||0], backgroundColor: ['#3b82f6', '#10b981', '#fb7185'], borderWidth: isDarkMode ? 2 : 1, borderColor: isDarkMode ? '#1e293b' : '#fff' }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { display: false } } } })); } catch(e){} } }); }
-function isPunchBypassed(profile, length) { const bypassProfiles = ['1041', '1042', '1043', '1047', '1048', '1090']; return bypassProfiles.includes(String(profile).trim()) || (String(profile).trim() === '1038' && String(length).trim() === '2438.4'); }
+function isPunchBypassed(profile, length) {
+  const p=String(profile??'').trim();
+  const l=cleanLen(length);
+  const allLengths=['1041','1042','1043','1047','1048','1090'];
+  const selectedLengths={'1038':[2438.4],'1046':[2438.4]};
+  const numericLength=Number(l);
+  return allLengths.includes(p) || ((selectedLengths[p]||[]).some(x=>Number.isFinite(numericLength)&&Math.abs(numericLength-x)<0.0001));
+}
 function populateStockFilterDropdown() { const select = document.getElementById('stockFilterProfile'); if(!select) return; select.innerHTML = '<option value="">-- All Profiles --</option>'; const itemSelect = document.getElementById('stockFilterItemCode'); if(itemSelect) itemSelect.innerHTML = '<option value="">-- All Item Codes --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }
 function onStockProfileFilterChange() { const profile = document.getElementById('stockFilterProfile').value; const itemSelect = document.getElementById('stockFilterItemCode'); itemSelect.innerHTML = '<option value="">-- All Item Codes --</option>'; if(profile) { const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => itemSelect.appendChild(new Option(ic, ic))); } renderProfileSummaryTable(); }
 
@@ -4103,13 +4110,15 @@ function renderProfileSummaryTable() {
             const totalWeight = (totalPcs * unitWeight).toFixed(2);
             const pcsPerBox = getMasterPcsPerBox(item);
             const boxCount = pcsPerBox > 0 ? Math.floor(box / pcsPerBox) : 0;
+            const punchBypassed=isPunchBypassed(item.profile,item.length);
             const editCell = (qty, stage, badgeClass) => `<td class="${canEdit ? 'clickable-stage' : ''}" ${canEdit ? `onclick="openStockEditModal(${actualIndex}, '${stage}')"` : ''}><span class="stock-badge ${badgeClass}">${qty} Pcs</span></td>`;
+            const punchCell=punchBypassed?`<td><span class="stock-badge" style="background:#e2e8f0;color:#64748b;" title="Punching stage is not applicable to this profile and length">N/A</span></td>`:editCell(punch,'punchQty','bg-punch');
             return `<tr>
               <td><b>${item.profile ?? '-'}</b></td>
               <td><span style="font-weight:600;color:var(--info-color);">${item.itemCode || '-'}</span></td>
               <td>${item.length ?? '-'}</td><td>${unitWeight || 0}</td>
               ${editCell(cut,'cutQty','bg-cut')}
-              ${editCell(punch,'punchQty','bg-punch')}
+              ${punchCell}
               ${editCell(wrap,'wrapQty','bg-wrap')}
               ${editCell(box,'boxQty','bg-box')}
               <td><span class="stock-badge" style="background:#059669;color:#fff;">${boxCount} Boxes</span></td>
@@ -4306,7 +4315,31 @@ window.exportBalanceWorkPdf=function(){
 function populateProfileDropdown() { const select = document.getElementById('selectProfile'); if(!select) return; select.innerHTML = '<option value="">-- Choose Profile --</option>'; [...new Set(masterData.map(i => String(i.profile).trim()))].forEach(p => select.appendChild(new Option(p, p))); }
 function onProfileSelect() { const profile = document.getElementById('selectProfile').value; const itemSelect = document.getElementById('selectItemCode'); itemSelect.innerHTML = '<option value="">-- Choose Item Code --</option>'; document.getElementById('selectLength').innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile) { onLengthSelect(); return; } const items = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode); [...new Set(items.map(m => m.itemCode))].forEach(ic => itemSelect.appendChild(new Option(ic, ic))); onLengthSelect(); }
 function onItemCodeSelect() { const profile = document.getElementById('selectProfile').value; const itemCode = document.getElementById('selectItemCode').value; const lengthSelect = document.getElementById('selectLength'); lengthSelect.innerHTML = '<option value="">-- Choose Length --</option>'; if(!profile || !itemCode) { onLengthSelect(); return; } const matches = masterData.filter(m => String(m.profile).trim() === profile && m.itemCode === itemCode); matches.forEach(m => lengthSelect.appendChild(new Option(`${m.length} mm`, m.length))); if(matches.length === 1) { lengthSelect.value = matches[0].length; } onLengthSelect(); }
-function onLengthSelect() { const profile = document.getElementById('selectProfile').value; const itemCode = document.getElementById('selectItemCode').value; const length = document.getElementById('selectLength').value; const punchGroup = document.getElementById('punchGroup'); if(!profile || !itemCode || !length) { if(typeof updateProductionCardboardAvailability==='function') updateProductionCardboardAvailability(); return; } const matchedCat = masterData.find(m => String(m.profile).trim() === profile && m.itemCode === itemCode && cleanLen(m.length) === cleanLen(length)); if (matchedCat && isPunchBypassed(matchedCat.profile, matchedCat.length)) { punchGroup.style.display = 'none'; document.getElementById('punchQty').value = 0; } else { punchGroup.style.display = 'flex'; } if(typeof updateProductionCardboardAvailability==='function') updateProductionCardboardAvailability(); }
+function updatePunchStageAvailability(profile,length){
+  const bypass=!!profile&&!!length&&isPunchBypassed(profile,length);
+  const planGroup=document.getElementById('planPunchGroup');
+  const actualGroup=document.getElementById('punchGroup');
+  if(planGroup)planGroup.style.display=bypass?'none':'';
+  if(actualGroup)actualGroup.style.display=bypass?'none':'flex';
+  const planInput=document.getElementById('planPunchQty');
+  const actualInput=document.getElementById('punchQty');
+  if(bypass){
+    if(planInput){planInput.value='0';planInput.disabled=true;planInput.setAttribute('aria-disabled','true');}
+    if(actualInput){actualInput.value='0';actualInput.disabled=true;actualInput.setAttribute('aria-disabled','true');}
+  }else{
+    if(planInput){planInput.disabled=false;planInput.removeAttribute('aria-disabled');}
+    if(actualInput){actualInput.disabled=false;actualInput.removeAttribute('aria-disabled');}
+  }
+  const wrapLabel=document.querySelector('#wrapQty')?.previousElementSibling;
+  const boxLabel=document.querySelector('#boxQty')?.parentElement?.querySelector('label');
+  const crateLabel=document.querySelector('#crateQty')?.previousElementSibling;
+  if(wrapLabel)wrapLabel.textContent=bypass?'2. Wrapping Qty (Pcs)':'3. Wrapping Qty (Pcs)';
+  if(boxLabel)boxLabel.innerHTML=`<i class="fa-solid fa-box-open"></i> ${bypass?'3.':'4.'} Box Packing Qty (Boxes)`;
+  if(crateLabel)crateLabel.innerHTML=`<i class="fa-solid fa-boxes-packing"></i> ${bypass?'4.':'5.'} Crate Stage Qty (Pcs)`;
+  return bypass;
+}
+
+function onLengthSelect() { const profile=document.getElementById('selectProfile')?.value||''; const itemCode=document.getElementById('selectItemCode')?.value||''; const length=document.getElementById('selectLength')?.value||''; updatePunchStageAvailability(profile,length); if(typeof updateProductionCardboardAvailability==='function')updateProductionCardboardAvailability(); }
 function checkDateStatus() { const dateVal = document.getElementById('entryDate').value; const shiftVal = document.getElementById('shift').value; const banner = document.getElementById('entryStatusBanner'); if (!banner) return; if (!dateVal) { banner.style.display = 'none'; return; } const existing = historyLogs.filter(h => h.date === dateVal && h.shift === shiftVal); if (existing.length > 0) { banner.className = "status-banner status-red"; banner.style.display = "flex"; banner.innerHTML = `<div class="status-banner-content"><div class="status-banner-icon"><i class="fa-solid fa-triangle-exclamation"></i></div><div><div style="font-weight: 800; font-size: 15px;">Entries exist for ${dateVal}</div></div></div>`; } else { banner.className = "status-banner status-green"; banner.style.display = "flex"; banner.innerHTML = `<div class="status-banner-content"><div class="status-banner-icon"><i class="fa-solid fa-circle-check"></i></div><div><div style="font-weight: 800; font-size: 15px;">Ready for New Operations Entry</div></div></div>`; } }
 async function deductCardboardBoxesForProduction(profile, itemCode, length, boxesRequested) {
   // Cardboard shortage must not block an otherwise valid Box production movement.
@@ -4816,9 +4849,10 @@ function loadDailyPlanForSelection(){
   const ids=['entryDate','shift','productionTeam','selectProfile','selectItemCode','selectLength'];
   const vals=ids.map(id=>document.getElementById(id)?.value||'');
   const [date,shift,team,profile,itemCode,length]=vals;
+  if(profile&&length)updatePunchStageAvailability(profile,length);
   if(!vals.every(Boolean))return;
   const p=dailyTeamPlans.find(x=>x.date===date&&String(x.shift)===shift&&String(x.team)===team&&String(x.profile)===profile&&String(x.itemCode||'')===itemCode&&cleanLen(x.length)===cleanLen(length));
-  const map={planCutQty:p?.cutQty??0,planPunchQty:p?.punchQty??0,planWrapQty:p?.wrapQty??0,planBoxQty:p?.boxQty??0,planCrateQty:p?.crateQty??0};
+  const map={planCutQty:p?.cutQty??0,planPunchQty:isPunchBypassed(profile,length)?0:(p?.punchQty??0),planWrapQty:p?.wrapQty??0,planBoxQty:p?.boxQty??0,planCrateQty:p?.crateQty??0};
   Object.entries(map).forEach(([id,value])=>{const el=document.getElementById(id);if(el)el.value=Number(value)||0;});
   const btn=document.getElementById('saveDailyPlanOnlyBtn');
   if(btn)btn.innerHTML=p?'<i class="fa-solid fa-pen-to-square"></i> Update Saved Plan':'<i class="fa-solid fa-calendar-check"></i> Save Plan Only';
@@ -4829,7 +4863,7 @@ async function saveDailyPlanOnly(){
     team=document.getElementById('productionTeam')?.value||'',profile=document.getElementById('selectProfile')?.value||'',
     itemCode=document.getElementById('selectItemCode')?.value||'',length=cleanLen(document.getElementById('selectLength')?.value||'');
   if(!date||!shift||!team||!profile||!itemCode||!length)return showToast('Select date, shift, team, profile, item code and length before saving the plan.','warning');
-  const qty={cut:Number(document.getElementById('planCutQty')?.value)||0,punch:Number(document.getElementById('planPunchQty')?.value)||0,wrap:Number(document.getElementById('planWrapQty')?.value)||0,box:Number(document.getElementById('planBoxQty')?.value)||0,crate:Number(document.getElementById('planCrateQty')?.value)||0};
+  const qty={cut:Number(document.getElementById('planCutQty')?.value)||0,punch:isPunchBypassed(profile,length)?0:(Number(document.getElementById('planPunchQty')?.value)||0),wrap:Number(document.getElementById('planWrapQty')?.value)||0,box:Number(document.getElementById('planBoxQty')?.value)||0,crate:Number(document.getElementById('planCrateQty')?.value)||0};
   if(Object.values(qty).some(v=>!Number.isInteger(v)||v<0))return showToast('Plan quantities must be whole numbers and cannot be negative.','warning');
   if(!Object.values(qty).some(v=>v>0))return showToast('Enter at least one planned quantity.','warning');
   isAppBusy=true;const btn=document.getElementById('saveDailyPlanOnlyBtn'),old=btn?.innerHTML;if(btn){btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Saving plan...';}
@@ -4871,10 +4905,11 @@ async function submitDailyEntry() {
     const dateVal=raw('entryDate'), shiftVal=raw('shift'), teamVal=raw('productionTeam'),
       profileVal=raw('selectProfile'), itemCodeVal=raw('selectItemCode'),
       lengthVal=raw('selectLength');
-    const cutQty=Number(raw('cutQty')||0), punchQty=Number(raw('punchQty')||0),
+    const punchBypassed=isPunchBypassed(profileVal,lengthVal);
+    const cutQty=Number(raw('cutQty')||0), punchQty=punchBypassed?0:(Number(raw('punchQty')||0)),
       wrapQty=Number(raw('wrapQty')||0), enteredBoxes=Number(raw('boxQty')||0), enteredBoxPcs=Number(raw('boxPcsQty')||0),
       crateQty=Number(raw('crateQty')||0);
-    const planQty={cut:Number(raw('planCutQty')||0),punch:Number(raw('planPunchQty')||0),wrap:Number(raw('planWrapQty')||0),box:Number(raw('planBoxQty')||0),crate:Number(raw('planCrateQty')||0)};
+    const planQty={cut:Number(raw('planCutQty')||0),punch:punchBypassed?0:(Number(raw('planPunchQty')||0)),wrap:Number(raw('planWrapQty')||0),box:Number(raw('planBoxQty')||0),crate:Number(raw('planCrateQty')||0)};
 
     if(!dateVal||!shiftVal||!teamVal||!profileVal||!itemCodeVal||!lengthVal)
       return showToast('Please select date, shift, team, profile, item code and length.','warning');
@@ -5074,7 +5109,23 @@ async function submitDailyEntry() {
 
 function previousToDb(p){return {cut_qty:p.cutQty,punch_qty:p.punchQty,wrap_qty:p.wrapQty,box_qty:p.boxQty,crate_qty:p.crateQty};}
 
-function openStockEditModal(index, preferredStage = 'cutQty') { if (currentUserRole !== 'Admin') return; const item = masterData[index]; document.getElementById('editItemIndex').value = index; document.getElementById('editItemTarget').innerHTML = `Profile: <b>${item.profile}</b> | Item: <b>${item.itemCode || '-'}</b> | Length: <b>${item.length} mm</b>`; document.getElementById('editStageSelect').value = preferredStage; document.getElementById('editStageValue').value = item[preferredStage] || 0; const capacity=getMasterPcsPerBox(item); document.getElementById('boxCapacityHelperText').dataset.capacity = capacity; document.getElementById('boxCapacityHelperText').innerText = `Master Catalog: ${capacity} Pcs per Box`; toggleBoxCountInput(); document.getElementById('stockEditModal').style.display = 'flex'; }
+function openStockEditModal(index, preferredStage = 'cutQty') {
+  if(currentUserRole!=='Admin')return;
+  const item=masterData[index];if(!item)return;
+  const bypass=isPunchBypassed(item.profile,item.length);
+  const stageSelect=document.getElementById('editStageSelect');
+  const punchOption=stageSelect?.querySelector('option[value="punchQty"]');
+  if(punchOption)punchOption.disabled=bypass;
+  if(bypass&&preferredStage==='punchQty')preferredStage='cutQty';
+  document.getElementById('editItemIndex').value=index;
+  document.getElementById('editItemTarget').innerHTML=`Profile: <b>${item.profile}</b> | Item: <b>${item.itemCode||'-'}</b> | Length: <b>${item.length} mm</b>${bypass?'<br><span style="color:#64748b;font-size:11px;font-weight:800;">Punching stage: Not applicable</span>':''}`;
+  stageSelect.value=preferredStage;
+  document.getElementById('editStageValue').value=item[preferredStage]||0;
+  const capacity=getMasterPcsPerBox(item);
+  document.getElementById('boxCapacityHelperText').dataset.capacity=capacity;
+  document.getElementById('boxCapacityHelperText').innerText=`Master Catalog: ${capacity} Pcs per Box`;
+  toggleBoxCountInput();document.getElementById('stockEditModal').style.display='flex';
+}
 function toggleBoxCountInput() { const stage = document.getElementById('editStageSelect').value; const boxGroup = document.getElementById('editBoxCountGroup'); if (stage === 'boxQty') { boxGroup.style.display = 'flex'; syncBoxCount(); } else { boxGroup.style.display = 'none'; } }
 function syncBoxCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const pcs = Math.max(0,parseInt(document.getElementById('editStageValue').value)||0); const capacity = Math.max(1,parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity)||100); const boxes = pcs/capacity; document.getElementById('editBoxCountValue').value = boxes % 1 === 0 ? boxes : Number(boxes.toFixed(3)); }
 function syncPcsCount() { if (document.getElementById('editStageSelect').value !== 'boxQty') return; const boxes = Math.max(0,parseFloat(document.getElementById('editBoxCountValue').value)||0); const capacity = Math.max(1,parseInt(document.getElementById('boxCapacityHelperText').dataset.capacity)||100); document.getElementById('editStageValue').value = Math.round(boxes*capacity); }
@@ -5088,6 +5139,7 @@ async function saveSingleStageEdit() {
     const newQty=Math.max(0,parseInt(document.getElementById('editStageValue').value)||0);
     const item=masterData[index];
     if(!item?.db_id) throw new Error('Stock edit failed: catalog record is not linked to Supabase.');
+    if(stage==='punchQty'&&isPunchBypassed(item.profile,item.length))throw new Error('Punching stock cannot be edited because this profile/length does not use the Punching stage.');
 
     const field=stage.replace('Qty','_qty');
     const oldQty=Number(item[stage])||0;
@@ -11434,7 +11486,7 @@ let extrusionStockMovementsLoaded=false;
 let extrusionCutUsage=[];
 let extrusionCutUsageLoaded=false;
 let extrusionCutUsageLoading=false;
-function switchExtrusionSubTab(id,btn){document.querySelectorAll('.extrusion-sub-content').forEach(x=>x.style.display='none');document.querySelectorAll('.extrusion-sub-btn').forEach(x=>x.classList.remove('active'));const el=document.getElementById(id);if(el)el.style.display='block';if(btn)btn.classList.add('active');if(id==='exInSubTab'){populateExtrusionReceiptPOs();renderExtrusionPoTable();populateExtrusionReceiptProfiles();}if(id==='exHistorySubTab')renderExtrusionHistory();if(id==='exCurrentPlSubTab')renderCurrentPlExtrusionRequirement(false);if(id==='exCutUsageSubTab')renderExtrusionCutUsageHistory();}
+function switchExtrusionSubTab(id,btn){document.querySelectorAll('.extrusion-sub-content').forEach(x=>x.style.display='none');document.querySelectorAll('.extrusion-sub-btn').forEach(x=>x.classList.remove('active'));const el=document.getElementById(id);if(el)el.style.display='block';if(btn)btn.classList.add('active');if(id==='exInSubTab'){populateExtrusionReceiptPOs();renderExtrusionPoTable();populateExtrusionReceiptProfiles();}if(id==='exPlantInSubTab'){populatePlantExtrusionProfiles();renderPlantExtrusionInHistory();}if(id==='exHistorySubTab')renderExtrusionHistory();if(id==='exCurrentPlSubTab')renderCurrentPlExtrusionRequirement(false);if(id==='exCutUsageSubTab')renderExtrusionCutUsageHistory();}
 function extrusionLen(v){const n=Number(String(v??'').replace(/mm/gi,'').trim());return Number.isFinite(n)&&n>0?n:0;}
 function extrusionMasterRows(){return (masterData||[]).filter(m=>String(m.profile||'').trim()&&extrusionLen(m.exLength)>0);}
 function extrusionRequiredByPo(){
@@ -11789,6 +11841,100 @@ function exportSelectedExtrusionPOReceiptsExcel(){
 function populateExtrusionReceiptPOs(){const s=document.getElementById('exReceiptPO');if(!s)return;const old=s.value;const rows=extrusionRequiredByPo();const byPO=new Map();rows.forEach(r=>{if(!byPO.has(r.poNumber))byPO.set(r.poNumber,{date:r.date||'',po:r.poNumber});else if(String(r.date||'')<String(byPO.get(r.poNumber).date||''))byPO.get(r.poNumber).date=r.date||'';});s.innerHTML='<option value="">Select PO</option>';[...byPO.values()].sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||a.po.localeCompare(b.po,undefined,{numeric:true})).forEach(g=>s.add(new Option(`${g.po} · ${g.date||'No date'}`,g.po)));if([...s.options].some(o=>o.value===old))s.value=old;}
 function populateExtrusionReceiptProfiles(){const s=document.getElementById('exReceiptProfile');if(!s)return;populateExtrusionReceiptPOs();const po=document.getElementById('exReceiptPO')?.value||'',old=s.value;if(po&&po!==selectedExtrusionPO){selectedExtrusionPO=po;renderExtrusionPoTable();}const poRows=po?extrusionRequiredByPo().filter(r=>r.poNumber===po):[];const profiles=po?[...new Set(poRows.map(r=>String(r.profile).trim()))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})):[...new Set(extrusionMasterRows().map(m=>String(m.profile).trim()))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));s.innerHTML='<option value="">Select profile</option>';profiles.forEach(p=>s.add(new Option(p,p)));if(profiles.includes(old))s.value=old;updateExtrusionLengthOptions();}
 function updateExtrusionLengthOptions(){const p=document.getElementById('exReceiptProfile')?.value||'',po=document.getElementById('exReceiptPO')?.value||'',s=document.getElementById('exReceiptLength');if(!s)return;const old=s.value;const poLengths=po?extrusionRequiredByPo().filter(r=>r.poNumber===po&&r.profile===p).map(r=>String(extrusionLen(r.exLength))):[];const lengths=[...new Set(po?poLengths:extrusionMasterRows().filter(m=>String(m.profile).trim()===p).map(m=>String(extrusionLen(m.exLength))))].sort((a,b)=>Number(a)-Number(b));s.innerHTML='<option value="">Select length</option>';lengths.forEach(l=>s.add(new Option(`${Number(l).toLocaleString()} mm`,l)));if(lengths.includes(old))s.value=old;}
+function populatePlantExtrusionProfiles(){
+ const dateInput=document.getElementById('exPlantInDate');
+ if(dateInput&&!dateInput.value)dateInput.value=new Date().toISOString().slice(0,10);
+ const s=document.getElementById('exPlantInProfile');if(!s)return;
+ const old=s.value;
+ const profiles=[...new Set(extrusionMasterRows().map(m=>String(m.profile||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+ s.innerHTML='<option value="">Select profile</option>';
+ profiles.forEach(p=>s.add(new Option(p,p)));
+ if(profiles.includes(old))s.value=old;
+ updatePlantExtrusionLengthOptions();
+ const filter=document.getElementById('exPlantInFilterProfile');
+ if(filter){const fOld=filter.value;filter.innerHTML='<option value="">All Profiles</option>';profiles.forEach(p=>filter.add(new Option(p,p)));if(profiles.includes(fOld))filter.value=fOld;}
+}
+function updatePlantExtrusionLengthOptions(){
+ const p=document.getElementById('exPlantInProfile')?.value||'';
+ const s=document.getElementById('exPlantInLength');if(!s)return;
+ const old=s.value;
+ const lengths=[...new Set(extrusionMasterRows().filter(m=>String(m.profile||'').trim()===p).map(m=>extrusionLen(m.exLength)).filter(Boolean))].sort((a,b)=>a-b);
+ s.innerHTML='<option value="">Select extrusion length</option>';
+ lengths.forEach(l=>s.add(new Option(`${Number(l).toLocaleString()} mm`,String(l))));
+ if(lengths.map(String).includes(old))s.value=old;
+}
+function resetPlantExtrusionInForm(){
+ const f=document.getElementById('exPlantInForm');if(f)f.reset();
+ const d=document.getElementById('exPlantInDate');if(d)d.value=new Date().toISOString().slice(0,10);
+ const b=document.getElementById('exPlantInSaveBtn');if(b)b.disabled=false;
+ populatePlantExtrusionProfiles();
+}
+async function savePlantExtrusionIn(){
+ if(isAppBusy)return;
+ if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return showToast('Admin or Planner access is required to record physical extrusion stock IN.','warning');
+ const date=document.getElementById('exPlantInDate')?.value||'';
+ const trolleyNo=document.getElementById('exPlantInTrolley')?.value.trim()||'';
+ const profile=document.getElementById('exPlantInProfile')?.value||'';
+ const length=extrusionLen(document.getElementById('exPlantInLength')?.value);
+ const qty=Number(document.getElementById('exPlantInQty')?.value);
+ const note=document.getElementById('exPlantInNote')?.value.trim()||'';
+ if(!date||!trolleyNo||!profile||!length||!Number.isSafeInteger(qty)||qty<1)return showToast('Enter a valid date, trolley number, profile, extrusion length and whole-number IN quantity.','warning');
+ const validMaster=extrusionMasterRows().some(m=>String(m.profile||'').trim()===profile&&extrusionLen(m.exLength)===length);
+ if(!validMaster)return showToast('The selected profile and extrusion length are not available in Master Catalog. Refresh Master Catalog and try again.','warning');
+ if(!extrusionStockMovementsLoaded)return showToast('Extrusion stock ledger is not loaded. Run the existing stock ledger and trolley migrations before recording IN.','error');
+ const btn=document.getElementById('exPlantInSaveBtn');
+ let inserted=false;
+ isAppBusy=true;if(btn){btn.disabled=true;btn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i> Saving…';}
+ try{
+  const payload={movement_date:date,profile,extrusion_length:length,movement_type:'IN',qty_change:qty,trolley_no:trolleyNo,note:note?`Plant IN Entry — ${note}`:'Plant IN Entry'};
+  const {error}=await supabaseClient.from('extrusion_stock_movements').insert([payload]);
+  if(error)throw error;
+  inserted=true;
+  const loaded=await loadExtrusionStockMovements();
+  if(!loaded){
+    resetPlantExtrusionInForm();
+    showToast('Plant IN record was saved in Supabase, but the stock ledger could not reload. Refresh the tab before entering another record; do not submit this entry again.','warning');
+    return;
+  }
+  populateExtrusionFilters();
+  populatePlantExtrusionProfiles();
+  renderExtrusionStockTable();
+  renderExtrusionStockMovementHistory();
+  renderExtrusionPoTable();
+  try{renderCurrentPlExtrusionRequirement(false);}catch(renderError){console.warn('Current PL refresh after plant IN failed',renderError);}
+  renderPlantExtrusionInHistory();
+  resetPlantExtrusionInForm();
+  showToast(`${qty.toLocaleString()} extrusions added to physical stock from ${trolleyNo}. Stock Summary updated.`,'success');
+ }catch(e){
+  console.error('Plant extrusion IN save failed',e);
+  if(inserted)resetPlantExtrusionInForm();
+  showToast(inserted?`Plant IN was saved, but the page could not finish refreshing. Refresh the stock ledger before entering another record. Details: ${e?.message||e}`:`Plant extrusion IN failed: ${e?.message||e}`,'error');
+ }finally{
+  isAppBusy=false;
+  if(btn){btn.disabled=false;btn.innerHTML='<i class="fa-solid fa-floppy-disk"></i> Save Plant IN';}
+ }
+}
+function renderPlantExtrusionInHistory(){
+ const body=document.getElementById('exPlantInBody');if(!body)return;
+ if(!extrusionStockMovementsLoaded){body.innerHTML='<tr><td colspan="6" style="color:#b45309;font-weight:800;">Stock ledger unavailable. Run the existing extrusion stock ledger and trolley migrations, then refresh.</td></tr>';return;}
+ const p=document.getElementById('exPlantInFilterProfile')?.value||'';
+ const q=(document.getElementById('exPlantInSearch')?.value||'').trim().toLowerCase();
+ const rows=(extrusionStockMovements||[]).filter(m=>String(m.movement_type||'').toUpperCase()==='IN'&&String(m.note||'').startsWith('Plant IN Entry')&&(!p||String(m.profile)===p)&&(!q||`${m.trolley_no||''} ${m.profile||''} ${m.extrusion_length||''} ${m.note||''}`.toLowerCase().includes(q)));
+ const count=document.getElementById('exPlantInCount');if(count)count.textContent=`${rows.length.toLocaleString()} records`;
+ body.innerHTML=rows.length?rows.map(m=>`<tr><td>${escapeHtml(m.movement_date||'-')}</td><td><b>${escapeHtml(m.trolley_no||'—')}</b></td><td>${escapeHtml(m.profile||'-')}</td><td>${Number(m.extrusion_length||0).toLocaleString()} mm</td><td><b class="ex-qty-in">${Math.abs(Number(m.qty_change)||0).toLocaleString()}</b></td><td>${escapeHtml(m.note||'—')}</td></tr>`).join(''):'<tr><td colspan="6">No matching plant extrusion IN records.</td></tr>';
+ const foot=document.getElementById('exPlantInFoot');
+ if(foot){const total=rows.reduce((s,m)=>s+Math.max(0,Number(m.qty_change)||0),0);foot.innerHTML=rows.length?`<tr><th colspan="4">Total IN Quantity</th><th>${total.toLocaleString()}</th><th></th></tr>`:'';}
+}
+async function refreshPlantExtrusionIn(){
+ const ok=await loadExtrusionStockMovements();
+ if(ok){populateExtrusionFilters();populatePlantExtrusionProfiles();renderExtrusionStockTable();renderExtrusionStockMovementHistory();renderExtrusionPoTable();renderPlantExtrusionInHistory();showToast('Plant extrusion IN records refreshed.','success');}
+ else showToast('Could not refresh the extrusion stock ledger. Check Supabase connection and migrations.','error');
+}
+window.exportPlantExtrusionInExcel=function(){
+ const rows=(extrusionStockMovements||[]).filter(m=>String(m.movement_type||'').toUpperCase()==='IN'&&String(m.note||'').startsWith('Plant IN Entry')).map(m=>({'Date':m.movement_date||'','Trolley No.':m.trolley_no||'','Profile':m.profile||'','Extrusion Length (mm)':extrusionLen(m.extrusion_length),'IN Quantity':Math.abs(Number(m.qty_change)||0),'Note':m.note||''}));
+ if(!rows.length)return showToast('No plant extrusion IN records to export.','warning');
+ exportTableToExcel(rows,'AIS_Plant_Extrusion_IN','Plant Extrusion IN');
+};
 function resetExtrusionForm(){const f=document.getElementById('exReceiptForm');if(f)f.reset();document.getElementById('exEditId').value='';document.getElementById('exReceiptDate').value=new Date().toISOString().slice(0,10);document.getElementById('exSaveBtn').innerHTML='<i class="fa-solid fa-floppy-disk"></i> Save IN';populateExtrusionReceiptProfiles();}
 async function saveExtrusionReceipt(){if(isAppBusy)return;if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return showToast('Admin or Planner access is required.','warning');const id=document.getElementById('exEditId').value,date=document.getElementById('exReceiptDate').value,poNumber=document.getElementById('exReceiptPO')?.value||'',profile=document.getElementById('exReceiptProfile').value,length=extrusionLen(document.getElementById('exReceiptLength').value),trolley=document.getElementById('exTrolley').value.trim(),qty=Math.floor(Number(document.getElementById('exInQty').value)||0),note=document.getElementById('exNote').value.trim();const oldRecord=id?extrusionReceipts.find(r=>String(r.id)===String(id)):null;const allowLegacyEdit=!!oldRecord&&!String(oldRecord.po_number||oldRecord.poNumber||'').trim();if(!date||(!poNumber&&!allowLegacyEdit)||!profile||!length||!trolley||qty<=0)return showToast('Select PO, date, profile, extrusion length, trolley details and a positive IN quantity. Old unassigned receipts may be edited without assigning a PO.','warning');if(poNumber&&!extrusionRequiredByPo().some(r=>r.poNumber===poNumber&&r.profile===profile&&extrusionLen(r.exLength)===length))return showToast('Selected profile and extrusion length do not belong to this PO.','warning');const payload={receipt_date:date,profile,extrusion_length:length,trolley_no:trolley,in_qty:qty,note,po_number:poNumber||null};isAppBusy=true;try{let result;if(id){result=await supabaseClient.from('extrusion_receipts').update(payload).eq('id',id).select().single();}else{result=await supabaseClient.from('extrusion_receipts').insert([payload]).select().single();}if(result.error)throw result.error;resetExtrusionForm();await loadExtrusionReceipts(false);switchExtrusionSubTab('exHistorySubTab',document.querySelectorAll('.extrusion-sub-btn')[2]);showToast(id?'Extrusion receipt updated.':'PO-linked Extrusion IN saved; PO/profile balances recalculated.','success');}catch(e){console.error(e);showToast('Could not save extrusion receipt. Ensure the additive po_number column migration in supabase_extrusion_module.sql has been run. Existing records were not deleted.','error');}finally{isAppBusy=false;}}
 function openExtrusionStockModal(mode,profile,length,currentStock){
