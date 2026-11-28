@@ -4028,3 +4028,67 @@ body.dark-mode .cb-shortage-panel{background:#0f172a;border-color:#334155}body.d
 #exPlantInSubTab .ex-form-actions{align-self:end}
 #exPlantInSubTab .ex-qty-in{color:#047857}
 #exPlantInFoot th{background:#eaf7f3;color:#145c50;font-weight:800}
+
+
+/* V269 — monthly extrusion stock cycle banner */
+.ex-stock-month-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0 14px;padding:12px 15px;border:1px solid #b9dfdc;border-radius:12px;background:linear-gradient(100deg,#edf9f7,#f3f8fc);color:#155e63}
+.ex-stock-month-banner strong{font-size:14px;font-weight:900}
+.ex-stock-month-banner span{font-size:11px;color:#587487;font-weight:650}
+
+
+/* AIS Tracker — Planner read-only access and Current PL focus */
+body.planner-readonly .admin-restricted-area:not(.tab-btn):not([data-tab]):not(.smart-category) {
+  display: none !important;
+}
+body.planner-readonly .admin-write-only,
+body.planner-readonly [data-write-only="true"] {
+  display: none !important;
+}
+body.planner-readonly .tab-btn,
+body.planner-readonly .smart-category,
+body.planner-readonly [data-tab] {
+  display: inline-flex !important;
+}
+.pl-current-focus {
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:14px 0 10px;
+  padding:14px 16px;border-radius:13px;border:1px solid #86efac;
+  background:linear-gradient(110deg,#ecfdf5,#f0fdfa);color:#064e3b;
+}
+.pl-current-focus-label {
+  display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:20px;
+  background:#047857;color:#fff;font-size:10px;font-weight:900;letter-spacing:.7px;
+}
+.pl-current-focus strong {font-size:18px;font-weight:900;color:#064e3b}
+.pl-current-focus>span:last-child {font-size:12px;color:#0f766e;font-weight:800}
+.pl-completed-history {margin:8px 0 12px;padding:10px 12px;border:1px solid #dbe5ed;border-radius:11px;background:#f8fafc}
+.pl-completed-history summary {cursor:pointer;color:#475569;font-size:12px;font-weight:850;list-style:none;display:flex;align-items:center;gap:8px}
+.pl-completed-history summary::-webkit-details-marker {display:none}
+.pl-completed-history[open] .pl-ship-tabs {margin-top:10px}
+.pl-readonly-note {display:inline-flex;align-items:center;gap:6px;padding:9px 12px;border-radius:9px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:850}
+.pl-month-label {display:flex;align-items:center;gap:7px;font-size:11px;font-weight:800;color:#475569}
+.pl-month-label select {min-width:120px}
+.pl-no-active-pl {padding:12px;color:#64748b;font-size:12px;font-weight:700}
+@media(max-width:650px){.pl-current-focus strong{font-size:15px}.pl-current-focus{gap:8px;padding:11px}}
+
+
+/* Planner: expose the same complete page navigation as Admin while keeping
+   explicitly marked write-only controls hidden. */
+body.planner-readonly #mainNavTabs .smart-category,
+body.planner-readonly #mainNavTabs .smart-submenu .tab-btn,
+body.planner-readonly #mainNavTabs .smart-submenu .tab-btn.admin-restricted-area {
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+body.planner-readonly #mainNavTabs .smart-submenu.active .tab-btn {
+  display: inline-flex !important;
+}
+body.planner-readonly .admin-write-only,
+body.planner-readonly [data-write-only="true"] {
+  display: none !important;
+}
+
+/* Planner access: current PL only; completed PL history is Admin-only. */
+body.planner-readonly #packingShipmentControls .pl-completed-history,
+body.planner-readonly #packingShipmentControls select[aria-label="Packing List month"] {
+  display:none !important;
+}

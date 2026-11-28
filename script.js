@@ -105,14 +105,73 @@ function verifyLogin() {
 function logoutUser() { clearAISFormState(); currentUserRole = null; isAdminUnlocked = false; document.getElementById('mainContent').style.display = 'none'; document.getElementById('roleLoginOverlay').style.display = 'flex'; resetRoleSelection(); switchTab('dashboardTab', document.querySelector('.tab-btn')); showToast("Logged out successfully.", "success"); }
 
 function updateRoleUI() {
-  const roleBadge = document.getElementById('userRoleBadge'); if (roleBadge) { roleBadge.textContent = currentUserRole + " Mode"; roleBadge.style.background = currentUserRole === 'Admin' ? '#e11d48' : (currentUserRole === 'Planner' ? '#0369a1' : '#059669'); }
-  const elements = { adminEntryTab: document.getElementById('tabBtn-adminEntry'), poTab: document.getElementById('tabBtn-po'), shipmentTab: document.getElementById('tabBtn-shipment'), historyTab: document.getElementById('tabBtn-history'), planInputArea: document.getElementById('planInputArea'), cbAdminArea: document.getElementById('cbAdminArea'), cbManualDataArea: document.getElementById('cbManualDataArea'), plAdminArea1: document.getElementById('plAdminArea1'), plAdminArea2: document.getElementById('plAdminArea2'), resetBtn: document.getElementById('resetAllBtn'), resetNextPlBtn: document.getElementById('resetNextPlBtn'), addProfileBtn: document.getElementById('addProfileBtn'), rejectTabBtn: document.getElementById('tabBtn-rejectTracker'), plDeadlineSetter: document.getElementById('plDeadlineSetterContainer'), systemAuditBtn: document.getElementById('systemAuditBtn') };
-  if (currentUserRole === 'Admin') { Object.values(elements).forEach(el => { if(el) el.style.display = ''; }); if (document.getElementById('cbTxType')) document.getElementById('cbTxType').disabled = false; } 
-  else if (currentUserRole === 'Planner') { [elements.adminEntryTab, elements.poTab, elements.shipmentTab, elements.historyTab, elements.planInputArea, elements.cbAdminArea, elements.cbManualDataArea, elements.rejectTabBtn].forEach(el => { if(el) el.style.display = ''; }); [elements.plAdminArea1, elements.plAdminArea2, elements.resetBtn, elements.resetNextPlBtn, elements.addProfileBtn, elements.plDeadlineSetter, elements.systemAuditBtn].forEach(el => { if(el) el.style.display = 'none'; }); if (document.getElementById('cbTxType')) { document.getElementById('cbTxType').value = 'IN'; document.getElementById('cbTxType').disabled = true; } } 
-  else if (currentUserRole === 'Local') { Object.values(elements).forEach(el => { if(el) el.style.display = 'none'; }); }
-  
+  const roleBadge = document.getElementById('userRoleBadge');
+  if (roleBadge) {
+    roleBadge.textContent = currentUserRole + " Mode";
+    roleBadge.style.background = currentUserRole === 'Admin' ? '#e11d48' : (currentUserRole === 'Planner' ? '#0369a1' : '#059669');
+  }
+  const elements = {
+    adminEntryTab: document.getElementById('tabBtn-adminEntry'),
+    poTab: document.getElementById('tabBtn-po'),
+    shipmentTab: document.getElementById('tabBtn-shipment'),
+    historyTab: document.getElementById('tabBtn-history'),
+    planInputArea: document.getElementById('planInputArea'),
+    cbAdminArea: document.getElementById('cbAdminArea'),
+    cbManualDataArea: document.getElementById('cbManualDataArea'),
+    plAdminArea1: document.getElementById('plAdminArea1'),
+    plAdminArea2: document.getElementById('plAdminArea2'),
+    resetBtn: document.getElementById('resetAllBtn'),
+    resetNextPlBtn: document.getElementById('resetNextPlBtn'),
+    addProfileBtn: document.getElementById('addProfileBtn'),
+    rejectTabBtn: document.getElementById('tabBtn-rejectTracker'),
+    plDeadlineSetter: document.getElementById('plDeadlineSetterContainer'),
+    systemAuditBtn: document.getElementById('systemAuditBtn')
+  };
+
+  document.body.classList.toggle('planner-readonly', currentUserRole === 'Planner');
+  if (currentUserRole === 'Planner' && typeof getActivePackingListSelection === 'function') {
+    const currentPl = getActivePackingListSelection();
+    if (currentPl && currentPl.month) {
+      activePackingMonth = currentPl.month;
+      activePackingContainer = currentPl.container;
+    }
+  }
+
+  if (currentUserRole === 'Admin') {
+    Object.values(elements).forEach(el => { if (el) el.style.display = ''; });
+    document.querySelectorAll('.admin-restricted-area').forEach(el => { el.style.display = ''; });
+    if (document.getElementById('cbTxType')) document.getElementById('cbTxType').disabled = false;
+  } else if (currentUserRole === 'Planner') {
+    // Full navigation visibility; entry/edit/reset areas remain hidden.
+    document.querySelectorAll('#mainNavTabs .tab-btn, #mainNavTabs [data-tab], #mainNavTabs .smart-category').forEach(el => {
+      el.style.display = '';
+      el.hidden = false;
+      el.removeAttribute('aria-hidden');
+    });
+    document.querySelectorAll('#mainNavTabs .admin-restricted-area.tab-btn').forEach(el => {
+      el.style.display = 'inline-flex';
+      el.hidden = false;
+    });
+    Object.values(elements).forEach(el => { if (el && el.matches('.tab-btn,[data-tab]')) el.style.display = ''; });
+    document.querySelectorAll('.admin-restricted-area').forEach(el => {
+      if (!el.matches('.tab-btn,[data-tab],.smart-category')) el.style.display = 'none';
+    });
+    ['plAdminArea1','plAdminArea2','planInputArea','cbAdminArea','cbManualDataArea'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.style.display = 'none';
+    });
+    ['resetAllBtn','resetNextPlBtn','addProfileBtn','plDeadlineSetterContainer','systemAuditBtn'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.style.display = 'none';
+    });
+    if (document.getElementById('cbTxType')) document.getElementById('cbTxType').disabled = true;
+  } else if (currentUserRole === 'Local') {
+    Object.values(elements).forEach(el => { if (el) el.style.display = 'none'; });
+    document.querySelectorAll('.admin-restricted-area').forEach(el => { el.style.display = 'none'; });
+  }
+
   setTimeout(() => {
-      renderProfileSummaryTable(); renderPoDetailsTable(); renderMasterCatalog(); renderShipmentHistoryTable(); renderPackingListTable(); renderCardboardStock(); renderDailyInstructions(); renderHistoryData(); renderRejectTable(); renderRecoverTable();
+    renderProfileSummaryTable(); renderPoDetailsTable(); renderMasterCatalog(); renderShipmentHistoryTable();
+    renderPackingListTable(); renderCardboardStock(); renderDailyInstructions(); renderHistoryData();
+    renderRejectTable(); renderRecoverTable();
   }, 50);
 }
 
@@ -742,8 +801,16 @@ async function loadDataFromSupabase(isSilent = false) {
       isFetchingData = false;
       populateStockFilterDropdown(); populateProfileDropdown(); populatePoProfileDropdown(); populateShipmentPoDropdown(); populatePlPoDropdown(); populateCbProfileDropdown(); populateRejProfile(); populateRecProfile();
       restoreAISFormSelections();
-      if(currentUserRole) { 
-          updateRoleUI(); 
+      if(currentUserRole) {
+          // On login / data refresh, open the true latest Current PL for Admin
+          // and Planner. Admin can still choose an older month/container manually
+          // afterwards; Planner remains locked to this Current PL.
+          if (currentUserRole === 'Admin' || currentUserRole === 'Planner') {
+              const latestCurrentPL = getActivePackingListSelection();
+              activePackingMonth = latestCurrentPL.month;
+              activePackingContainer = latestCurrentPL.container;
+          }
+          updateRoleUI();
           setTimeout(() => {
               renderDashboard(); renderProfileSummaryTable(); initializeStockShiftControls(); checkDateStatus(); renderHistoryData(); updatePoFilters(); renderPoDetailsTable(); window.renderShipmentHistoryTable(); renderPackingListTable(); renderPoCharts(); renderBalanceWorkTable(); renderCardboardStock(); renderDailyInstructions(); renderRejectTable(); renderRecoverTable();
               window.updateShipmentCountdown();
@@ -826,10 +893,11 @@ function getLatestPackingSelection() {
     return {month: new Date().toLocaleString('en-US', {month:'long'}), container: '1st Container', records: []};
 }
 function selectLatestPackingList() {
-    const latest = getLatestPackingSelection();
-    activePackingMonth = latest.month;
-    activePackingContainer = latest.container;
-    return latest;
+    const active = getActivePackingListSelection();
+    activePackingMonth = active.month;
+    activePackingContainer = active.container;
+    const records = getPackingContainerRecords(activePackingMonth, activePackingContainer);
+    return { ...active, records };
 }
 function getPackingMonths() {
     const newestByMonth = new Map();
@@ -873,13 +941,19 @@ async function savePackingShipmentStates() {
     } catch(e) { showToast('Shipment status could not be synced.','warning'); }
 }
 function ensurePackingSelection() {
+    if (currentUserRole === 'Planner') {
+        const current = getActivePackingListSelection();
+        activePackingMonth = current.month;
+        activePackingContainer = current.container;
+        return;
+    }
     const months=getPackingMonths();
     const hadMonth=!!activePackingMonth, hadContainer=!!activePackingContainer;
     const containers=getContainerList();
     // On a fresh page load, open the newest Packing List with saved records.
     // Older months/containers remain available through the existing selectors.
     if(!hadMonth && !hadContainer) {
-        const latest=getLatestPackingSelection();
+        const latest=getActivePackingListSelection();
         activePackingMonth=latest.month || new Date().toLocaleString('en-US',{month:'long'});
         activePackingContainer=containers.includes(latest.container) ? latest.container : containers[0];
         return;
@@ -887,7 +961,15 @@ function ensurePackingSelection() {
     if(!activePackingMonth || !months.includes(activePackingMonth)) activePackingMonth=months[0] || new Date().toLocaleString('en-US',{month:'long'});
     if(!activePackingContainer || !containers.includes(activePackingContainer)) activePackingContainer=containers[0];
 }
-window.setPackingShipment = function(month,container){ activePackingMonth=month; activePackingContainer=container; renderPackingListTable(); renderBalanceWorkTable(); renderDashboard(); };
+window.setPackingShipment = function(month,container){
+    if (currentUserRole === 'Planner') {
+      const current = getActivePackingListSelection();
+      activePackingMonth = current.month; activePackingContainer = current.container;
+    } else {
+      activePackingMonth=month; activePackingContainer=container;
+    }
+    renderPackingListTable(); renderBalanceWorkTable(); renderDashboard();
+};
 window.completePackingShipment = async function(){
     if(currentUserRole!=='Admin') return showToast('Only Admin can complete a shipment.','error');
     ensurePackingSelection();
@@ -919,15 +1001,77 @@ window.printPackingShipment = function(){
     win.document.write(`<html><head><title>${month} - ${container} Packing List</title><style>body{font-family:Arial;padding:30px;color:#123}h1{margin-bottom:4px}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{border:1px solid #ccc;padding:8px;text-align:left}th{background:#064e3b;color:#fff}.sum{margin:12px 0;font-weight:700}</style></head><body><h1>Alumex PLC - Packing List</h1><div>${month} • ${container}</div><div class="sum">Total: ${totalPcs} Pcs | ${totalWt.toFixed(2)} kg</div><table><thead><tr><th>Crate</th><th>Profile</th><th>Item Code</th><th>Length</th><th>Qty</th><th>Net Weight</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.crateNo}</td><td>${r.profile}</td><td>${r.itemCode}</td><td>${r.length} mm</td><td>${r.pcsQty}</td><td>${(+r.netWeight||0).toFixed(2)} kg</td></tr>`).join('')}</tbody></table><script>window.onload=()=>window.print()</script></body></html>`); win.document.close();
 };
 function renderPackingShipmentControls() {
-    const host=document.getElementById('packingShipmentControls'); if(!host) return;
-    ensurePackingSelection(); const months=getPackingMonths(), containers=getContainerList();
-    const records=getPackingContainerRecords(activePackingMonth,activePackingContainer);
-    const crateIds=[...new Set(records.map(r=>r.crateNo).filter(Boolean))];
-    const doneCrates=crateIds.filter(c=>isManualCrateComplete(c,activePackingContainer)).length; const completed=isPackingShipmentComplete(activePackingMonth,activePackingContainer);
-    const pcs=records.reduce((a,r)=>a+(+r.pcsQty||0),0), wt=records.reduce((a,r)=>a+(+r.netWeight||0),0);
-    const monthOptions=months.map(m=>`<option value="${m}" ${m===activePackingMonth?'selected':''}>${m}</option>`).join('');
-    const tabs=containers.map(c=>{const rec=getPackingContainerRecords(activePackingMonth,c), done=isPackingShipmentComplete(activePackingMonth,c), has=rec.length>0; return `<button class="pl-ship-tab ${c===activePackingContainer?'active':''} ${done?'done':''}" onclick="window.setPackingShipment('${activePackingMonth}','${c}')"><span>${c.replace(' Container','')}</span><small>${done?'✓ Completed':has?`${rec.length} items`:'No data'}</small></button>`;}).join('');
-    host.innerHTML=`<div class="pl-control-head"><div><div class="pl-eyebrow">SHIPMENT CONTROL CENTER</div><h3><i class="fa-solid fa-ship"></i> Monthly Shipment Flow</h3><p>Complete one container, then continue directly with the next shipment.</p></div><div class="pl-control-actions"><select onchange="window.setPackingShipment(this.value,activePackingContainer)">${monthOptions}</select><button class="btn btn-accent" onclick="window.printPackingShipment()"><i class="fa-solid fa-print"></i> Print</button></div></div><div class="pl-ship-tabs">${tabs}</div><div class="pl-active-summary"><div><span class="pl-status-dot ${completed?'done':''}"></span><b>${activePackingContainer}</b><span class="pl-status ${completed?'done':''}">${completed?'SHIPMENT COMPLETED':'ACTIVE SHIPMENT'}</span></div><div class="pl-summary-metrics"><span><b>${crateIds.length}</b> Crates</span><span><b>${doneCrates}/${crateIds.length}</b> Packed</span><span><b>${pcs}</b> Pcs</span><span><b>${wt.toFixed(2)}</b> kg</span></div><div class="pl-control-buttons">${completed?`<button class="btn" style="background:#64748b" onclick="window.reopenPackingShipment()"><i class="fa-solid fa-rotate-left"></i> Reopen</button>`:`<button class="btn btn-accent" onclick="window.completePackingShipment()"><i class="fa-solid fa-circle-check"></i> Complete Shipment</button>`}</div></div>`;
+    const host = document.getElementById('packingShipmentControls');
+    if (!host) return;
+    ensurePackingSelection();
+
+    const months = getPackingMonths();
+    const containers = getContainerList();
+    const records = getPackingContainerRecords(activePackingMonth, activePackingContainer);
+    const crateIds = [...new Set(records.map(r => r.crateNo).filter(Boolean))];
+    const doneCrates = crateIds.filter(c => isManualCrateComplete(c, activePackingContainer, activePackingMonth)).length;
+    const completed = isPackingShipmentComplete(activePackingMonth, activePackingContainer);
+    const pcs = records.reduce((a, r) => a + (+r.pcsQty || 0), 0);
+    const wt = records.reduce((a, r) => a + (+r.netWeight || 0), 0);
+
+    const monthOptions = months.map(m =>
+      `<option value="${currentPlBalanceEscape(m)}" ${m === activePackingMonth ? 'selected' : ''}>${currentPlBalanceEscape(m)}</option>`
+    ).join('');
+
+    const activeTabs = containers
+      .filter(c => getPackingContainerRecords(activePackingMonth, c).length)
+      .filter(c => currentUserRole === 'Planner'
+        ? c === activePackingContainer
+        : !isPackingShipmentComplete(activePackingMonth, c))
+      .map(c => {
+        const rec = getPackingContainerRecords(activePackingMonth, c);
+        return `<button class="pl-ship-tab ${c === activePackingContainer ? 'active' : ''}" onclick="window.setPackingShipment('${currentPlBalanceEscape(activePackingMonth)}','${currentPlBalanceEscape(c)}')"><span>${c.replace(' Container','')}</span><small>${c === activePackingContainer ? 'CURRENT PL' : `${rec.length} items`}</small></button>`;
+      }).join('');
+
+    const completedTabs = (currentUserRole === 'Admin' ? containers : [])
+      .filter(c => isPackingShipmentComplete(activePackingMonth, c) && getPackingContainerRecords(activePackingMonth, c).length)
+      .map(c => {
+        const rec = getPackingContainerRecords(activePackingMonth, c);
+        return `<button class="pl-ship-tab done" onclick="window.setPackingShipment('${currentPlBalanceEscape(activePackingMonth)}','${currentPlBalanceEscape(c)}')"><span>${c.replace(' Container','')}</span><small>✓ Completed · ${rec.length} items</small></button>`;
+      }).join('');
+
+    const adminActions = currentUserRole === 'Admin'
+      ? (completed
+          ? `<button class="btn" style="background:#64748b" onclick="window.reopenPackingShipment()"><i class="fa-solid fa-rotate-left"></i> Reopen</button>`
+          : `<button class="btn btn-accent" onclick="window.completePackingShipment()"><i class="fa-solid fa-circle-check"></i> Complete Shipment</button>`)
+      : `<span class="pl-readonly-note"><i class="fa-solid fa-eye"></i> Planner view · Read only</span>`;
+
+    host.innerHTML = `
+      <div class="pl-control-head">
+        <div>
+          <div class="pl-eyebrow">SHIPMENT CONTROL CENTER</div>
+          <h3><i class="fa-solid fa-ship"></i> Current Packing List</h3>
+          <p>Latest active / incomplete container is shown first. Completed PLs are available in history.</p>
+        </div>
+        <div class="pl-control-actions">
+          ${currentUserRole === 'Admin' ? `<label class="pl-month-label">Month
+            <select aria-label="Packing List month" onchange="window.setPackingShipment(this.value,activePackingContainer)">${monthOptions}</select>
+          </label>` : `<span class="pl-month-label"><b>${currentPlBalanceEscape(activePackingMonth)}</b></span>`}
+          <button class="btn btn-accent" onclick="window.printPackingShipment()"><i class="fa-solid fa-print"></i> Print Current PL</button>
+        </div>
+      </div>
+      <div class="pl-current-focus">
+        <span class="pl-current-focus-label"><i class="fa-solid fa-circle-dot"></i> CURRENT PL</span>
+        <strong>${currentPlBalanceEscape(activePackingMonth)} · ${currentPlBalanceEscape(activePackingContainer)}</strong>
+        <span>${records.length.toLocaleString()} records · ${crateIds.length.toLocaleString()} crates</span>
+      </div>
+      <div class="pl-ship-tabs">${activeTabs || `<span class="pl-no-active-pl">No incomplete PL container is available for this month.</span>`}</div>
+      ${currentUserRole === 'Admin' && completedTabs ? `<details class="pl-completed-history"><summary><i class="fa-solid fa-clock-rotate-left"></i> View completed PLs</summary><div class="pl-ship-tabs">${completedTabs}</div></details>` : ''}
+      <div class="pl-active-summary">
+        <div><span class="pl-status-dot ${completed?'done':''}"></span><b>${currentPlBalanceEscape(activePackingContainer)}</b><span class="pl-status ${completed?'done':''}">${completed?'SHIPMENT COMPLETED':'ACTIVE PL'}</span></div>
+        <div class="pl-summary-metrics">
+          <span><b>${crateIds.length}</b> Crates</span>
+          <span><b>${doneCrates}/${crateIds.length}</b> Packed</span>
+          <span><b>${pcs.toLocaleString()}</b> Pcs</span>
+          <span><b>${wt.toFixed(2)}</b> kg</span>
+        </div>
+        <div class="pl-control-buttons">${adminActions}</div>
+      </div>`;
 }
 
 function toggleNavCategory(category, btn) {
@@ -2295,7 +2439,7 @@ function switchTab(tabId, btn) {
       if (tabId === 'balanceWorkTab') renderBalanceWorkTable();
       if (tabId === 'teamProductionTab') { renderDailyTeamPerformance(); setTimeout(renderDailyTeamPerformance, 300); } 
       if (tabId === 'cardboardTab') renderCardboardStock();
-      if (tabId === 'extrusionTab') { resetExtrusionForm(); renderExtrusionModule(false); loadExtrusionReceipts(false); switchExtrusionSubTab('exInSubTab',document.querySelectorAll('.extrusion-sub-btn')[1]); } 
+      if (tabId === 'extrusionTab') { resetExtrusionForm(); renderExtrusionModule(false); loadExtrusionReceipts(false); switchExtrusionSubTab('exPlantInSubTab',document.querySelector('.extrusion-sub-btn[onclick*="exPlantInSubTab"]')); } 
       if (tabId === 'historyTab') renderHistoryData(); 
       if (tabId === 'masterListTab') renderMasterCatalog(); 
       if (tabId === 'poManagementTab') { updatePoFilters(); renderPoDetailsTable(); renderPoCharts(); } 
@@ -2325,7 +2469,7 @@ function getRejectUpstreamStage(stage, profile, length) {
 async function saveRejectEntry() {
   if(isAppBusy) return; isAppBusy=true;
   try {
-    if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return;
+    if (currentUserRole !== 'Admin') return;
     const d=document.getElementById('rejDate').value, sh=document.getElementById('rejShift')?.value||'', tm=document.getElementById('rejTeam')?.value||'', loc=document.getElementById('rejLoc')?.value||'', stg=document.getElementById('rejStage')?.value||'', p=document.getElementById('rejProfile').value, ic=document.getElementById('rejItemCode').value, l=cleanLen(document.getElementById('rejLength').value), pcs=parseInt(document.getElementById('rejPcs').value)||0;
     if(!d||!p||!ic||!l||pcs<=0) return showToast('Please complete all Reject fields.','warning');
     const matched=masterData.find(m=>String(m.profile).trim()===p && String(m.itemCode).trim()===ic && cleanLen(m.length)===l);
@@ -2643,7 +2787,7 @@ function calcRecCutWeight(){
 async function saveRecoverEntry(){
   if(isAppBusy)return;isAppBusy=true;
   try{
-    if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return;
+    if(currentUserRole!=='Admin')return;
     const d=document.getElementById('recDate').value,sp=document.getElementById('recProfile').value,sic=document.getElementById('recItemCode').value,ol=cleanLen(document.getElementById('recOrigLength').value),np=document.getElementById('recNewProfile').value,nic=document.getElementById('recNewItemCode').value,nl=cleanLen(document.getElementById('recNewLength').value),pcs=parseInt(document.getElementById('recPcs').value)||0,max=parseInt(document.getElementById('recAvailableDisplay').dataset.max)||0;
     if(!d||!sp||!sic||!ol||!np||!nic||!nl||pcs<=0)return showToast('Please complete all Recovery Cut fields.','warning');
     if(pcs>max)return showToast(`Recovery Cut quantity cannot exceed ${max} available reject pcs.`,'warning');
@@ -2680,7 +2824,7 @@ async function saveRecoverWrapEntry(){
   if(isAppBusy)return;
   isAppBusy=true;
   try{
-    if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return;
+    if(currentUserRole!=='Admin')return;
     const d=document.getElementById('rwDate').value,
       avail=document.getElementById('rwAvailable'),
       pcs=parseInt(document.getElementById('rwPcs').value)||0,
@@ -2879,7 +3023,7 @@ function aisUpdateUndoButtons(){
 window.aisUndoLastAction = async function(tabId=''){
   const candidates=aisUndoCandidates(tabId);
   if(aisUndoBusy || !candidates.length) return showToast(tabId==='packingListTab'?'No recent Packing List change is available to undo.':'There is no recent change to undo.','info');
-  if(currentUserRole!=='Admin' && currentUserRole!=='Planner') return showToast('Undo is available to Admin / Planner only.','warning');
+  if(currentUserRole!=='Admin') return showToast('Only Admin can undo this action.','warning');
   const selected=candidates[candidates.length-1];
   const action=selected.action;
   if(!confirm(`Undo this change?\n\n${action.label}\n\nThe saved data will be restored/reverted.`)) return;
@@ -4135,18 +4279,14 @@ function renderProfileSummaryTable() {
 
 function getActivePackingListSelection() {
     const months = getPackingMonths();
-    const month = activePackingMonth && months.includes(activePackingMonth)
-        ? activePackingMonth
-        : (months[0] || new Date().toLocaleString('en-US',{month:'long'}));
+    // Always anchor the Current PL to the newest month containing saved PL rows.
+    // Do not let stale completion flags or a previously selected 1st/2nd container
+    // pull the Current PL backwards when a later container (e.g. 3rd) exists.
+    const month = months[0] || new Date().toLocaleString('en-US', {month:'long'});
     const containers = getContainerList();
-    const withData = containers.filter(c => getPackingContainerRecords(month,c).length > 0);
-    // The active PL is always the latest PL with data that has not been completed.
-    // Older PLs (1st/2nd containers) are historical/shipped and must never affect
-    // the Balance Work PL calculation. If all available PLs are completed, use
-    // the latest one only as a safe fallback.
-    const incomplete = withData.filter(c => !isPackingShipmentComplete(month,c));
-    const pool = incomplete.length ? incomplete : withData;
-    const selected = pool.slice().sort((a,b)=>getContainerNumber(b)-getContainerNumber(a))[0] || containers[0] || '1st Container';
+    const withData = containers.filter(c => getPackingContainerRecords(month, c).length > 0);
+    const selected = withData.slice().sort((a,b) => getContainerNumber(b) - getContainerNumber(a))[0]
+        || containers[0] || '1st Container';
     return { month, container: selected };
 }
 
@@ -4482,7 +4622,7 @@ function onCbItemCodeSelect(){
   [...new Set(matches.map(m=>cleanLen(m.length)).filter(Boolean))].forEach(x=>l.appendChild(new Option(`${x} mm`,x)));
   if(l.options.length===2)l.selectedIndex=1;
 }
-async function processCardboardTransaction(){ if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return; const date=document.getElementById('cbDate').value||new Date().toISOString().split('T')[0], type=document.getElementById('cbTxType').value, profile=document.getElementById('cbSelectProfile').value,item=document.getElementById('cbSelectItemCode').value,length=document.getElementById('cbSelectLength').value,qty=parseInt(document.getElementById('cbQty').value)||0; if(!profile||!item||!length||qty<=0)return showToast('Select profile, item, length and quantity.','warning'); const bal=getAvailableCardboard(profile,item,length); if(type==='OUT'&&qty>bal)return showToast(`Insufficient cardboard stock. Available: ${bal} boxes.`,'error'); const rec={cb_date:date,cb_type:cardboardType(profile,item,length),incoming:type==='IN'?qty:0,used:type==='OUT'?qty:0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date, type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();aisRegisterUndo(`Cardboard ${type==='IN'?'IN':'OUT'} • ${profile} / ${length} • ${qty} Boxes`,async()=>{await aisDeleteLatest('cardboard_stock',rec);},'cardboardTab');renderCardboardStock();document.getElementById('cardboardEntryForm')?.reset();const dateEl=document.getElementById('cbDate');if(dateEl){dateEl.value=date;setAISFormState('cbDate',date);}showToast('Cardboard transaction saved.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard save failed'),'error');}}
+async function processCardboardTransaction(){ if(currentUserRole!=='Admin')return; const date=document.getElementById('cbDate').value||new Date().toISOString().split('T')[0], type=document.getElementById('cbTxType').value, profile=document.getElementById('cbSelectProfile').value,item=document.getElementById('cbSelectItemCode').value,length=document.getElementById('cbSelectLength').value,qty=parseInt(document.getElementById('cbQty').value)||0; if(!profile||!item||!length||qty<=0)return showToast('Select profile, item, length and quantity.','warning'); const bal=getAvailableCardboard(profile,item,length); if(type==='OUT'&&qty>bal)return showToast(`Insufficient cardboard stock. Available: ${bal} boxes.`,'error'); const rec={cb_date:date,cb_type:cardboardType(profile,item,length),incoming:type==='IN'?qty:0,used:type==='OUT'?qty:0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date, type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();aisRegisterUndo(`Cardboard ${type==='IN'?'IN':'OUT'} • ${profile} / ${length} • ${qty} Boxes`,async()=>{await aisDeleteLatest('cardboard_stock',rec);},'cardboardTab');renderCardboardStock();document.getElementById('cardboardEntryForm')?.reset();const dateEl=document.getElementById('cbDate');if(dateEl){dateEl.value=date;setAISFormState('cbDate',date);}showToast('Cardboard transaction saved.','success');}catch(e){showToast(dbErrorMessage(e,'Cardboard save failed'),'error');}}
 function openCbAdjustModal(g){ if(typeof g==='string') g=JSON.parse(decodeURIComponent(g));document.getElementById('adjustCbProfile').value=g.profile;document.getElementById('adjustCbItemCode').value=g.itemCode;document.getElementById('adjustCbLength').value=g.length;document.getElementById('cbAdjustTarget').innerHTML=`${g.profile} • ${g.itemCode} • ${g.length} mm`;document.getElementById('newCbBalanceVal').value=Math.max(0,getAvailableCardboard(g.profile,g.itemCode,g.length));document.getElementById('cbAdjustModal').style.display='flex';}
 function closeCbAdjustModal(){document.getElementById('cbAdjustModal').style.display='none';}
 async function saveCbAdjust(){const p=document.getElementById('adjustCbProfile').value,i=document.getElementById('adjustCbItemCode').value,l=document.getElementById('adjustCbLength').value,n=Math.max(0,parseInt(document.getElementById('newCbBalanceVal').value)||0),cur=getAvailableCardboard(p,i,l),diff=n-cur;if(!diff){closeCbAdjustModal();return showToast('No balance change required.','info');} const rec={cb_date:new Date().toISOString().split('T')[0],cb_type:`Pr: ${p} | Item: ${i} | L: ${l} | MANUAL ADJUSTMENT`,incoming:diff>0?diff:0,used:diff<0?Math.abs(diff):0}; try{const r=await supabaseClient.from('cardboard_stock').insert([rec]);if(r.error)throw r.error;cardboardStockList.unshift({id:-Date.now(),db_id:null,date:rec.cb_date,type:rec.cb_type,incoming:rec.incoming,used:rec.used,timestamp:new Date().toLocaleTimeString()});saveCardboardLocally();aisRegisterUndo(`Cardboard Balance Adjustment • ${p} / ${l}`,async()=>{await aisDeleteLatest('cardboard_stock',rec);},'cardboardTab');closeCbAdjustModal();renderCardboardStock();showToast('Cardboard balance adjusted.','success');}catch(e){showToast(dbErrorMessage(e,'Balance adjustment failed'),'error');}}
@@ -4503,7 +4643,7 @@ async function persistCardboardManualData(){
 }
 async function saveCardboardManualData(event){
   event?.preventDefault();
-  if(currentUserRole!=='Admin'&&currentUserRole!=='Planner') return;
+  if(currentUserRole!=='Admin') return;
   const id=document.getElementById('cbManualId').value.trim();
   const row={manual_id:id||`CBM-${Date.now()}`,date:document.getElementById('cbManualDate').value||new Date().toISOString().split('T')[0],material:document.getElementById('cbManualMaterial').value.trim(),profile:document.getElementById('cbManualProfile').value.trim(),itemCode:document.getElementById('cbManualItemCode').value.trim(),length:document.getElementById('cbManualLength').value.trim(),quantity:Math.max(0,parseInt(document.getElementById('cbManualQty').value)||0),note:document.getElementById('cbManualNote').value.trim()};
   if(!row.profile&&!row.itemCode&&!row.material) return showToast('Enter at least Material, Profile or Item Code.','warning');
@@ -4526,7 +4666,7 @@ function cancelCardboardManualEdit(){
   const f=document.getElementById('cardboardManualForm'); if(f)f.reset(); const id=document.getElementById('cbManualId'); if(id)id.value=''; const d=document.getElementById('cbManualDate'); if(d)d.value=getAISFormState().cbManualDate||new Date().toISOString().split('T')[0]; const b=document.getElementById('cbManualSaveBtn'); if(b)b.innerHTML='<i class="fa-solid fa-save"></i> Save Manual Data'; const c=document.getElementById('cbManualCancelBtn'); if(c)c.style.display='none';
 }
 async function deleteCardboardManualData(id){
-  if(currentUserRole!=='Admin'&&currentUserRole!=='Planner') return;
+  if(currentUserRole!=='Admin') return;
   const idx=cardboardManualData.findIndex(x=>String(x.manual_id||x.id)===String(id)); if(idx<0)return;
   showConfirm('<b>DELETE MANUAL DATA</b><br><br>Delete this manual cardboard record?<br><br><span style="color:#047857;font-weight:700">Current Cardboard Stock will NOT change.</span>',async()=>{
     try{cardboardManualData.splice(idx,1);await persistCardboardManualData();saveCardboardManualLocally();renderCardboardStock();showToast('Manual cardboard data deleted. Current stock unchanged.','success');}catch(e){showToast(dbErrorMessage(e,'Manual cardboard data delete failed'),'error');}
@@ -4900,7 +5040,7 @@ async function submitDailyEntry() {
   let item = null;
   let newLog = null;
   try {
-    if (currentUserRole !== 'Admin' && currentUserRole !== 'Planner') return;
+    if (currentUserRole !== 'Admin') return;
     const raw = id => String(document.getElementById(id)?.value ?? '0').trim();
     const dateVal=raw('entryDate'), shiftVal=raw('shift'), teamVal=raw('productionTeam'),
       profileVal=raw('selectProfile'), itemCodeVal=raw('selectItemCode'),
@@ -5344,7 +5484,7 @@ function poExcelFindHeaderRow(matrix, aliases){
 }
 
 window.processExcelUpload = async function(){
-  if(currentUserRole!=='Admin'&&currentUserRole!=='Planner') return showToast('Only Admin / Planner can upload Production Orders.','warning');
+  if(currentUserRole!=='Admin') return showToast('Only Admin can upload Production Orders.','warning');
   if(isAppBusy) return showToast('Another save/upload is already running. Please wait.','warning');
   const input=document.getElementById('excelUpload'), file=input?.files?.[0];
   if(!file) return showToast('Please select the Production Order Excel file first.','warning');
@@ -8217,7 +8357,7 @@ function normalizeDailyInstructionRow(row){
 }
 
 function dailyNoteCanManage(){
-  return currentUserRole === 'Admin' || currentUserRole === 'Planner';
+  return currentUserRole === 'Admin';
 }
 function dailyNoteCanDelete(){
   return currentUserRole === 'Admin';
@@ -8227,7 +8367,7 @@ function renderDailyInstructions(){
   const box=document.getElementById('instructionBoardContainer'); if(!box)return;
 
   const roleBadge=document.getElementById('dailyPlanRoleBadge');
-  if(roleBadge) roleBadge.textContent = currentUserRole === 'Admin' ? 'ADMIN • Full note control' : (currentUserRole === 'Planner' ? 'PLANNER • Add / complete notes' : 'VIEW ONLY');
+  if(roleBadge) roleBadge.textContent = currentUserRole === 'Admin' ? 'ADMIN • Full note control' : (currentUserRole === 'Planner' ? 'PLANNER • VIEW ONLY' : 'VIEW ONLY');
 
   const statusFilter=document.getElementById('dailyNoteFilter')?.value || 'All';
   const categoryFilter=document.getElementById('dailyNoteCategoryFilter')?.value || 'All';
@@ -11479,6 +11619,8 @@ ppSmartRenderContainer = function(){
 let extrusionReceipts=[];
 let extrusionOpeningBalances=[];
 let extrusionOpeningBalancesLoaded=false;
+let extrusionMonthlyOpeningBalances=[];
+let extrusionMonthlyOpeningBalancesLoaded=false;
 let extrusionReceiptsLoaded=false;
 let extrusionLoading=false;
 let extrusionStockMovements=[];
@@ -11486,7 +11628,7 @@ let extrusionStockMovementsLoaded=false;
 let extrusionCutUsage=[];
 let extrusionCutUsageLoaded=false;
 let extrusionCutUsageLoading=false;
-function switchExtrusionSubTab(id,btn){document.querySelectorAll('.extrusion-sub-content').forEach(x=>x.style.display='none');document.querySelectorAll('.extrusion-sub-btn').forEach(x=>x.classList.remove('active'));const el=document.getElementById(id);if(el)el.style.display='block';if(btn)btn.classList.add('active');if(id==='exInSubTab'){populateExtrusionReceiptPOs();renderExtrusionPoTable();populateExtrusionReceiptProfiles();}if(id==='exPlantInSubTab'){populatePlantExtrusionProfiles();renderPlantExtrusionInHistory();}if(id==='exHistorySubTab')renderExtrusionHistory();if(id==='exCurrentPlSubTab')renderCurrentPlExtrusionRequirement(false);if(id==='exCutUsageSubTab')renderExtrusionCutUsageHistory();}
+function switchExtrusionSubTab(id,btn){document.querySelectorAll('.extrusion-sub-content').forEach(x=>x.style.display='none');document.querySelectorAll('.extrusion-sub-btn').forEach(x=>x.classList.remove('active'));const el=document.getElementById(id);if(el)el.style.display='block';if(btn)btn.classList.add('active');if(id==='exInSubTab'){populateExtrusionReceiptPOs();renderExtrusionPoTable();populateExtrusionReceiptProfiles();}if(id==='exPlantInSubTab'){populatePlantExtrusionProfiles();renderPlantExtrusionInHistory();}if(id==='exStockSubTab'){renderExtrusionStockTable();renderExtrusionStockMovementHistory();}if(id==='exCurrentPlSubTab')renderCurrentPlExtrusionRequirement(false);if(id==='exCutUsageSubTab')renderExtrusionCutUsageHistory();}
 function extrusionLen(v){const n=Number(String(v??'').replace(/mm/gi,'').trim());return Number.isFinite(n)&&n>0?n:0;}
 function extrusionMasterRows(){return (masterData||[]).filter(m=>String(m.profile||'').trim()&&extrusionLen(m.exLength)>0);}
 function extrusionRequiredByPo(){
@@ -11579,10 +11721,38 @@ function extrusionPoAllocationRows(){
 function confirmExtrusionPOComplete(poNumber){const po=String(poNumber||'');if(!po)return;const lines=extrusionRequiredByPo().filter(r=>r.poNumber===po);if(!lines.length)return;const total=lines.reduce((s,r)=>s+r.required,0);if(!confirm(`Mark PO ${po} as extrusion received/complete?\n\n${lines.length} line(s), ${total.toLocaleString()} extrusion(s) will be treated as complete in this browser. Actual receipt records and other PO data will not be deleted.`))return;const done=getExtrusionCompletedPOs();done.add(po);if(!saveExtrusionCompletedPOs(done))return;renderExtrusionModule(false);showToast(`PO ${po} marked complete and removed from pending list.`,'success');}
 function undoExtrusionPOComplete(poNumber){const po=String(poNumber||'');const done=getExtrusionCompletedPOs();if(!done.has(po))return;done.delete(po);if(!saveExtrusionCompletedPOs(done))return;renderExtrusionModule(false);showToast(`PO ${po} returned to pending list.`,'success');}
 
-function extrusionStockSummary(){const groups=new Map();extrusionRequiredByPo().filter(r=>!getExtrusionCompletedPOs().has(String(r.poNumber))).forEach(r=>{if(!groups.has(r.masterKey))groups.set(r.masterKey,{profile:r.profile,exLength:r.exLength,required:0,poLines:[]});const g=groups.get(r.masterKey);g.required+=r.required;g.poLines.push(r);});extrusionMasterRows().forEach(m=>{const p=String(m.profile||'').trim(),l=extrusionLen(m.exLength);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});(extrusionReceipts||[]).forEach(r=>{const p=String(r.profile||'').trim(),l=extrusionLen(r.extrusion_length);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});
- (extrusionOpeningBalances||[]).forEach(r=>{const p=String(r.profile||'').trim(),l=extrusionLen(r.extrusion_length);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});});
- groups.forEach(g=>{g.openingStock=(extrusionOpeningBalances||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.opening_qty)||0),0);g.receiptStock=(extrusionReceipts||[]).filter(r=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength).reduce((s,r)=>s+(Number(r.in_qty)||0),0);const moves=(extrusionStockMovements||[]).filter(m=>String(m.profile||'').trim()===g.profile&&extrusionLen(m.extrusion_length)===g.exLength);g.movementNet=moves.reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.movementIn=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='IN').reduce((s,m)=>s+Math.max(0,Number(m.qty_change)||0),0);g.movementOut=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='OUT').reduce((s,m)=>s+Math.abs(Math.min(0,Number(m.qty_change)||0)),0);g.adjustmentNet=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='SET').reduce((s,m)=>s+(Number(m.qty_change)||0),0);g.cutUsageRows=(extrusionCutUsage||[]).filter(u=>String(u.profile||'').trim()===g.profile&&extrusionLen(u.extrusion_length)===g.exLength);g.cutUsageRequired=g.cutUsageRows.reduce((s,u)=>s+(Number(u.required_extrusions)||0),0);g.cutUsageDeducted=g.cutUsageRows.reduce((s,u)=>s+(Number(u.deducted_extrusions)||0),0);g.cutUsageShort=g.cutUsageRows.reduce((s,u)=>s+(Number(u.short_extrusions)||0),0);g.totalIn=g.openingStock+g.receiptStock+g.movementIn;g.totalOut=g.movementOut+g.cutUsageDeducted;g.stock=Math.max(0,g.openingStock+g.receiptStock+g.movementNet-g.cutUsageDeducted);g.balance=g.stock-g.required;g.status=g.balance>=0?(g.stock===0&&g.required>0?'Short':g.balance>0?'Extra':'Complete'):'Short';});return [...groups.values()].sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);}
-async function loadExtrusionReceipts(showMessage=false){if(extrusionLoading)return;extrusionLoading=true;try{const {data,error}=await supabaseClient.from('extrusion_receipts').select('*').order('receipt_date',{ascending:false}).order('id',{ascending:false});if(error)throw error;extrusionReceipts=(data||[]).map(r=>({...r,receiptDate:r.receipt_date,profile:String(r.profile||''),extrusionLength:extrusionLen(r.extrusion_length),trolleyNo:r.trolley_no||'',inQty:Number(r.in_qty)||0,note:r.note||''}));extrusionReceiptsLoaded=true;await loadExtrusionStockMovements();await loadExtrusionOpeningBalances();renderExtrusionModule(false);if(showMessage)showToast('Extrusion receipts refreshed.','success');}catch(e){console.error('Extrusion receipt load failed',e);if(showMessage)showToast('Extrusion table is not ready. Run supabase_extrusion_module.sql once in Supabase SQL Editor.','error');else{const b=document.getElementById('exHistoryBody');if(b)b.innerHTML='<tr><td colspan="7">Extrusion receipt table is not ready. Run the included supabase_extrusion_module.sql migration, then refresh.</td></tr>';}}finally{extrusionLoading=false;}}
+function extrusionCurrentMonthStart(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;}
+function extrusionStockSummary(){
+ const groups=new Map(),monthStart=extrusionCurrentMonthStart();
+ const add=(profile,length)=>{const p=String(profile||'').trim(),l=extrusionLen(length);if(!p||!l)return;const k=`${p}__${l}`;if(!groups.has(k))groups.set(k,{profile:p,exLength:l,required:0,poLines:[]});return groups.get(k);};
+ extrusionRequiredByPo().filter(r=>!getExtrusionCompletedPOs().has(String(r.poNumber))).forEach(r=>{const g=add(r.profile,r.exLength);if(g){g.required+=r.required;g.poLines.push(r);}});
+ extrusionMasterRows().forEach(m=>add(m.profile,m.exLength));
+ (extrusionMonthlyOpeningBalances||[]).forEach(r=>add(r.profile,r.extrusion_length));
+ (extrusionReceipts||[]).filter(r=>String(r.receiptDate||'')>=monthStart).forEach(r=>add(r.profile,r.extrusion_length));
+ (extrusionStockMovements||[]).filter(m=>String(m.movement_date||'')>=monthStart).forEach(m=>add(m.profile,m.extrusion_length));
+ (extrusionCutUsage||[]).filter(u=>String(u.movement_date||'')>=monthStart).forEach(u=>add(u.profile,u.extrusion_length));
+ groups.forEach(g=>{
+  const same=(r)=>String(r.profile||'').trim()===g.profile&&extrusionLen(r.extrusion_length)===g.exLength;
+  g.openingStock=(extrusionMonthlyOpeningBalances||[]).filter(same).reduce((a,r)=>a+(Number(r.opening_qty)||0),0);
+  g.receiptStock=(extrusionReceipts||[]).filter(r=>same(r)&&String(r.receiptDate||'')>=monthStart).reduce((a,r)=>a+(Number(r.in_qty)||0),0);
+  const moves=(extrusionStockMovements||[]).filter(m=>same(m)&&String(m.movement_date||'')>=monthStart);
+  g.movementNet=moves.reduce((a,m)=>a+(Number(m.qty_change)||0),0);
+  g.movementIn=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='IN').reduce((a,m)=>a+Math.max(0,Number(m.qty_change)||0),0);
+  g.movementOut=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='OUT').reduce((a,m)=>a+Math.abs(Math.min(0,Number(m.qty_change)||0)),0);
+  g.adjustmentNet=moves.filter(m=>String(m.movement_type||'').toUpperCase()==='SET').reduce((a,m)=>a+(Number(m.qty_change)||0),0);
+  g.cutUsageRows=(extrusionCutUsage||[]).filter(u=>same(u)&&String(u.movement_date||'')>=monthStart);
+  g.cutUsageRequired=g.cutUsageRows.reduce((a,u)=>a+(Number(u.required_extrusions)||0),0);
+  g.cutUsageDeducted=g.cutUsageRows.reduce((a,u)=>a+(Number(u.deducted_extrusions)||0),0);
+  g.cutUsageShort=g.cutUsageRows.reduce((a,u)=>a+(Number(u.short_extrusions)||0),0);
+  g.totalIn=g.receiptStock+g.movementIn;
+  g.totalOut=g.movementOut+g.cutUsageDeducted;
+  g.stock=Math.max(0,g.openingStock+g.receiptStock+g.movementNet-g.cutUsageDeducted);
+  g.balance=g.stock-g.required;
+  g.status=g.balance>=0?(g.stock===0&&g.required>0?'Short':g.balance>0?'Extra':'Complete'):'Short';
+ });
+ return [...groups.values()].sort((a,b)=>a.profile.localeCompare(b.profile,undefined,{numeric:true})||a.exLength-b.exLength);
+}
+async function loadExtrusionReceipts(showMessage=false){if(extrusionLoading)return;extrusionLoading=true;try{const {data,error}=await supabaseClient.from('extrusion_receipts').select('*').order('receipt_date',{ascending:false}).order('id',{ascending:false});if(error)throw error;extrusionReceipts=(data||[]).map(r=>({...r,receiptDate:r.receipt_date,profile:String(r.profile||''),extrusionLength:extrusionLen(r.extrusion_length),trolleyNo:r.trolley_no||'',inQty:Number(r.in_qty)||0,note:r.note||''}));extrusionReceiptsLoaded=true;await loadExtrusionStockMovements();await loadExtrusionOpeningBalances();await loadExtrusionMonthlyOpeningBalances();renderExtrusionModule(false);if(showMessage)showToast('Extrusion receipts refreshed.','success');}catch(e){console.error('Extrusion receipt load failed',e);if(showMessage)showToast('Extrusion table is not ready. Run supabase_extrusion_module.sql once in Supabase SQL Editor.','error');else{const b=document.getElementById('exPlantInBody');if(b)b.innerHTML='<tr><td colspan="6">Extrusion receipt table is not ready. Run the included supabase_extrusion_module.sql migration, then refresh.</td></tr>'; }}finally{extrusionLoading=false;}}
 async function loadExtrusionCutUsage(){
  if(extrusionCutUsageLoading)return extrusionCutUsageLoaded;
  extrusionCutUsageLoading=true;
@@ -11614,6 +11784,27 @@ async function loadExtrusionOpeningBalances(){
   return false;
  }
 }
+async function loadExtrusionMonthlyOpeningBalances(){
+ const monthStart=extrusionCurrentMonthStart();
+ try{
+  const {data:rpcData,error:rpcError}=await supabaseClient.rpc('ensure_extrusion_month_opening',{p_month:monthStart});
+  if(rpcError)throw rpcError;
+  const {data,error}=await supabaseClient.from('extrusion_monthly_opening_balances').select('*').eq('month_start',monthStart).order('profile',{ascending:true}).order('extrusion_length',{ascending:true});
+  if(error)throw error;
+  extrusionMonthlyOpeningBalances=(data||[]).map(r=>({...r,profile:String(r.profile||''),extrusion_length:extrusionLen(r.extrusion_length),opening_qty:Number(r.opening_qty)||0}));
+  extrusionMonthlyOpeningBalancesLoaded=true;
+  const label=document.getElementById('exStockMonthLabel');
+  if(label)label.textContent=`Stock Month: ${new Date(`${monthStart}T00:00:00`).toLocaleDateString(undefined,{month:'long',year:'numeric'})} · Opening balance carried forward`;
+  return true;
+ }catch(e){
+  console.error('Monthly extrusion opening balance failed:',e);
+  extrusionMonthlyOpeningBalances=[];extrusionMonthlyOpeningBalancesLoaded=false;
+  const body=document.getElementById('exStockBody');
+  if(body)body.innerHTML=`<tr><td colspan="11" style="color:#b45309;font-weight:800;">Monthly stock cycle is not ready: ${escapeHtml(e?.message||'Apply the V269 monthly stock migration')}. Run supabase_extrusion_monthly_stock_v269.sql in Supabase SQL Editor, then refresh. Existing stock records are preserved.</td></tr>`;
+  return false;
+ }
+}
+
 async function loadExtrusionStockMovements(){
  try{
   const {data,error}=await supabaseClient.from('extrusion_stock_movements').select('*').order('movement_date',{ascending:false}).order('id',{ascending:false});
@@ -11627,17 +11818,17 @@ async function loadExtrusionStockMovements(){
   extrusionStockMovementsLoaded=false;
   extrusionStockMovements=[];
   const body=document.getElementById('exStockBody');
-  if(body)body.innerHTML=`<tr><td colspan="7" style="color:#b45309;font-weight:800;">Extrusion IN / OUT ledger could not load: ${escapeHtml(e?.message||'Database permission or migration issue')}. Run supabase_extrusion_stock_ledger_v256.sql in Supabase SQL Editor, then refresh. Existing receipt records are preserved.</td></tr>`;
+  if(body)body.innerHTML=`<tr><td colspan="11" style="color:#b45309;font-weight:800;">Extrusion IN / OUT ledger could not load: ${escapeHtml(e?.message||'Database permission or migration issue')}. Run supabase_extrusion_stock_ledger_v256.sql in Supabase SQL Editor, then refresh. Existing receipt records are preserved.</td></tr>`;
   return false;
  }
 }
 function moveExtrusionStockSummaryToBottom(){const target=document.getElementById('exInSubTab');const planner=document.getElementById('exPoCards')?.closest('.card');const form=document.getElementById('exReceiptForm')?.closest('.card');if(target&&planner&&form&&planner.parentElement!==target)target.insertBefore(planner,form);const stockSection=document.getElementById('exStockSubTab');const stock=document.getElementById('exStockBody')?.closest('.card');if(stockSection&&stock&&stock.parentElement!==stockSection)stockSection.appendChild(stock);}
-function renderExtrusionModule(force=false){if(force&&!extrusionReceiptsLoaded){loadExtrusionReceipts(true);return;}moveExtrusionStockSummaryToBottom();populateExtrusionFilters();populateExtrusionReceiptProfiles();renderExtrusionStockTable();renderExtrusionStockMovementHistory();renderExtrusionCutUsageHistory();renderExtrusionPoTable();renderExtrusionHistory();if(document.getElementById('exCurrentPlSubTab')?.style.display!=='none')renderCurrentPlExtrusionRequirement(false);}
+function renderExtrusionModule(force=false){if(force&&!extrusionReceiptsLoaded){loadExtrusionReceipts(true);return;}moveExtrusionStockSummaryToBottom();populateExtrusionFilters();populateExtrusionReceiptProfiles();renderExtrusionStockTable();renderExtrusionStockMovementHistory();renderExtrusionCutUsageHistory();renderExtrusionPoTable();if(document.getElementById('exCurrentPlSubTab')?.style.display!=='none')renderCurrentPlExtrusionRequirement(false);}
 function populateExtrusionFilters(){const groups=extrusionStockSummary();const fill=(id,label,vals)=>{const s=document.getElementById(id);if(!s)return;const old=s.value;s.innerHTML=`<option value="">${label}</option>`;[...new Set(vals)].forEach(v=>s.add(new Option(v,v)));if([...s.options].some(o=>o.value===old))s.value=old;};fill('exFilterProfile','All Profiles',groups.map(g=>g.profile));fill('exFilterLength','All Lengths',groups.map(g=>String(g.exLength)));fill('exHistProfile','All Profiles',[...new Set(extrusionReceipts.map(r=>r.profile))].sort());}
 function renderExtrusionStockTable(){
  const body=document.getElementById('exStockBody');if(!body)return;
- if(!extrusionStockMovementsLoaded||!extrusionCutUsageLoaded){
-  body.innerHTML='<tr><td colspan="10" style="color:#b45309;font-weight:800;">Complete extrusion stock ledger setup first. Run supabase_extrusion_cut_usage_v261.sql in Supabase SQL Editor, then refresh. Existing receipt and stock movement records are preserved.</td></tr>';
+ if(!extrusionStockMovementsLoaded||!extrusionCutUsageLoaded||!extrusionMonthlyOpeningBalancesLoaded){
+  body.innerHTML='<tr><td colspan="11" style="color:#b45309;font-weight:800;">Extrusion monthly stock setup is incomplete. Run the existing V256, V257, V261 and V265 migrations, then supabase_extrusion_monthly_stock_v269.sql in Supabase SQL Editor. Existing receipt and stock movement records are preserved.</td></tr>';
   return;
  }
  const p=document.getElementById('exFilterProfile')?.value||'',l=document.getElementById('exFilterLength')?.value||'',q=(document.getElementById('exSearch')?.value||'').trim().toLowerCase();
@@ -11646,16 +11837,16 @@ function renderExtrusionStockTable(){
  const fmt=v=>(Number(v)||0).toLocaleString();
  body.innerHTML=rows.length?rows.map(g=>`<tr>
   <td><b>${escapeHtml(String(g.profile))}</b></td><td>${g.exLength.toLocaleString()} mm</td>
-  <td>${fmt(g.required)}</td><td><b class="ex-stock-in-total">${fmt(g.totalIn)}</b></td><td><b class="ex-stock-out-total">${fmt(g.totalOut)}</b></td>
+  <td>${fmt(g.required)}</td><td><b>${fmt(g.openingStock)}</b></td><td><b class="ex-stock-in-total">${fmt(g.totalIn)}</b></td><td><b class="ex-stock-out-total">${fmt(g.totalOut)}</b></td>
   <td>${fmt(g.adjustmentNet)}</td>
   <td><button type="button" class="ex-stock-qty-edit" title="Current available extrusion stock" onclick="openExtrusionStockModal('SET','${escapeHtml(g.profile)}',${g.exLength},${g.stock})">${fmt(g.stock)} <i class="fa-solid fa-pen"></i></button></td>
   <td><b class="ex-stock-balance ${g.balance<0?'negative':g.balance>0?'positive':'zero'}">${fmt(g.balance)}</b></td>
   <td><span class="ex-status ${g.balance<0?'short':g.balance>0?'extra':'complete'}">${g.balance<0?'Short by '+fmt(Math.abs(g.balance)):g.balance>0?'Extra '+fmt(g.balance):'Balanced'}</span></td>
   <td><div class="ex-stock-actions"><button type="button" class="ex-stock-in" onclick="openExtrusionStockModal('IN','${escapeHtml(g.profile)}',${g.exLength},${g.stock})">+ IN</button><button type="button" class="ex-stock-out" onclick="openExtrusionStockModal('OUT','${escapeHtml(g.profile)}',${g.exLength},${g.stock})">− OUT</button></div></td>
- </tr>`).join(''):'<tr><td colspan="10">No extrusion lengths matched. Check Master Catalog Ex Length values.</td></tr>';
+ </tr>`).join(''):'<tr><td colspan="11">No extrusion lengths matched. Check Master Catalog Ex Length values.</td></tr>';
  const totalIn=rows.reduce((s,g)=>s+(g.totalIn||0),0),totalOut=rows.reduce((s,g)=>s+(g.totalOut||0),0),available=rows.reduce((s,g)=>s+(g.stock||0),0);
  const foot=document.getElementById('exStockFoot');
- if(foot)foot.innerHTML=rows.length?`<tr><th colspan="3" style="text-align:right">TOTAL</th><th>${fmt(totalIn)}</th><th>${fmt(totalOut)}</th><th>${fmt(rows.reduce((s,g)=>s+(g.adjustmentNet||0),0))}</th><th>${fmt(available)}</th><th>${fmt(rows.reduce((s,g)=>s+(g.balance||0),0))}</th><th colspan="2">Filtered total</th></tr>`:'';
+ if(foot)foot.innerHTML=rows.length?`<tr><th colspan="3" style="text-align:right">TOTAL</th><th>${fmt(rows.reduce((s,g)=>s+(g.openingStock||0),0))}</th><th>${fmt(totalIn)}</th><th>${fmt(totalOut)}</th><th>${fmt(rows.reduce((s,g)=>s+(g.adjustmentNet||0),0))}</th><th>${fmt(available)}</th><th>${fmt(rows.reduce((s,g)=>s+(g.balance||0),0))}</th><th colspan="2">Filtered total</th></tr>`:'';
  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=fmt(v);};
  set('exPhysicalTotalIn',totalIn);set('exPhysicalTotalOut',totalOut);set('exPhysicalAvailable',available);set('exPhysicalLines',rows.length);
 }
@@ -11668,19 +11859,19 @@ function renderExtrusionStockMovementHistory(){
 }
 window.exportExtrusionPhysicalStockExcel=function(){
  const groups=extrusionStockSummary();
- const rows=groups.map(g=>({'Profile':g.profile,'Extrusion Length (mm)':g.exLength,'PO Required':g.required,'Total IN':g.totalIn,'Total OUT':g.totalOut,'Adjustment':g.adjustmentNet,'Available Stock Qty':g.stock,'Balance vs PO':g.balance,'Status':g.balance<0?'SHORT':g.balance>0?'EXTRA':'BALANCED'}));
+ const rows=groups.map(g=>({'Profile':g.profile,'Extrusion Length (mm)':g.exLength,'PO Required':g.required,'Opening Balance':g.openingStock,'Monthly IN':g.totalIn,'Monthly OUT':g.totalOut,'Adjustment':g.adjustmentNet,'Closing Stock Qty':g.stock,'Balance vs PO':g.balance,'Status':g.balance<0?'SHORT':g.balance>0?'EXTRA':'BALANCED'}));
  if(!rows.length)return showToast('No extrusion stock rows available to export.','warning');
- const total={Profile:'TOTAL', 'Extrusion Length (mm)':'', 'PO Required':groups.reduce((s,g)=>s+g.required,0),'Total IN':groups.reduce((s,g)=>s+g.totalIn,0),'Total OUT':groups.reduce((s,g)=>s+g.totalOut,0),'Adjustment':groups.reduce((s,g)=>s+g.adjustmentNet,0),'Available Stock Qty':groups.reduce((s,g)=>s+g.stock,0),'Balance vs PO':groups.reduce((s,g)=>s+g.balance,0),'Status':'SUMMARY'};
+ const total={Profile:'TOTAL', 'Extrusion Length (mm)':'', 'PO Required':groups.reduce((s,g)=>s+g.required,0),'Opening Balance':groups.reduce((s,g)=>s+(g.openingStock||0),0),'Monthly IN':groups.reduce((s,g)=>s+g.totalIn,0),'Monthly OUT':groups.reduce((s,g)=>s+g.totalOut,0),'Adjustment':groups.reduce((s,g)=>s+(g.adjustmentNet||0),0),'Closing Stock Qty':groups.reduce((s,g)=>s+g.stock,0),'Balance vs PO':groups.reduce((s,g)=>s+g.balance,0),'Status':'SUMMARY'};
  if(window.XLSX&&XLSX.utils){
   const wb=XLSX.utils.book_new(),ws=XLSX.utils.json_to_sheet([...rows,total]);
-  ws['!cols']=[{wch:16},{wch:22},{wch:16},{wch:14},{wch:14},{wch:14},{wch:20},{wch:16},{wch:14}];
+  ws['!cols']=[{wch:16},{wch:22},{wch:16},{wch:17},{wch:14},{wch:14},{wch:14},{wch:20},{wch:16},{wch:14}];
   XLSX.utils.book_append_sheet(wb,ws,'Physical Stock');
   const movements=(extrusionStockMovements||[]).map(m=>({'Date':m.movement_date||'','Profile':m.profile,'Extrusion Length (mm)':m.extrusion_length,'Trolley No.':m.trolley_no||'','Movement':m.movement_type,'Quantity':Math.abs(Number(m.qty_change)||0),'Signed Change':m.qty_change,'Reference / Note':m.note||''}));
   if(movements.length){const ms=XLSX.utils.json_to_sheet(movements);XLSX.utils.book_append_sheet(wb,ms,'Trolley Movements');}
-  XLSX.writeFile(wb,'AIS_Extrusion_Physical_Stock.xlsx');
+  XLSX.writeFile(wb,`AIS_Extrusion_Physical_Stock_${extrusionCurrentMonthStart().slice(0,7)}.xlsx`);
  }else{
   const headers=Object.keys(rows[0]),csv=[headers,...[...rows,total].map(r=>headers.map(h=>r[h]))].map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');
-  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='AIS_Extrusion_Physical_Stock.csv';a.click();URL.revokeObjectURL(url);
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`AIS_Extrusion_Physical_Stock_${extrusionCurrentMonthStart().slice(0,7)}.csv`;a.click();URL.revokeObjectURL(url);
  }
  showToast('Extrusion physical stock Excel report downloaded.','success');
 };
@@ -11871,7 +12062,7 @@ function resetPlantExtrusionInForm(){
 }
 async function savePlantExtrusionIn(){
  if(isAppBusy)return;
- if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return showToast('Admin or Planner access is required to record physical extrusion stock IN.','warning');
+ if(currentUserRole!=='Admin')return showToast('Admin access is required to record physical extrusion stock IN.','warning');
  const date=document.getElementById('exPlantInDate')?.value||'';
  const trolleyNo=document.getElementById('exPlantInTrolley')?.value.trim()||'';
  const profile=document.getElementById('exPlantInProfile')?.value||'';
@@ -11936,9 +12127,9 @@ window.exportPlantExtrusionInExcel=function(){
  exportTableToExcel(rows,'AIS_Plant_Extrusion_IN','Plant Extrusion IN');
 };
 function resetExtrusionForm(){const f=document.getElementById('exReceiptForm');if(f)f.reset();document.getElementById('exEditId').value='';document.getElementById('exReceiptDate').value=new Date().toISOString().slice(0,10);document.getElementById('exSaveBtn').innerHTML='<i class="fa-solid fa-floppy-disk"></i> Save IN';populateExtrusionReceiptProfiles();}
-async function saveExtrusionReceipt(){if(isAppBusy)return;if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return showToast('Admin or Planner access is required.','warning');const id=document.getElementById('exEditId').value,date=document.getElementById('exReceiptDate').value,poNumber=document.getElementById('exReceiptPO')?.value||'',profile=document.getElementById('exReceiptProfile').value,length=extrusionLen(document.getElementById('exReceiptLength').value),trolley=document.getElementById('exTrolley').value.trim(),qty=Math.floor(Number(document.getElementById('exInQty').value)||0),note=document.getElementById('exNote').value.trim();const oldRecord=id?extrusionReceipts.find(r=>String(r.id)===String(id)):null;const allowLegacyEdit=!!oldRecord&&!String(oldRecord.po_number||oldRecord.poNumber||'').trim();if(!date||(!poNumber&&!allowLegacyEdit)||!profile||!length||!trolley||qty<=0)return showToast('Select PO, date, profile, extrusion length, trolley details and a positive IN quantity. Old unassigned receipts may be edited without assigning a PO.','warning');if(poNumber&&!extrusionRequiredByPo().some(r=>r.poNumber===poNumber&&r.profile===profile&&extrusionLen(r.exLength)===length))return showToast('Selected profile and extrusion length do not belong to this PO.','warning');const payload={receipt_date:date,profile,extrusion_length:length,trolley_no:trolley,in_qty:qty,note,po_number:poNumber||null};isAppBusy=true;try{let result;if(id){result=await supabaseClient.from('extrusion_receipts').update(payload).eq('id',id).select().single();}else{result=await supabaseClient.from('extrusion_receipts').insert([payload]).select().single();}if(result.error)throw result.error;resetExtrusionForm();await loadExtrusionReceipts(false);switchExtrusionSubTab('exHistorySubTab',document.querySelectorAll('.extrusion-sub-btn')[2]);showToast(id?'Extrusion receipt updated.':'PO-linked Extrusion IN saved; PO/profile balances recalculated.','success');}catch(e){console.error(e);showToast('Could not save extrusion receipt. Ensure the additive po_number column migration in supabase_extrusion_module.sql has been run. Existing records were not deleted.','error');}finally{isAppBusy=false;}}
+async function saveExtrusionReceipt(){if(isAppBusy)return;if(currentUserRole!=='Admin')return showToast('Admin access is required.','warning');const id=document.getElementById('exEditId').value,date=document.getElementById('exReceiptDate').value,poNumber=document.getElementById('exReceiptPO')?.value||'',profile=document.getElementById('exReceiptProfile').value,length=extrusionLen(document.getElementById('exReceiptLength').value),trolley=document.getElementById('exTrolley').value.trim(),qty=Math.floor(Number(document.getElementById('exInQty').value)||0),note=document.getElementById('exNote').value.trim();const oldRecord=id?extrusionReceipts.find(r=>String(r.id)===String(id)):null;const allowLegacyEdit=!!oldRecord&&!String(oldRecord.po_number||oldRecord.poNumber||'').trim();if(!date||(!poNumber&&!allowLegacyEdit)||!profile||!length||!trolley||qty<=0)return showToast('Select PO, date, profile, extrusion length, trolley details and a positive IN quantity. Old unassigned receipts may be edited without assigning a PO.','warning');if(poNumber&&!extrusionRequiredByPo().some(r=>r.poNumber===poNumber&&r.profile===profile&&extrusionLen(r.exLength)===length))return showToast('Selected profile and extrusion length do not belong to this PO.','warning');const payload={receipt_date:date,profile,extrusion_length:length,trolley_no:trolley,in_qty:qty,note,po_number:poNumber||null};isAppBusy=true;try{let result;if(id){result=await supabaseClient.from('extrusion_receipts').update(payload).eq('id',id).select().single();}else{result=await supabaseClient.from('extrusion_receipts').insert([payload]).select().single();}if(result.error)throw result.error;resetExtrusionForm();await loadExtrusionReceipts(false);switchExtrusionSubTab('exInSubTab',document.querySelector('.extrusion-sub-btn[onclick*="exInSubTab"]'));showToast(id?'Extrusion receipt updated.':'PO-linked Extrusion IN saved; PO/profile balances recalculated.','success');}catch(e){console.error(e);showToast('Could not save extrusion receipt. Ensure the additive po_number column migration in supabase_extrusion_module.sql has been run. Existing records were not deleted.','error');}finally{isAppBusy=false;}}
 function openExtrusionStockModal(mode,profile,length,currentStock){
- if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return showToast('Admin or Planner access is required to manage extrusion stock.','warning');
+ if(currentUserRole!=='Admin')return showToast('Admin access is required to manage extrusion stock.','warning');
  const modal=document.getElementById('exStockMovementModal');if(!modal)return;
  // The Extrusion tab can sit inside transformed/overflow containers. Move the
  // dialog to <body> before opening so the fixed backdrop and dialog are not
@@ -11977,7 +12168,7 @@ function openExtrusionStockModal(mode,profile,length,currentStock){
 function closeExtrusionStockModal(){const m=document.getElementById('exStockMovementModal');if(m){m.classList.remove('open');m.setAttribute('aria-hidden','true');}document.body.style.overflow='';}
 async function saveExtrusionStockMovement(){
  if(isAppBusy)return;
- if(currentUserRole!=='Admin'&&currentUserRole!=='Planner')return showToast('Admin or Planner access is required to manage extrusion stock.','warning');
+ if(currentUserRole!=='Admin')return showToast('Admin access is required to manage extrusion stock.','warning');
  const mode=document.getElementById('exStockMoveMode').value,profile=document.getElementById('exStockMoveProfile').value,length=extrusionLen(document.getElementById('exStockMoveLength').value),qty=Math.floor(Number(document.getElementById('exStockMoveQty').value)),date=document.getElementById('exStockMoveDate').value,note=document.getElementById('exStockMoveNote').value.trim(),trolleyNo=document.getElementById('exStockMoveTrolley')?.value.trim()||'';
  if(!profile||!length||!date||!Number.isFinite(qty)||qty<0||(mode!=='SET'&&qty<1)||(mode==='IN'&&!trolleyNo))return showToast(mode==='IN'?'Enter profile, extrusion length, date, trolley number and a positive IN quantity.':'Enter a valid profile, extrusion length, date and quantity.','warning');
  const summary=extrusionStockSummary().find(x=>x.profile===profile&&x.exLength===length),current=summary?.stock||0;
@@ -12069,7 +12260,7 @@ function exportExtrusionCutUsageExcel(){
 
 function exportExtrusionReceiptHistoryExcel(){const rows=(extrusionReceipts||[]).map(r=>({'Receipt Date':r.receiptDate||'','PO Number':r.po_number||r.poNumber||'Legacy shared stock','Profile':r.profile,'Extrusion Length (mm)':r.extrusionLength,'Trolley No.':r.trolleyNo,'IN Quantity':r.inQty,'Note':r.note||''}));if(!rows.length)return showToast('No extrusion IN history to export.','warning');exportTableToExcel(rows,'AIS_Extrusion_IN_History','IN History');}
 function renderExtrusionHistory(){const body=document.getElementById('exHistoryBody');if(!body)return;const p=document.getElementById('exHistProfile')?.value||'',q=(document.getElementById('exHistSearch')?.value||'').toLowerCase();const rows=extrusionReceipts.filter(r=>(!p||r.profile===p)&&(!q||`${r.po_number||r.poNumber||''} ${r.profile} ${r.extrusionLength} ${r.trolleyNo} ${r.note}`.toLowerCase().includes(q)));body.innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHtml(r.receiptDate||'-')}</td><td><b>${escapeHtml(r.po_number||r.poNumber||'Legacy shared stock')}</b></td><td><b>${escapeHtml(r.profile)}</b></td><td>${r.extrusionLength} mm</td><td>${escapeHtml(r.trolleyNo)}</td><td><b>${r.inQty.toLocaleString()}</b></td><td>${escapeHtml(r.note||'-')}</td><td><button class="btn" style="padding:5px 8px;background:#0f766e;color:white" onclick="editExtrusionReceipt('${String(r.id)}')"><i class="fa-solid fa-pen"></i></button> <button class="btn btn-danger" style="padding:5px 8px" onclick="deleteExtrusionReceipt('${String(r.id)}')"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''):'<tr><td colspan="8">No extrusion IN records found.</td></tr>';}
-function editExtrusionReceipt(id){const r=extrusionReceipts.find(x=>String(x.id)===String(id));if(!r)return;switchExtrusionSubTab('exInSubTab',document.querySelectorAll('.extrusion-sub-btn')[1]);document.getElementById('exEditId').value=r.id;document.getElementById('exReceiptDate').value=r.receiptDate||'';populateExtrusionReceiptPOs();document.getElementById('exReceiptPO').value=String(r.po_number||r.poNumber||'');populateExtrusionReceiptProfiles();document.getElementById('exReceiptProfile').value=r.profile;updateExtrusionLengthOptions();document.getElementById('exReceiptLength').value=String(r.extrusionLength);document.getElementById('exTrolley').value=r.trolleyNo;document.getElementById('exInQty').value=r.inQty;document.getElementById('exNote').value=r.note;document.getElementById('exSaveBtn').innerHTML='<i class="fa-solid fa-check"></i> Update IN';}
+function editExtrusionReceipt(id){const r=extrusionReceipts.find(x=>String(x.id)===String(id));if(!r)return;switchExtrusionSubTab('exInSubTab',document.querySelector('.extrusion-sub-btn[onclick*="exInSubTab"]'));document.getElementById('exEditId').value=r.id;document.getElementById('exReceiptDate').value=r.receiptDate||'';populateExtrusionReceiptPOs();document.getElementById('exReceiptPO').value=String(r.po_number||r.poNumber||'');populateExtrusionReceiptProfiles();document.getElementById('exReceiptProfile').value=r.profile;updateExtrusionLengthOptions();document.getElementById('exReceiptLength').value=String(r.extrusionLength);document.getElementById('exTrolley').value=r.trolleyNo;document.getElementById('exInQty').value=r.inQty;document.getElementById('exNote').value=r.note;document.getElementById('exSaveBtn').innerHTML='<i class="fa-solid fa-check"></i> Update IN';}
 async function deleteExtrusionReceipt(id){if(currentUserRole!=='Admin')return showToast('Admin access is required to delete receipts.','warning');const r=extrusionReceipts.find(x=>String(x.id)===String(id));if(!r||!confirm(`Delete extrusion IN record for ${r.profile}, ${r.extrusionLength} mm, qty ${r.inQty}? Stock balance will be recalculated.`))return;try{const {error}=await supabaseClient.from('extrusion_receipts').delete().eq('id',id);if(error)throw error;await loadExtrusionReceipts(false);showToast('Extrusion receipt deleted; balance recalculated.','success');}catch(e){showToast('Could not delete receipt. Check table permissions.','error');}}
 function exportExtrusionRequirements(){
  const rows=extrusionPoAllocationRows().filter(r=>!r.manualComplete).map(r=>({'PO Date':r.date,'PO Number':r.poNumber,'Profile':r.profile,'Item Code':r.itemCode,'Cut Length (mm)':r.cutLength,'Extrusion Length (mm)':r.exLength,'Open Balance (PCS)':r.openQty,'Required Extrusions':r.required,'Physical Stock On Hand':r.stockBeforeAllocation,'Allocated to Other PO(s)':r.otherPOAllocated,'Other PO Allocation Details':r.otherPOAllocationText,'Stock Allocated to This PO':r.stockAllocated,'Still Required':r.shortage,'Status':r.shortage>0?'PENDING':'STOCK COVERED'}));
