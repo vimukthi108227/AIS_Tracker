@@ -1,38 +1,39 @@
-AIS TRACKER — CURRENT PL / PLANNER ACCESS FINAL UPDATE
-======================================================
+AIS TRACKER — RECHECKED FINAL UPDATE
+====================================
 
-What changed
-------------
-1. Admin login:
-   - After Supabase data sync, the Packing List page defaults to the latest
-     month containing packing-list records and the highest-numbered container
-     with records (for example, November / 3rd Container).
-   - On a fresh page load, the same Current PL selector is used.
-   - Admin can still select another month/container and view completed PL history.
+Included update
+---------------
+- Admin login and post-Supabase-sync render default to the latest month and
+  highest-numbered container containing saved Packing List rows.
+- Planner remains pinned to that Current PL.
+- Planner can navigate/view pages in read-only mode; data-entry/edit areas
+  and completed PL history are hidden.
+- Admin retains month/container selection and completed PL history access.
 
-2. Planner login:
-   - Planner remains pinned to the Current PL only.
-   - Planner sees no completed PL history and cannot switch to older PLs.
-   - Planner remains read-only for editing and data-entry controls.
+Recheck results
+---------------
+1. JavaScript syntax check: PASS
+2. HTML duplicate-ID check: PASS (none found)
+3. Local HTML asset reference check: PASS (no missing local assets)
+4. Current PL selection simulation: PASS (3 scenarios)
+   - November with 1st/2nd/3rd rows -> November / 3rd Container
+   - November with 1st/2nd rows -> November / 2nd Container
+   - Newer month with only 1st row -> newer month / 1st Container
+5. Admin / Planner role-gating source checks: PASS
+6. ZIP integrity and file completeness: PASS
 
-Validation performed
---------------------
-- JavaScript syntax check: PASS
-- Current PL selection simulation (November 1st + 2nd + 3rd): PASS
-  Expected result: November / 3rd Container
-- Role access, HTML references and local asset checks: PASS
+Limitations
+-----------
+A live browser smoke test was blocked by the execution environment, and no
+live Supabase credentials/session were available. Therefore production login,
+live database sync, and the deployed GitHub site have not been independently
+verified in this run. This package does not modify Supabase data/schema.
 
 Deployment
 ----------
-1. Extract the ZIP.
-2. Replace the existing repository website files with all extracted files.
-3. Commit and push the changes to GitHub.
-4. Open the deployed website and hard-refresh (Ctrl + F5).
-5. Sign in as Admin and confirm the latest PL is selected.
-6. Sign in as Planner and confirm only the Current PL is visible.
-
-Important
----------
-The checks above are local code/static and simulated-data checks. A live
-Supabase login and production-data verification was not possible here.
-No Supabase records or database schema were changed by this update.
+1. Extract all files from this ZIP.
+2. Replace the matching files in the GitHub repository.
+3. Commit and push.
+4. Open the deployed site and hard refresh with Ctrl+F5.
+5. Verify Admin sees the latest PL (e.g. November / 3rd Container).
+6. Verify Planner sees only the Current PL and read-only pages.
